@@ -309,9 +309,23 @@ def minebank_business_members(account_id):
     members=execute_query_dict("""SELECT m.*,c.email FROM minebank_business_members m
                                   JOIN bank_clients c ON c.id=m.client_id
                                   WHERE m.account_id=%s ORDER BY m.role,c.email""",(account_id,))
+    pending_payments=execute_query_dict("""SELECT b.transaction_id,b.risk_score,l.amount,l.description,c.email requested_by_email
+                                             FROM minebank_business_payment_approvals b JOIN ledger_transactions l ON l.transaction_id=b.transaction_id
+                                             JOIN bank_clients c ON c.id=b.requested_by WHERE b.account_id=%s AND b.status='PENDING' ORDER BY b.created_at""",(account_id,))
     return render_template("minebank_portal.html",mode="business_members",business_account=owner[0],
-                           members=members,error=error,portal_active="account")
+                           members=members,pending_payments=pending_payments,error=error,portal_active="account")
 
+@app.route("/portal/business/<int:account_id>/payments/<transaction_id>/approve",methods=["POST"])
+@require_login
+def approve_business_payment(account_id,transaction_id):
+    owner=execute_query_dict("SELECT id FROM bank_accounts WHERE id=%s AND account_type='BUSINESS'",(account_id,))
+    if not owner: return "Business account not found",404
+    try:
+        status=approve_business_transfer(transaction_id,session["minebank_client_id"],request.remote_addr)
+        flash("Business payment approved." if status=="COMPLETED" else "Business payment approved and sent to bank review.","success")
+    except Exception as exc:
+        flash(str(exc),"error")
+    return redirect(url_for("minebank_business_members",account_id=account_id))
 @app.route("/portal/transfer", methods=["GET","POST"])
 @require_login
 def minebank_transfer_page():
