@@ -68,8 +68,8 @@ def get_accounts(client_id):
                   t.code,t.display_name,t.monthly_fee,t.max_balance,t.monthly_outgoing_limit,
                   t.daily_outgoing_limit,t.single_transfer_limit,t.credit_enabled,t.default_credit_limit
            FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
-           WHERE a.client_id=%s AND a.status<>'CLOSED'
-           ORDER BY a.account_type,a.id""", (client_id,)
+           WHERE a.status<>'CLOSED' AND (a.client_id=%s OR EXISTS (SELECT 1 FROM minebank_business_members bm WHERE bm.account_id=a.id AND bm.client_id=%s))
+           ORDER BY a.account_type,a.id""", (client_id,client_id,)
     )
 
 def pending_count(client_id):
