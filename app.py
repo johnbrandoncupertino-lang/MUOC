@@ -455,21 +455,37 @@ def minebank_scheduled_page():
             from datetime import datetime
             number=request.form.get("account_number","").strip().upper()
             amount=int(request.form.get("amount","0"))
+            import json
             schedule=request.form.get("schedule_type","MONTHLY")
             next_run=request.form.get("next_run_at","")
-            if amount<=0 or schedule not in {"ONCE","WEEKLY","MONTHLY"} or not next_run:
+            if amount<=0 or schedule not in {"ONCE","DAILY","WEEKLY","MONTHLY","CUSTOM"} or not next_run:
                 raise ValueError("Complete the scheduled payment fields.")
+            interval_days=max(1,int(request.form.get("interval_days","1") or 1))
+            recurrence=json.dumps({"interval_days":interval_days})
             execute_query("""INSERT INTO minebank_scheduled_transfers
-                             (client_id,account_id,recipient_account_number,amount,schedule_type,next_run_at,description,reference)
-                             VALUES(%s,%s,%s,%s,%s,%s,%s,%s)""",
+                             (client_id,account_id,recipient_account_number,amount,schedule_type,next_run_at,end_at,description,reference,recurrence_config)
+                             VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)""",
                           (session["minebank_client_id"],account["id"],number,amount,schedule,next_run,
-                           request.form.get("description","")[:500],request.form.get("reference","")[:100]),commit=True)
+                           request.form.get("end_at") or None,request.form.get("description","")[:500],
+                           request.form.get("reference","")[:100],recurrence),commit=True)
             flash("Scheduled payment created.","success")
         except Exception as exc:
             flash(str(exc),"error")
     schedules=execute_query_dict("""SELECT * FROM minebank_scheduled_transfers
                                      WHERE client_id=%s ORDER BY next_run_at""",(session["minebank_client_id"],))
     return render_template("minebank_portal.html",mode="scheduled",account=account,schedules=schedules,portal_active="scheduled")
+
+@app.route("/api/cron/minebank",methods=["POST"])
+def minebank_cron():
+    expected=__import__("os").environ.get("MUOC_CRON_TOKEN")
+    supplied=request.headers.get("Authorization","")
+    if not expected or supplied != "Bearer "+expected:
+        return jsonify(error="Unauthorized"),401
+    from bank_lib.minebank_scheduler import process_due_scheduled_transfers
+    try:
+        return jsonify(results=process_due_scheduled_transfers())
+    except Exception as exc:
+        return jsonify(error=str(exc)),500
 
 @app.route("/portal/requests")
 @require_login
