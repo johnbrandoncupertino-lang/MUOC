@@ -1304,6 +1304,22 @@ def reports_print():
     return render_template('report_print.html', logs=logs, profile=profile, settings=settings, generated_at=datetime.now(UTC), wallet_name=wallet_name)
 
 
+@app.route('/admin/minebank/requests')
+@require_role('ADMIN', 'OPERATOR')
+def admin_minebank_requests_page():
+    requests = execute_query_dict(
+        """SELECT r.id, r.client_id, c.email, r.account_id, r.request_type, r.status,
+                  r.payload, r.created_at
+           FROM bank_requests_v2 r
+           JOIN bank_clients c ON c.id=r.client_id
+           ORDER BY CASE WHEN r.status='PENDING' THEN 0 ELSE 1 END, r.created_at DESC
+           LIMIT 500"""
+    )
+    return render_template('admin_minebank_requests.html', requests=requests,
+                           settings=get_settings(), is_admin=session.get('minebank_role') == 'ADMIN',
+                           is_logged_in=True)
+
+
 @app.route('/admin/account-tiers')
 @admin_required
 def admin_account_tiers():
