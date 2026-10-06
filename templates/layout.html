@@ -6,53 +6,42 @@
     <meta http-equiv="Content-Security-Policy"
           content="default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; img-src 'self' data:;">
     <link rel="icon" href="{{ url_for('static', filename='favicon.svg') }}" type="image/svg+xml">
-    <title>{% block title %}Bank System{% endblock %}</title>
+    <title>{% block title %}MUOC{% endblock %}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/sweetalert2@11.7.3/dist/sweetalert2.min.css" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/main.css') }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/dark-mode.css') }}" rel="stylesheet">
+    <link href="{{ url_for('static', filename='css/legacy-bank.css') }}" rel="stylesheet">
     {% block head %}{% endblock %}
 </head>
 <body>
-<nav class="navbar navbar-expand-md navbar-dark bg-dark fixed-top">
+<nav class="navbar navbar-expand-md navbar-dark fixed-top">
     <div class="container-fluid">
-        <a class="navbar-brand" href="/">{% if settings %}{{ settings.bank_name }}{% else %}Bank System{% endif %}</a>
-        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse">
+        <a class="navbar-brand" href="/">{% if settings %}{{ settings.bank_name }}{% else %}MUOC{% endif %}</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarCollapse" aria-label="Menu">
             <span class="navbar-toggler-icon"></span>
         </button>
         <div class="collapse navbar-collapse" id="navbarCollapse">
             <ul class="navbar-nav me-auto mb-2 mb-md-0">
-                <li class="nav-item">
-                    <a class="nav-link" href="/">Home</a>
-                </li>
+                <li class="nav-item"><a class="nav-link" href="/">Home</a></li>
                 {% if settings and settings.allow_leaderboard %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="/leaderboard">Leaderboard</a>
-                    </li>
+                    <li class="nav-item"><a class="nav-link" href="/leaderboard">Leaderboard</a></li>
                 {% endif %}
                 {% if settings and settings.allow_public_logs %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="/logs">Public Logs</a>
-                    </li>
+                    <li class="nav-item"><a class="nav-link" href="/logs">Public Logs</a></li>
                 {% endif %}
                 {% if settings and is_admin %}
-                    <li class="nav-item">
-                        <a class="nav-link" href="/server-health">Server Health</a>
-                    </li>
+                    <li class="nav-item"><a class="nav-link" href="/server-health">Server Health</a></li>
                 {% endif %}
-                <li class="nav-item">
-                    <a class="nav-link" href="/about">About</a>
-                </li>
+                <li class="nav-item"><a class="nav-link" href="/about">About</a></li>
             </ul>
             <div class="d-flex align-items-center">
-                <!-- Dark Mode Toggle -->
                 <div class="form-check form-switch me-3">
                     <input class="form-check-input" type="checkbox" id="darkModeToggle">
-                    <label class="form-check-label text-light" for="darkModeToggle">
-                        <i class="bi bi-moon"></i>
-                    </label>
+                    <label class="form-check-label text-light small" for="darkModeToggle">Dark</label>
                 </div>
                 {% if is_logged_in %}
+                    <span class="text-white small me-2 d-none d-lg-inline">Wallet: {{ session.wallet_name }}</span>
                     <a href="/logout" class="btn btn-outline-light me-2">Logout</a>
                 {% else %}
                     <a href="/login" class="btn btn-outline-light me-2">Login</a>
@@ -65,65 +54,28 @@
 <div class="container-fluid">
     <div class="row">
         {% if is_logged_in %}
-            <nav id="sidebarMenu" class="col-md-3 col-lg-2 d-md-block bg-light sidebar collapse">
-                <div class="position-sticky pt-3 sidebar-sticky">
+            <nav id="sidebarMenu" class="col-md-3 col-lg-2 d-md-block sidebar collapse">
+                <div class="position-sticky sidebar-sticky">
+                    <div class="px-3 pb-2">
+                        <div class="muoc-section-note">Area riservata</div>
+                        <strong>{{ session.wallet_name }}</strong>
+                    </div>
                     <ul class="nav flex-column">
-                        <li class="nav-item">
-                            <a class="nav-link" href="/wallet/{{ session.wallet_name }}">
-                                My Wallet
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="/user/logs">
-                                My Logs
-                            </a>
-                        </li>
-                        <li class="nav-item">
-                            <a class="nav-link" href="/user/requests">
-                                My Requests
-                            </a>
-                        </li>
+                        <li class="nav-item"><a class="nav-link" href="/">Dashboard</a></li>
+                        <li class="nav-item"><a class="nav-link" href="/wallet/{{ session.wallet_name }}">My Wallet</a></li>
+                        <li class="nav-item"><a class="nav-link" href="/user/logs">Movimenti / Logs</a></li>
+                        <li class="nav-item"><a class="nav-link" href="/user/requests">Richieste</a></li>
                         {% if settings and settings.allow_self_review %}
-                            <li class="nav-item">
-                                <a class="nav-link" href="/requests">
-                                    Requests
-                                </a>
-                            </li>
+                            <li class="nav-item"><a class="nav-link" href="/requests">Nuova richiesta</a></li>
                         {% endif %}
                         {% if is_admin %}
-                            <li class="nav-header mt-3 mb-1 px-3">
-                                <span class="text-muted">Admin</span>
-                            </li>
-                            <li class="nav-item">
-                                <a class="nav-link" href="/admin/treasury">
-                                    Treasury
-                                </a>
-                            </li>
-                            <li class="nav-item">
-                                <a class="nav-link" href="/admin/wallets">
-                                    Wallets
-                                </a>
-                            </li>
-                            <li class="nav-item">
-                                <a class="nav-link" href="/admin/logs">
-                                    Admin Logs
-                                </a>
-                            </li>
-                            <li class="nav-item">
-                                <a class="nav-link" href="/admin/rules">
-                                    Rules
-                                </a>
-                            </li>
-                            <li class="nav-item">
-                                <a class="nav-link" href="/admin/requests">
-                                    All Requests
-                                </a>
-                            </li>
-                            <li class="nav-item">
-                                <a class="nav-link" href="/admin/sql">
-                                    Database Explorer
-                                </a>
-                            </li>
+                            <li class="nav-header mt-3 mb-1 px-3">Amministrazione</li>
+                            <li class="nav-item"><a class="nav-link" href="/admin/treasury">Tesoreria</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/admin/wallets">Wallet</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/admin/logs">Log amministrativi</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/admin/rules">Regole</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/admin/requests">Richieste da approvare</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/admin/sql">Database Explorer</a></li>
                         {% endif %}
                     </ul>
                 </div>
@@ -131,10 +83,12 @@
         {% endif %}
 
         <main class="{% if is_logged_in %}col-md-9 ms-sm-auto col-lg-10 px-md-4{% else %}col-md-12 px-4{% endif %}">
-            <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3 border-bottom">
+            <div class="d-flex justify-content-between flex-wrap flex-md-nowrap align-items-center pt-3 pb-2 mb-3">
                 <h1 class="h2">{% block header %}{% endblock %}</h1>
+                {% if is_logged_in %}
+                    <div class="muoc-section-note">MUOC Online Banking</div>
+                {% endif %}
             </div>
-
             {% block content %}{% endblock %}
         </main>
     </div>
@@ -145,7 +99,6 @@
 <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.7.3/dist/sweetalert2.all.min.js"></script>
 <script src="{{ url_for('static', filename='js/main.js') }}"></script>
 <script src="{{ url_for('static', filename='js/dark-mode.js') }}"></script>
-
 {% block scripts %}{% endblock %}
 </body>
 </html>
