@@ -423,6 +423,9 @@ def minebank_scheduled_page():
         try:
             action=request.form.get('action')
             if action == 'create':
+                ok,pin_error=verify_wallet_pin(session['minebank_client_id'], request.form.get('wallet_pin') or '')
+                if not ok:
+                    raise ValueError(pin_error)
                 next_run=datetime.fromisoformat(request.form['next_run'].replace('Z','+00:00'))
                 end_at=request.form.get('end_at')
                 end_dt=datetime.fromisoformat(end_at.replace('Z','+00:00')) if end_at else None
