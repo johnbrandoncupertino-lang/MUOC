@@ -365,6 +365,9 @@ def minebank_plans_page():
 @require_login
 def minebank_credit_page():
     account=selected_account()
+    if not account:
+        flash("No bank account exists for this client yet.","error")
+        return redirect(url_for("minebank_account_page"))
     facility=execute_query_dict("SELECT * FROM credit_facilities WHERE account_id=%s",(account["id"],))
     if request.method=="POST":
         amount=int(request.form.get("requested_limit","0"))
@@ -429,6 +432,126 @@ def minebank_password_request():
 @require_login
 def minebank_bonus_home():
     return redirect(url_for("minebank_credit_page"))
+
+def ensure_admin_account(client_id):
+    accounts = get_accounts(client_id)
+    if accounts:
+        return accounts[0]
+    create_account(client_id, "BUSINESS", "BUSINESS")
+    return get_accounts(client_id)[0]
+
+@app.route("/admin/minebank")
+@app.route("/admin/minebank/dashboard")
+@require_role("ADMIN")
+def admin_minebank_dashboard():
+    account = ensure_admin_account(session["minebank_client_id"])
+    stats = execute_query_dict("""
+        SELECT (SELECT COUNT(*) FROM bank_clients) AS clients,
+               (SELECT COUNT(*) FROM bank_accounts WHERE status<>'CLOSED') AS accounts,
+               (SELECT COALESCE(SUM(balance),0) FROM bank_accounts WHERE status<>'CLOSED') AS circulating,
+               (SELECT COUNT(*) FROM ledger_transactions WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours') AS tx24,
+               (SELECT COUNT(*) FROM bank_requests_v2 WHERE status='PENDING') AS pending_requests,
+               (SELECT COUNT(*) FROM ledger_transactions WHERE status='PENDING_APPROVAL') AS pending_transfers
+    """)[0]
+    setting = execute_query_dict("SELECT bank_name,currency_name,maximum_currency,allow_debts,allow_public_logs,allow_self_review FROM settings ORDER BY id LIMIT 1")[0]
+    recent = execute_query_dict("""SELECT e.*,c.email,a.account_number
+                                   FROM minebank_economy_events e
+                                   LEFT JOIN bank_clients c ON c.id=e.actor_client_id
+                                   LEFT JOIN bank_accounts a ON a.id=e.account_id
+                                   ORDER BY e.created_at DESC LIMIT 20""")
+    return render_template("minebank_admin_new.html", mode="dashboard", account=account,
+                           stats=stats, setting=setting, recent=recent,
+                           requests=[], transfers=[], portal_active="admin")
+
+@app.route("/admin/minebank/economy", methods=["GET","POST"])
+@require_role("ADMIN")
+def admin_minebank_economy():
+    error = None
+    if request.method == "POST":
+        try:
+            action = request.form.get("action")
+            amount = int(request.form.get("amount","0") or 0)
+            reason = request.form.get("reason","")[:500] or "Administrator economy adjustment"
+            account_number = request.form.get("account_number","").strip().upper()
+            if action == "set_supply":
+                maximum = int(request.form.get("maximum_currency","0") or 0)
+                if maximum < 0: raise ValueError("Maximum supply cannot be negative.")
+                execute_query("UPDATE settings SET maximum_currency=%s", (maximum,), commit=True)
+                flash("Maximum currency supply updated.", "success")
+            elif action in {"mint","burn"}:
+                if amount <= 0: raise ValueError("Amount must be greater than zero.")
+                rows = execute_query_dict("SELECT id,balance FROM bank_accounts WHERE account_number=%s", (account_number,))
+                if not rows: raise ValueError("Account not found.")
+                account_id = rows[0]["id"]
+                if action == "mint":
+                    circulating = int(execute_query("SELECT COALESCE(SUM(balance),0) FROM bank_accounts WHERE status<>'CLOSED'")[0][0])
+                    maximum = int(execute_query("SELECT maximum_currency FROM settings ORDER BY id LIMIT 1")[0][0])
+                    if circulating + amount > maximum:
+                        raise ValueError(f"Mint would exceed the maximum supply of {maximum} Emerald.")
+                    execute_query("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(amount,account_id),commit=True)
+                    event_type = "MINT"
+                else:
+                    if int(rows[0]["balance"]) < amount:
+                        raise ValueError("Cannot burn more Emeralds than the account currently holds.")
+                    execute_query("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(amount,account_id),commit=True)
+                    event_type = "BURN"
+                execute_query("""INSERT INTO minebank_economy_events(actor_client_id,event_type,account_id,amount,reason)
+                                 VALUES(%s,%s,%s,%s,%s)""",(session["minebank_client_id"],event_type,account_id,amount,reason),commit=True)
+                flash(f"{event_type.title()} completed: {amount} Emerald.", "success")
+            elif action == "toggle_debts":
+                execute_query("UPDATE settings SET allow_debts=%s",(request.form.get("enabled")=="true",),commit=True)
+                flash("Credit/debt policy updated.","success")
+            elif action == "toggle_public_logs":
+                execute_query("UPDATE settings SET allow_public_logs=%s",(request.form.get("enabled")=="true",),commit=True)
+                flash("Public ledger visibility policy updated.","success")
+        except Exception as exc:
+            error = str(exc)
+    setting=execute_query_dict("SELECT bank_name,currency_name,maximum_currency,allow_debts,allow_public_logs FROM settings ORDER BY id LIMIT 1")[0]
+    circulating=int(execute_query("SELECT COALESCE(SUM(balance),0) FROM bank_accounts WHERE status<>'CLOSED'")[0][0])
+    accounts=execute_query_dict("""SELECT a.id,a.account_number,a.balance,a.status,c.email
+                                   FROM bank_accounts a JOIN bank_clients c ON c.id=a.client_id
+                                   WHERE a.status<>'CLOSED' ORDER BY a.account_number""")
+    events=execute_query_dict("""SELECT e.*,c.email,a.account_number FROM minebank_economy_events e
+                                 LEFT JOIN bank_clients c ON c.id=e.actor_client_id
+                                 LEFT JOIN bank_accounts a ON a.id=e.account_id
+                                 ORDER BY e.created_at DESC LIMIT 100""")
+    return render_template("minebank_admin_new.html",mode="economy",setting=setting,
+                           circulating=circulating,accounts=accounts,events=events,
+                           error=error,requests=[],transfers=[],portal_active="economy")
+
+@app.route("/admin/minebank/clients", methods=["GET","POST"])
+@require_role("ADMIN")
+def admin_minebank_clients():
+    if request.method=="POST":
+        account_id=int(request.form.get("account_id","0") or 0)
+        status=request.form.get("status")
+        if status not in {"ACTIVE","LIMITED","FROZEN","CLOSED"}:
+            flash("Invalid account status.","error")
+        else:
+            execute_query("UPDATE bank_accounts SET status=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(status,account_id),commit=True)
+            flash("Account status updated.","success")
+    clients=execute_query_dict("""SELECT c.id,c.email,c.role,c.status,c.created_at,
+                                         a.id account_id,a.account_number,a.balance,a.status account_status,
+                                         t.display_name,t.code
+                                  FROM bank_clients c
+                                  LEFT JOIN bank_accounts a ON a.client_id=c.id AND a.status<>'CLOSED'
+                                  LEFT JOIN account_tiers_v2 t ON t.id=a.tier_id
+                                  ORDER BY c.created_at DESC""")
+    return render_template("minebank_admin_new.html",mode="clients",clients=clients,
+                           requests=[],transfers=[],portal_active="clients")
+
+@app.route("/admin/minebank/settings", methods=["GET","POST"])
+@require_role("ADMIN")
+def admin_minebank_settings():
+    if request.method=="POST":
+        bank_name=request.form.get("bank_name","MineBank").strip()[:100] or "MineBank"
+        currency=request.form.get("currency_name","Emerald").strip()[:50] or "Emerald"
+        maximum=int(request.form.get("maximum_currency","0") or 0)
+        execute_query("UPDATE settings SET bank_name=%s,currency_name=%s,maximum_currency=%s",(bank_name,currency,maximum),commit=True)
+        flash("Bank ownership settings saved.","success")
+    setting=execute_query_dict("SELECT * FROM settings ORDER BY id LIMIT 1")[0]
+    return render_template("minebank_admin_new.html",mode="settings",setting=setting,
+                           requests=[],transfers=[],portal_active="settings")
 
 @app.route("/admin/minebank/requests")
 @require_role("ADMIN","OPERATOR")
@@ -520,7 +643,7 @@ def minebank_setup():
         else:
             try:
                 if execute_query("SELECT id FROM settings LIMIT 1"):
-                    return render_template("minebank_setup.html", initialized=True), 409
+                    return render_template("minebank_public.html", setup=True, initialized=True), 409
                 execute_query(
                     "INSERT INTO settings(bank_name,currency_name,admin_password) VALUES(%s,%s,%s)",
                     (bank_name,currency,generate_password_hash(password)),commit=True)
