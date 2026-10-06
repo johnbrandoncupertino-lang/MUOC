@@ -163,6 +163,8 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                                 (idempotency_key,sender[1],txid))
                 audit_event(cur,actor_client_id=actor_client_id,action="TRANSFER_CREATED",target_type="TRANSACTION",target_id=txid,account_id=sender[0],transaction_id=txid,ip_address=ip_address,context={"recipient_account":recipient[2],"status":status})
                 return {"transaction_id":txid,"ledger_id":ledger_id,"status":status,"amount":amount,"fee":fee}
+    finally:
+        release_db_connection(conn)
 
 
 def approve_transfer(transaction_id, actor_user_id, ip_address=None):
