@@ -129,7 +129,10 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 if not sender or not recipient:
                     raise ValueError("Sender or recipient account not found.")
                 business_role=None
+                sender_tier_code=None
                 if sender[3]=="BUSINESS":
+                    cur.execute("SELECT code FROM account_tiers_v2 WHERE id=%s",(sender[4],))
+                    sender_tier_code=cur.fetchone()[0]
                     cur.execute("""SELECT role FROM minebank_business_members
                                    WHERE account_id=%s AND client_id=%s""",(sender[0],actor_client_id))
                     member=cur.fetchone() if actor_client_id is not None else None
@@ -205,7 +208,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                                      "; ".join(risk_reasons),__import__('json').dumps({"amount":amount})))
                 except Exception:
                     pass
-                requires_business_approval = sender[3]=="BUSINESS" and sender[4] in [self._x for self._x in ("BUSINESS_PRO","CORPORATE")] and business_role=="EMPLOYEE"
+                requires_business_approval = sender[3]=="BUSINESS" and sender_tier_code in ("BUSINESS_PRO","CORPORATE") and business_role=="EMPLOYEE"
                 status = "PENDING_BUSINESS_APPROVAL" if requires_business_approval else ("PENDING_APPROVAL" if amount >= PENDING_APPROVAL_THRESHOLD or risk_score >= 60 else "COMPLETED")
                 if transfer_kind is None:
                     transfer_kind = "OWN_TRANSFER" if sender[1] == recipient[1] else f"{sender[3]}_TO_{recipient[3]}"
