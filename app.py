@@ -315,6 +315,15 @@ def minebank_business_members(account_id):
     return render_template("minebank_portal.html",mode="business_members",business_account=owner[0],
                            members=members,pending_payments=pending_payments,error=error,portal_active="account")
 
+@app.route("/portal/business/<int:account_id>/payments/<transaction_id>/reject",methods=["POST"])
+@require_login
+def reject_business_payment(account_id,transaction_id):
+    try:
+        reject_business_transfer(transaction_id,session["minebank_client_id"],request.form.get("reason",""),request.remote_addr)
+        flash("Business payment rejected and funds released.","success")
+    except Exception as exc:
+        flash(str(exc),"error")
+    return redirect(url_for("minebank_business_members",account_id=account_id))
 @app.route("/portal/business/<int:account_id>/payments/<transaction_id>/approve",methods=["POST"])
 @require_login
 def approve_business_payment(account_id,transaction_id):
