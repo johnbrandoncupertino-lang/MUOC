@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Wallet - {{ user.wallet_name }}<script>const f=document.getElementById('creditDrawForm');if(f)f.addEventListener('submit',async e=>{e.preventDefault();const token=document.querySelector('input[name="csrf_token"]').value;const r=await fetch('/api/credit/draw',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':token},body:JSON.stringify({amount:Number(document.getElementById('creditDrawAmount').value)})});const d=await r.json();Swal.fire(r.ok?'Credit Drawn':'Credit Error',d.message||d.error,r.ok?'success':'error').then(()=>r.ok&&location.reload())});</script>{% endblock %}
+{% block title %}Wallet - {{ user.wallet_name }}{% endblock %}
 
 {% block header %}Wallet: {{ user.wallet_name }}{% endblock %}
 
@@ -211,4 +211,5 @@
 
 {% block scripts %}
     <script src="{{ url_for('static', filename='js/wallet.js') }}"></script>
+    <script>const f=document.getElementById('creditDrawForm');if(f)f.addEventListener('submit',async e=>{e.preventDefault();const token=document.querySelector('input[name="csrf_token"]').value;const r=await fetch('/api/credit/draw',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':token},body:JSON.stringify({amount:Number(document.getElementById('creditDrawAmount').value)})});const d=await r.json();Swal.fire(r.ok?'Credit Drawn':'Credit Error',d.message||d.error,r.ok?'success':'error').then(()=>r.ok&&location.reload())});</script>
 {% endblock %}
