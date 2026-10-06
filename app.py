@@ -392,6 +392,49 @@ def minebank_credit_page():
     return render_template("minebank_portal.html",mode="credit",account=account,
                            facility=facility[0] if facility else None,portal_active="credit")
 
+@app.route("/portal/recipients", methods=["GET","POST"])
+@require_login
+def minebank_recipients_page():
+    if request.method=="POST":
+        number=request.form.get("account_number","").strip().upper()
+        nickname=request.form.get("nickname","").strip()[:120]
+        if not number or not nickname:
+            flash("Account number and beneficiary name are required.","error")
+        else:
+            execute_query("""INSERT INTO minebank_saved_recipients(client_id,account_number,nickname)
+                             VALUES(%s,%s,%s)
+                             ON CONFLICT(client_id,account_number) DO UPDATE SET nickname=EXCLUDED.nickname""",
+                          (session["minebank_client_id"],number,nickname),commit=True)
+            flash("Beneficiary saved.","success")
+    recipients=execute_query_dict("SELECT * FROM minebank_saved_recipients WHERE client_id=%s ORDER BY nickname",
+                                  (session["minebank_client_id"],))
+    return render_template("minebank_portal.html",mode="recipients",recipients=recipients,portal_active="recipients")
+
+@app.route("/portal/scheduled", methods=["GET","POST"])
+@require_login
+def minebank_scheduled_page():
+    account=selected_account()
+    if request.method=="POST":
+        try:
+            from datetime import datetime
+            number=request.form.get("account_number","").strip().upper()
+            amount=int(request.form.get("amount","0"))
+            schedule=request.form.get("schedule_type","MONTHLY")
+            next_run=request.form.get("next_run_at","")
+            if amount<=0 or schedule not in {"ONCE","WEEKLY","MONTHLY"} or not next_run:
+                raise ValueError("Complete the scheduled payment fields.")
+            execute_query("""INSERT INTO minebank_scheduled_transfers
+                             (client_id,account_id,recipient_account_number,amount,schedule_type,next_run_at,description,reference)
+                             VALUES(%s,%s,%s,%s,%s,%s,%s,%s)""",
+                          (session["minebank_client_id"],account["id"],number,amount,schedule,next_run,
+                           request.form.get("description","")[:500],request.form.get("reference","")[:100]),commit=True)
+            flash("Scheduled payment created.","success")
+        except Exception as exc:
+            flash(str(exc),"error")
+    schedules=execute_query_dict("""SELECT * FROM minebank_scheduled_transfers
+                                     WHERE client_id=%s ORDER BY next_run_at""",(session["minebank_client_id"],))
+    return render_template("minebank_portal.html",mode="scheduled",account=account,schedules=schedules,portal_active="scheduled")
+
 @app.route("/portal/requests")
 @require_login
 def minebank_requests_page():
