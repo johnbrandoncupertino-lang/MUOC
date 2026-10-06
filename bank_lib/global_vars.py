@@ -8,6 +8,10 @@ DATABASE_ENV_NAMES = (
     "POSTGRES_URL_NON_POOLING",
 )
 
+# Compatibility name for legacy bank_lib modules. The active MineBank code
+# intentionally does not use a process-wide connection pool.
+DB_POOL = None
+
 
 def get_database_url():
     for name in DATABASE_ENV_NAMES:
