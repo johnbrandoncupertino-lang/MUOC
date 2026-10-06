@@ -33,7 +33,7 @@
 <label class="mb-label">Term (months)</label><input class="form-control mb-input" name="term_months" type="number" min="1" max="120" value="12">
 <label class="mb-label">Purpose</label><input class="form-control mb-input" name="purpose" maxlength="500">
 <label class="mb-label">Collateral required</label><input class="form-control mb-input" name="collateral_required" type="number" min="0" value="0">
-<label class="mb-label">Collateral note</label><input class="form-control mb-input" name="collateral_note">
+<label class="mb-label">Collateral note</label><input class="form-control mb-input" name="collateral_note"><label class="mb-label">MineBank password</label><input class="form-control mb-input" name="account_password" type="password" required><label class="mb-label">Wallet PIN</label><input class="form-control mb-input" name="wallet_pin" type="password" inputmode="numeric" maxlength="6" required>
 <button class="btn btn-primary mb-submit" type="submit">Apply for Loan</button>
 </form></div></section>
 <section class="col-xl-6"><div class="mb-panel"><div class="mb-panel-title">Recurring Payments</div>
@@ -43,7 +43,7 @@
 <label class="mb-label">Merchant name</label><input class="form-control mb-input" name="merchant_name" required>
 <label class="mb-label">Maximum amount</label><input class="form-control mb-input" name="maximum_amount" type="number" min="1" required>
 <label class="mb-label">Monthly limit</label><input class="form-control mb-input" name="monthly_limit" type="number" min="1">
-<label class="mb-label">Reference</label><input class="form-control mb-input" name="reference">
+<label class="mb-label">MineBank password</label><input class="form-control mb-input" name="account_password" type="password" required><label class="mb-label">Wallet PIN</label><input class="form-control mb-input" name="wallet_pin" type="password" inputmode="numeric" maxlength="6" required><label class="mb-label">Reference</label>
 <button class="btn btn-primary mb-submit" type="submit">Authorise Direct Debit</button>
 </form></div></section>
 <section class="col-xl-6"><div class="mb-panel"><div class="mb-panel-title">Subscriptions</div>
@@ -53,7 +53,7 @@
 <label class="mb-label">Merchant name</label><input class="form-control mb-input" name="merchant_name" required>
 <label class="mb-label">Amount</label><input class="form-control mb-input" name="amount" type="number" min="1" required>
 <label class="mb-label">Frequency</label><select class="form-control mb-input" name="frequency"><option>MONTHLY</option><option>WEEKLY</option></select>
-<label class="mb-label">Next charge</label><input class="form-control mb-input" name="next_charge_at" type="datetime-local" required>
+<label class="mb-label">MineBank password</label><input class="form-control mb-input" name="account_password" type="password" required><label class="mb-label">Wallet PIN</label><input class="form-control mb-input" name="wallet_pin" type="password" inputmode="numeric" maxlength="6" required><label class="mb-label">Next charge</label><input class="form-control mb-input" name="next_charge_at" type="datetime-local" required>
 <label class="mb-label">End date</label><input class="form-control mb-input" name="end_at" type="datetime-local">
 <label class="mb-label">Reference</label><input class="form-control mb-input" name="reference">
 <button class="btn btn-primary mb-submit" type="submit">Start Subscription</button>
@@ -72,7 +72,7 @@
 <form method="post" action="{{ url_for('minebank_bonus_payroll') }}" class="mb-request-form">
 <label class="mb-label">Business account ID</label><input class="form-control mb-input" name="account_id" required>
 <label class="mb-label">Period</label><input class="form-control mb-input" name="period_label" value="Current period">
-<label class="mb-label">Payments JSON</label><textarea class="form-control mb-input" name="items" rows="4" required>[{"recipient_account_number":"MB-000000","amount":100,"description":"Payroll"}]</textarea>
+<label class="mb-label">MineBank password</label><input class="form-control mb-input" name="account_password" type="password" required><label class="mb-label">Wallet PIN</label><input class="form-control mb-input" name="wallet_pin" type="password" inputmode="numeric" maxlength="6" required><label class="mb-label">Payments JSON</label><textarea class="form-control mb-input" name="items" rows="4" required>[{"recipient_account_number":"MB-000000","amount":100,"description":"Payroll"}]</textarea>
 <button class="btn btn-primary mb-submit" type="submit">Create Payroll Batch</button>
 </form></div></section>
 <section class="col-xl-6"><div class="mb-panel"><div class="mb-panel-title">Private Banking Support</div>
@@ -83,7 +83,7 @@
 <button class="btn btn-primary mb-submit" type="submit">Contact Bank</button>
 </form></div></section>
 <section class="col-12"><div class="mb-panel"><div class="mb-panel-title">Security</div>
-<form method="post" action="{{ url_for('minebank_bonus_emergency_lock') }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('Lock all banking operations for this client?')">Emergency Banking Lock</button></form>
+<form method="post" action="{{ url_for('minebank_bonus_emergency_lock') }}"><label class="mb-label">MineBank password</label><input class="form-control mb-input" name="account_password" type="password" required><label class="mb-label">Wallet PIN</label><input class="form-control mb-input" name="wallet_pin" type="password" inputmode="numeric" maxlength="6" required><button class="btn btn-outline-danger" type="submit" onclick="return confirm('Lock all banking operations for this client?')">Emergency Banking Lock</button></form>
 <p class="mb-help">This freezes banking operations, but does not prevent portal access. Bank Operations can unlock the account after verification.</p>
 </div></section>
 </div>

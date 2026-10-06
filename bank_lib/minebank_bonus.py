@@ -8,10 +8,12 @@ from datetime import datetime, timezone, timedelta
 from functools import wraps
 
 from flask import request, session, jsonify, render_template
+from werkzeug.security import check_password_hash
 
 from .database import get_db_connection, release_db_connection
 from .minebank_core import audit_event, next_transaction_id, create_ledger_transaction, transfer
 from .minebank_requests import create_notification
+from .minebank_auth import verify_wallet_pin
 
 BONUS_SCHEMA = r"""
 CREATE TABLE IF NOT EXISTS minebank_business_members (
@@ -186,6 +188,21 @@ def ensure_bonus_schema():
         try: conn.rollback()
         except Exception: pass
         return False
+    finally:
+        release_db_connection(conn)
+
+def strong_auth(client_id, password, pin):
+    conn=get_db_connection()
+    if conn is None: raise RuntimeError("Database unavailable")
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT password_hash FROM bank_clients WHERE id=%s",(client_id,))
+                row=cur.fetchone()
+                if not row or not check_password_hash(row[0], password or ""):
+                    raise PermissionError("Account password verification failed.")
+        ok,error=verify_wallet_pin(client_id,pin or "")
+        if not ok: raise PermissionError(error or "Wallet PIN verification failed.")
     finally:
         release_db_connection(conn)
 
@@ -658,6 +675,7 @@ def register_bonus_routes(app):
 
     @app.post("/portal/bonus/loan")
     def minebank_bonus_loan():
+        strong_auth(cid,request.form.get('account_password'),request.form.get('wallet_pin'))
         cid=session.get("minebank_client_id")
         try:
             lid,score=request_loan(cid,int(request.form["account_id"]),int(request.form["amount"]),
@@ -693,6 +711,7 @@ def register_bonus_routes(app):
 
     @app.post("/portal/bonus/emergency-lock")
     def minebank_bonus_emergency_lock():
+            strong_auth(session['minebank_client_id'],request.form.get('account_password'),request.form.get('wallet_pin'))
         try:
             emergency_lock(session["minebank_client_id"],request.form.get("reason","Client requested emergency banking lock"))
             return jsonify(ok=True)
@@ -708,6 +727,7 @@ def register_bonus_routes(app):
 
     @app.post("/portal/bonus/direct-debit")
     def minebank_bonus_direct_debit():
+            strong_auth(session['minebank_client_id'],request.form.get('account_password'),request.form.get('wallet_pin'))
         try:
             conn=get_db_connection()
             with conn:
@@ -725,6 +745,7 @@ def register_bonus_routes(app):
 
     @app.post("/portal/bonus/subscription")
     def minebank_bonus_subscription():
+            strong_auth(session['minebank_client_id'],request.form.get('account_password'),request.form.get('wallet_pin'))
         try:
             conn=get_db_connection()
             with conn:
@@ -778,6 +799,7 @@ def register_bonus_routes(app):
 
     @app.post("/portal/bonus/payroll")
     def minebank_bonus_payroll():
+            strong_auth(session['minebank_client_id'],request.form.get('account_password'),request.form.get('wallet_pin'))
         try:
             raw=json.loads(request.form["items"])
             bid=create_payroll_batch(int(request.form["account_id"]),session["minebank_client_id"],
