@@ -23,13 +23,33 @@
 <div class="mb-shell">
   <aside class="mb-sidebar">
     <div class="mb-sidebar-title">ONLINE BANKING</div>
-    <nav>
+    <nav class="mb-nav">
       <a class="{% if portal_active == 'dashboard' %}active{% endif %}" href="{{ url_for('minebank_dashboard') }}">Dashboard</a>
-      <a class="{% if portal_active == 'transfer' %}active{% endif %}" href="{{ url_for('minebank_transfer_page') }}">Make a Transfer</a>
-      <a class="{% if portal_active == 'transactions' %}active{% endif %}" href="{{ url_for('minebank_transactions_page') }}">Transactions</a>
-      <a class="{% if portal_active == 'credit' %}active{% endif %}" href="{{ url_for('minebank_credit_page') }}">Credit</a>
-      <a class="{% if portal_active == 'account' %}active{% endif %}" href="{{ url_for('minebank_account_page') }}">My Account</a>
-      <a class="{% if portal_active == 'security' %}active{% endif %}" href="{{ url_for('minebank_security_page') }}">Security</a>
+
+      <details class="mb-nav-group" {% if portal_active in ['transfer','transactions','statements'] %}open{% endif %}>
+        <summary>Payments &amp; Activity</summary>
+        <a class="{% if portal_active == 'transfer' %}active{% endif %}" href="{{ url_for('minebank_transfer_page') }}">Make a Transfer</a>
+        <a class="{% if portal_active == 'transactions' %}active{% endif %}" href="{{ url_for('minebank_transactions_page') }}">Transactions</a>
+        <a class="{% if portal_active == 'statements' %}active{% endif %}" href="{{ url_for('minebank_statements_page') }}">Statements</a>
+      </details>
+
+      <details class="mb-nav-group" {% if portal_active in ['credit','requests'] %}open{% endif %}>
+        <summary>Services &amp; Credit</summary>
+        <a class="{% if portal_active == 'credit' %}active{% endif %}" href="{{ url_for('minebank_credit_page') }}">Credit Facility</a>
+        <a class="{% if portal_active == 'requests' %}active{% endif %}" href="{{ url_for('minebank_requests_page') }}">Requests {% if minebank_pending_requests %}<span class="mb-nav-badge">{{ minebank_pending_requests }}</span>{% endif %}</a>
+      </details>
+
+      <details class="mb-nav-group" {% if portal_active in ['account','profile','notifications'] %}open{% endif %}>
+        <summary>My Bank</summary>
+        <a class="{% if portal_active == 'account' %}active{% endif %}" href="{{ url_for('minebank_account_page') }}">My Account</a>
+        <a class="{% if portal_active == 'profile' %}active{% endif %}" href="{{ url_for('minebank_profile_page') }}">Profile</a>
+        <a class="{% if portal_active == 'notifications' %}active{% endif %}" href="{{ url_for('minebank_notifications_page') }}">Messages</a>
+      </details>
+
+      <details class="mb-nav-group" {% if portal_active == 'security' %}open{% endif %}>
+        <summary>Security</summary>
+        <a class="{% if portal_active == 'security' %}active{% endif %}" href="{{ url_for('minebank_security_page') }}">Security Centre</a>
+      </details>
     </nav>
     <div class="mb-sidebar-separator"></div>
     <div class="mb-sidebar-note">Currency: <strong>Emerald</strong></div>
