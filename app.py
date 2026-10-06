@@ -202,8 +202,17 @@ def minebank_dashboard():
         "SELECT title,message,created_at FROM bank_notifications WHERE client_id=%s ORDER BY created_at DESC LIMIT 5",
         (session["minebank_client_id"],)
     )
+    chart_rows = execute_query_dict("""
+        SELECT d::date AS day,
+               COALESCE(SUM(CASE WHEN l.recipient_account_id=%s AND l.status='COMPLETED' THEN l.amount ELSE 0 END),0) AS incoming,
+               COALESCE(SUM(CASE WHEN l.sender_account_id=%s AND l.status='COMPLETED' THEN l.amount+l.fee ELSE 0 END),0) AS outgoing
+        FROM generate_series(CURRENT_DATE-INTERVAL '29 days',CURRENT_DATE,INTERVAL '1 day') d
+        LEFT JOIN ledger_transactions l ON l.created_at::date=d::date
+        GROUP BY d::date ORDER BY d::date
+    """,(account["id"],account["id"])) if account else []
     return render_template("minebank_portal.html", mode="dashboard", account=account,
-                           transactions=transactions, messages=messages, portal_active="dashboard")
+                           transactions=transactions, messages=messages, chart_rows=chart_rows,
+                           portal_active="dashboard")
 
 def selected_account():
     accounts = get_accounts(session["minebank_client_id"])
@@ -462,8 +471,16 @@ def admin_minebank_dashboard():
                                    LEFT JOIN bank_clients c ON c.id=e.actor_client_id
                                    LEFT JOIN bank_accounts a ON a.id=e.account_id
                                    ORDER BY e.created_at DESC LIMIT 20""")
+    economy_chart = execute_query_dict("""
+        SELECT d::date AS day,
+               COALESCE(SUM(CASE WHEN e.event_type='MINT' THEN e.amount ELSE 0 END),0) AS minted,
+               COALESCE(SUM(CASE WHEN e.event_type='BURN' THEN e.amount ELSE 0 END),0) AS burned
+        FROM generate_series(CURRENT_DATE-INTERVAL '29 days',CURRENT_DATE,INTERVAL '1 day') d
+        LEFT JOIN minebank_economy_events e ON e.created_at::date=d::date
+        GROUP BY d::date ORDER BY d::date
+    """)
     return render_template("minebank_admin_new.html", mode="dashboard", account=account,
-                           stats=stats, setting=setting, recent=recent,
+                           stats=stats, setting=setting, recent=recent, economy_chart=economy_chart,
                            requests=[], transfers=[], portal_active="admin")
 
 @app.route("/admin/minebank/economy", methods=["GET","POST"])
