@@ -10,7 +10,8 @@
 <label class="mb-label">First execution (ISO time)</label><input class="form-control mb-input mb-2" name="next_run" placeholder="2026-10-07T18:00:00+02:00" required>
 <label class="mb-label">End date <span>(optional)</span></label><input class="form-control mb-input mb-2" name="end_at" placeholder="2027-01-01T00:00:00+01:00">
 <label class="mb-label">Description</label><input class="form-control mb-input mb-2" name="description">
-<label class="mb-label">Reference</label><input class="form-control mb-input mb-3" name="reference">
+<label class="mb-label">Reference</label><input class="form-control mb-input mb-2" name="reference">
+<label class="mb-label">Wallet PIN</label><input class="form-control mb-input mb-3" name="wallet_pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required>
 <button class="btn btn-primary" type="submit">Create Schedule</button></form>{% endif %}
 </section></div>
 <div class="col-lg-7"><section class="mb-panel"><div class="mb-panel-title">Your schedules</div>
