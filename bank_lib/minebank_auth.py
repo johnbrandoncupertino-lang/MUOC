@@ -351,9 +351,22 @@ def review_tier_change(request_id, reviewer_id, approve):
                                 (row[2],row[2]))
                     if int(cur.fetchone()[0]) < int(cfg.get("minimum_operations",0)):
                         raise ValueError("Client does not meet minimum operations eligibility.")
-                    cur.execute("SELECT id FROM account_tiers_v2 WHERE code=%s",(tier_code,))
+                    cur.execute("SELECT id,max_balance,credit_enabled,default_credit_limit FROM account_tiers_v2 WHERE code=%s",(tier_code,))
+                    target=cur.fetchone()
+                    if not target:
+                        raise ValueError("Requested tier is unavailable.")
+                    if target[1] is not None and int(row[4]) > int(target[1]):
+                        raise ValueError("Tier downgrade would violate the new maximum account balance.")
+                    cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(row[2],))
+                    facility=cur.fetchone()
+                    if facility and facility[1]=="ACTIVE" and int(facility[0]) > int(target[3] or 0):
+                        if int(row[4]) < 0:
+                            new_limit=max(0,int(target[3] or 0))
+                            cur.execute("UPDATE credit_facilities SET credit_limit=%s WHERE account_id=%s",(new_limit,row[2]))
+                        else:
+                            cur.execute("UPDATE credit_facilities SET credit_limit=LEAST(credit_limit,%s) WHERE account_id=%s",(int(target[3] or 0),row[2]))
                     cur.execute("UPDATE bank_accounts SET tier_id=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
-                                (cur.fetchone()[0],row[2]))
+                                (target[0],row[2]))
                 cur.execute("""UPDATE bank_requests_v2 SET status=%s,reviewed_by=%s,reviewed_at=CURRENT_TIMESTAMP
                                WHERE id=%s""",(status,reviewer_id,request_id))
                 return status
