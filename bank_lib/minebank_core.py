@@ -295,6 +295,44 @@ def repay_credit(account_id, amount, source_account_id):
         release_db_connection(conn)
 
 
+def draw_credit(account_id, amount, actor_client_id=None, ip_address=None):
+    if not isinstance(amount, int) or amount <= 0:
+        raise ValueError("Credit draw must be a positive integer Emerald amount.")
+    conn = get_db_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                account = _lock_account(cur, account_id)
+                if not account or account[6] != "ACTIVE":
+                    raise ValueError("Account is not active.")
+                if actor_client_id is not None and account[1] != actor_client_id:
+                    raise ValueError("Account does not belong to the logged-in client.")
+                cur.execute("""SELECT credit_limit,status FROM credit_facilities
+                               WHERE account_id=%s FOR UPDATE""", (account_id,))
+                facility = cur.fetchone()
+                if not facility or facility[1] != "ACTIVE":
+                    raise ValueError("No active credit facility is available.")
+                available = int(facility[0]) + min(0, int(account[5]))
+                if amount > available:
+                    raise ValueError(f"Insufficient available credit. Available: {max(0, available)} Emerald.")
+                cur.execute("""UPDATE bank_accounts
+                               SET balance=balance-%s, updated_at=CURRENT_TIMESTAMP
+                               WHERE id=%s""", (amount, account_id))
+                txid = next_transaction_id(cur)
+                lid = create_ledger_transaction(
+                    cur, transaction_id=txid, transaction_type="CREDIT_DRAW",
+                    amount=amount, recipient_account_id=account_id,
+                    description="Credit draw"
+                )
+                audit_event(cur, actor_client_id, "CREDIT_DRAW", "ACCOUNT", str(account_id),
+                            account_id=account_id, transaction_id=txid, ip_address=ip_address,
+                            context={"amount": amount})
+                return {"transaction_id": txid, "ledger_id": lid, "status": "COMPLETED",
+                        "amount": amount, "available_credit": max(0, available - amount)}
+    finally:
+        release_db_connection(conn)
+
+
 def activate_credit(account_id, requested_limit):
     if not isinstance(requested_limit,int) or requested_limit<=0:
         raise ValueError("Credit limit must be a positive integer.")
