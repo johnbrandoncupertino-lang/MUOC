@@ -128,12 +128,21 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 recipient = _lock_recipient(cur, recipient_account_number)
                 if not sender or not recipient:
                     raise ValueError("Sender or recipient account not found.")
-                if actor_client_id is not None and sender[1] != actor_client_id:
+                business_role=None
+                if sender[3]=="BUSINESS":
                     cur.execute("""SELECT role FROM minebank_business_members
                                    WHERE account_id=%s AND client_id=%s""",(sender[0],actor_client_id))
-                    member=cur.fetchone()
-                    if not member or member[0] not in ("OWNER","ADMIN","FINANCE_MANAGER","EMPLOYEE"):
+                    member=cur.fetchone() if actor_client_id is not None else None
+                    if sender[1]==actor_client_id:
+                        business_role="OWNER"
+                    elif member:
+                        business_role=member[0]
+                    else:
+                        raise ValueError("You do not have access to this Business account.")
+                    if business_role not in ("OWNER","ADMIN","FINANCE_MANAGER","EMPLOYEE"):
                         raise ValueError("You do not have payment permission on this Business account.")
+                elif actor_client_id is not None and sender[1] != actor_client_id:
+                    raise ValueError("Account does not belong to the logged-in client.")
                 if sender[0] == recipient[0]:
                     raise ValueError("Self-transfers are not allowed.")
                 if sender[6] != "ACTIVE":
@@ -196,7 +205,8 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                                      "; ".join(risk_reasons),__import__('json').dumps({"amount":amount})))
                 except Exception:
                     pass
-                status = "PENDING_APPROVAL" if amount >= PENDING_APPROVAL_THRESHOLD or risk_score >= 60 else "COMPLETED"
+                requires_business_approval = sender[3]=="BUSINESS" and sender[4] in [self._x for self._x in ("BUSINESS_PRO","CORPORATE")] and business_role=="EMPLOYEE"
+                status = "PENDING_BUSINESS_APPROVAL" if requires_business_approval else ("PENDING_APPROVAL" if amount >= PENDING_APPROVAL_THRESHOLD or risk_score >= 60 else "COMPLETED")
                 if transfer_kind is None:
                     transfer_kind = "OWN_TRANSFER" if sender[1] == recipient[1] else f"{sender[3]}_TO_{recipient[3]}"
                 txid = next_transaction_id(cur)
@@ -215,6 +225,9 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                     cur,transaction_id=txid,transaction_type="TRANSFER",amount=amount,fee=fee,
                     currency=currency,sender_account_id=sender[0],recipient_account_id=recipient[0],
                     status=status,description=description,reference_id=reference,transfer_kind=transfer_kind)
+                if status == "PENDING_BUSINESS_APPROVAL":
+                    cur.execute("""INSERT INTO minebank_business_payment_approvals(transaction_id,account_id,requested_by,risk_score)
+                                   VALUES(%s,%s,%s,%s)""",(txid,sender[0],actor_client_id,risk_score))
                 if idempotency_key:
                     cur.execute("INSERT INTO transfer_idempotency(idempotency_key,client_id,transaction_id) VALUES(%s,%s,%s)",
                                 (idempotency_key,sender[1],txid))
@@ -223,6 +236,40 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
     finally:
         release_db_connection(conn)
 
+
+def approve_business_transfer(transaction_id, approver_client_id, ip_address=None):
+    conn=get_db_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT b.id,b.account_id,b.requested_by,b.status,b.risk_score,l.amount,l.fee,l.sender_account_id,l.recipient_account_id
+                               FROM minebank_business_payment_approvals b
+                               JOIN ledger_transactions l ON l.transaction_id=b.transaction_id
+                               WHERE b.transaction_id=%s AND b.status='PENDING' FOR UPDATE""",(transaction_id,))
+                row=cur.fetchone()
+                if not row: raise ValueError("Business approval not found.")
+                cur.execute("""SELECT role FROM minebank_business_members WHERE account_id=%s AND client_id=%s""",(row[1],approver_client_id))
+                member=cur.fetchone()
+                if not member or member[0] not in ("OWNER","ADMIN","FINANCE_MANAGER"):
+                    raise ValueError("Only an Owner, Business Admin or Finance Manager can approve this payment.")
+                if row[2]==approver_client_id:
+                    raise ValueError("The payment creator cannot approve their own payment.")
+                next_status="PENDING_APPROVAL" if row[4]>=60 or row[5]>=PENDING_APPROVAL_THRESHOLD else "COMPLETED"
+                if next_status=="COMPLETED":
+                    recipient=_lock_account(cur,row[8])
+                    if not recipient or recipient[6] not in ("ACTIVE","LIMITED"):
+                        raise ValueError("Recipient account cannot receive the payment.")
+                    cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s",(recipient[4],))
+                    max_balance=cur.fetchone()[0]
+                    if max_balance is not None and int(recipient[5])+int(row[5])>int(max_balance):
+                        raise ValueError("Recipient account balance limit exceeded.")
+                    cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(row[5],row[8]))
+                cur.execute("UPDATE minebank_business_payment_approvals SET status='APPROVED',approved_by=%s,reviewed_at=CURRENT_TIMESTAMP WHERE id=%s",(approver_client_id,row[0]))
+                cur.execute("UPDATE ledger_transactions SET status=%s,approved_by=%s,approved_at=CURRENT_TIMESTAMP WHERE transaction_id=%s",(next_status,approver_client_id,transaction_id))
+                audit_event(cur,actor_client_id=approver_client_id,action="BUSINESS_TRANSFER_APPROVED",target_type="TRANSACTION",target_id=transaction_id,account_id=row[1],transaction_id=transaction_id,ip_address=ip_address,context={"next_status":next_status})
+                return next_status
+    finally:
+        release_db_connection(conn)
 
 def approve_transfer(transaction_id, actor_user_id, ip_address=None):
     conn = get_db_connection()
