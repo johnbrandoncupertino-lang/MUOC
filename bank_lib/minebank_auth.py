@@ -226,7 +226,7 @@ def create_account(client_id, account_type="PERSONAL", tier_code="PERSONAL"):
                     raise ValueError("Requested account tier is unavailable.")
                 if account_type == "PERSONAL":
                     cur.execute(
-                        "SELECT id FROM bank_accounts WHERE client_id=%s AND account_type='PERSONAL' AND status<>'CLOSED'",
+                        "SELECT id FROM bank_accounts WHERE client_id=%s AND account_type='PERSONAL' AND status<>'DISABLED'",
                         (client_id,),
                     )
                     if cur.fetchone():
@@ -253,7 +253,7 @@ def get_client_accounts(client_id):
                     "SELECT a.id,a.account_number,a.account_type,t.code,t.display_name,a.balance,a.status,"
                     "a.monthly_outgoing_used,t.monthly_outgoing_limit,t.max_balance,t.credit_enabled "
                     "FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id "
-                    "WHERE a.client_id=%s AND a.status<>'CLOSED' ORDER BY a.account_type,a.id",
+                    "WHERE a.client_id=%s AND a.status<>'DISABLED' ORDER BY a.account_type,a.id",
                     (client_id,),
                 )
                 return cur.fetchall()
@@ -269,7 +269,7 @@ def request_tier_change(client_id, account_id, tier_code, requested_credit_limit
             with conn.cursor() as cur:
                 cur.execute("""SELECT a.id,a.client_id,a.balance,a.account_type,t.code
                                FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
-                               WHERE a.id=%s AND a.client_id=%s AND a.status<>'CLOSED'""",(account_id,client_id))
+                               WHERE a.id=%s AND a.client_id=%s AND a.status<>'DISABLED'""",(account_id,client_id))
                 account=cur.fetchone()
                 if not account:
                     raise ValueError("Account not found.")
