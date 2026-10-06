@@ -37,10 +37,14 @@ def client_from_session(cur):
 
 
 def login_client(email, password, captcha_answer=None):
-    ensure_security_schema()
+    # Login must fail gracefully when the database is temporarily unavailable.
+    try:
+        ensure_security_schema()
+    except Exception as exc:
+        print(f"MineBank security schema warning: {type(exc).__name__}: {exc}")
     conn = get_db_connection()
     if conn is None:
-        raise RuntimeError("Database unavailable")
+        return False, "MineBank is temporarily unavailable. Please try again in a moment."
     try:
         with conn:
             with conn.cursor() as cur:
