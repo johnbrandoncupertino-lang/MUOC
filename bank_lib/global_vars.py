@@ -3,18 +3,29 @@ import os
 from psycopg2.pool import ThreadedConnectionPool
 
 DATABASE_URL = (os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or os.environ.get("POSTGRES_PRISMA_URL") or os.environ.get("POSTGRES_URL_NON_POOLING") or "EMPTY").strip()
-if DATABASE_URL == "EMPTY":
-    print("The Database URL env variable is missing, THIS IS A MAJOR ISSUE!!")
-MAX_CONNECTION_POOL = 20  # Set the maximum number of connections in the pool for PostgreSQL  # Set the maximum number of connections in the pool for PostgreSQL
-
-# Database connection pool
+MAX_CONNECTION_POOL = 10
 DB_POOL = None
-if DATABASE_URL != "EMPTY":
+
+
+def _init_pool():
+    """Lazily initialize/reinitialize the PostgreSQL pool for serverless runtimes."""
+    global DB_POOL
+    if DB_POOL is not None:
+        return DB_POOL
+    if not DATABASE_URL or DATABASE_URL == "EMPTY":
+        print("Database URL environment variable is missing")
+        return None
     try:
         DB_POOL = ThreadedConnectionPool(1, MAX_CONNECTION_POOL, DATABASE_URL)
-        print("\033[92mDatabase connection pool initialized successfully\033[0m")
+        print("Database connection pool initialized successfully")
     except Exception as err:
-        print("\033[91mError initializing database connection pool:\033[0m", err)
         DB_POOL = None
-else:
-    print("Database connection pool skipped successfully, the default pages will show ONLY")
+        print(f"Error initializing database connection pool ({type(err).__name__}): {err}")
+    return DB_POOL
+
+
+_init_pool()
+
+
+def get_pool():
+    return _init_pool()
