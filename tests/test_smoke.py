@@ -25,3 +25,19 @@ def test_setup_uses_canonical_initializer():
     assert "init_db()" in setup
     assert "admin_password" in setup
     assert "VALUES (%s, %s, %s)" in setup
+
+
+def test_minebank_registration_route_exists():
+    import app
+
+    routes = {rule.rule for rule in app.app.url_map.iter_rules()}
+    assert "/portal/register" in routes
+    assert "/portal/login" in routes
+
+
+def test_minebank_registration_template_has_required_fields():
+    template = (ROOT / "templates" / "minebank_register.html").read_text(encoding="utf-8")
+    assert 'name="email"' in template
+    assert 'name="password"' in template
+    assert 'name="password_confirmation"' in template
+    assert "minebank_register" in template
