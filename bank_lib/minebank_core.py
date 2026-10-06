@@ -356,6 +356,7 @@ def activate_credit(account_id, requested_limit):
         with conn:
             with conn.cursor() as cur:
                 account=_lock_account(cur,account_id)
+                if account: _assert_banking_unlocked(cur, account[1])
                 if not account or account[6]!="ACTIVE":
                     raise ValueError("Account is not active.")
                 cur.execute("SELECT credit_enabled,default_credit_limit,private_or_corporate FROM account_tiers_v2 WHERE id=%s",
