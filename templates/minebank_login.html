@@ -15,6 +15,10 @@
           <div class="mb-3"><label class="form-label fw-bold">Password</label><input class="form-control" type="password" name="password" required autocomplete="current-password"></div>
           <button class="btn btn-primary w-100" type="submit">Access MineBank</button>
         </form>
+        <div class="text-center mt-3">
+          <span class="muoc-section-note">New to MineBank?</span>
+          <a href="{{ url_for('minebank_register') }}">Create a Personal Account</a>
+        </div>
       </div>
     </div>
   </div>

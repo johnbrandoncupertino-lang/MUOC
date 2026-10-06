@@ -126,6 +126,78 @@ def wants_html_response():
 # MineBank v2 portal routes. The legacy wallet routes remain available while
 # the migration is completed.
 # ---------------------------------------------------------------------------
+@app.route('/portal/register', methods=['GET', 'POST'])
+def minebank_register():
+    if request.method == 'POST':
+        email = (request.form.get('email') or '').strip().lower()
+        password = request.form.get('password') or ''
+        confirmation = request.form.get('password_confirmation') or ''
+
+        if not email or '@' not in email or len(email) > 320:
+            return render_template('minebank_register.html', error='Please enter a valid email address.',
+                                   settings=get_settings(), is_admin=False, is_logged_in=False), 400
+        if len(password) < 8:
+            return render_template('minebank_register.html', error='Password must contain at least 8 characters.',
+                                   settings=get_settings(), is_admin=False, is_logged_in=False), 400
+        if password != confirmation:
+            return render_template('minebank_register.html', error='The passwords do not match.',
+                                   settings=get_settings(), is_admin=False, is_logged_in=False), 400
+
+        from werkzeug.security import generate_password_hash
+        conn = None
+        try:
+            from bank_lib.database import get_db_connection, release_db_connection
+            conn = get_db_connection()
+            if conn is None:
+                raise RuntimeError('Database unavailable.')
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT id FROM bank_clients WHERE LOWER(email)=LOWER(%s)", (email,))
+                    if cur.fetchone():
+                        return render_template('minebank_register.html',
+                                               error='An account with this email already exists. Please sign in instead.',
+                                               settings=get_settings(), is_admin=False, is_logged_in=False), 409
+                    cur.execute(
+                        "INSERT INTO bank_clients(email,password_hash,role,status) "
+                        "VALUES(%s,%s,'CLIENT','ACTIVE') RETURNING id,email,role",
+                        (email, generate_password_hash(password)),
+                    )
+                    client = cur.fetchone()
+                    cur.execute("SELECT nextval('muoc_account_number_seq')")
+                    account_number = f"MB-{cur.fetchone()[0]:08d}"
+                    cur.execute(
+                        "SELECT id FROM account_tiers_v2 WHERE code='PERSONAL' AND account_type='PERSONAL' AND active=TRUE"
+                    )
+                    tier = cur.fetchone()
+                    if not tier:
+                        raise RuntimeError('Personal account tier is not configured.')
+                    cur.execute(
+                        "INSERT INTO bank_accounts(client_id,account_number,account_type,tier_id) "
+                        "VALUES(%s,%s,'PERSONAL',%s)",
+                        (client[0], account_number, tier[0]),
+                    )
+            session.clear()
+            session.permanent = True
+            session['minebank_client_id'] = client[0]
+            session['minebank_role'] = client[2]
+            session['minebank_email'] = client[1]
+            return redirect(url_for('minebank_dashboard'))
+        except Exception as exc:
+            logging.exception("MineBank registration failed")
+            if conn is not None:
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
+            return render_template('minebank_register.html',
+                                   error='Registration could not be completed. Please try again.',
+                                   settings=get_settings(), is_admin=False, is_logged_in=False), 500
+        finally:
+            if conn is not None:
+                from bank_lib.database import release_db_connection
+                release_db_connection(conn)
+
+
 @app.route('/portal/login', methods=['GET', 'POST'])
 def minebank_login():
     if request.method == 'POST':

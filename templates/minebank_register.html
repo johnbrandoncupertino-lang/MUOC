@@ -1,0 +1,37 @@
+{% extends "layout.html" %}
+{% block title %}Create MineBank Account{% endblock %}
+{% block header %}Create MineBank Account{% endblock %}
+{% block content %}
+<div class="row justify-content-center">
+  <div class="col-lg-5">
+    <div class="card">
+      <div class="card-header">Open a Personal Account</div>
+      <div class="card-body">
+        {% if error %}<div class="alert alert-danger fw-bold">{{ error }}</div>{% endif %}
+        <p class="muoc-section-note">Register with your email address and password. A Personal MineBank account is created automatically.</p>
+        <form method="post" action="{{ url_for('minebank_register') }}">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="email">Email</label>
+            <input class="form-control" id="email" type="email" name="email" required autocomplete="email" maxlength="320">
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="password">Password</label>
+            <input class="form-control" id="password" type="password" name="password" required minlength="8" autocomplete="new-password">
+            <div class="form-text">Use at least 8 characters.</div>
+          </div>
+          <div class="mb-3">
+            <label class="form-label fw-bold" for="password_confirmation">Confirm password</label>
+            <input class="form-control" id="password_confirmation" type="password" name="password_confirmation" required minlength="8" autocomplete="new-password">
+          </div>
+          <button class="btn btn-primary w-100" type="submit">Create MineBank Account</button>
+        </form>
+        <div class="text-center mt-3">
+          <span class="muoc-section-note">Already registered?</span>
+          <a href="{{ url_for('minebank_login') }}">Sign in</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
