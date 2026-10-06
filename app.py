@@ -127,6 +127,16 @@ def handle_general_error(e):
         return jsonify(error=description), code
 
 
+@app.context_processor
+def minebank_navigation_context():
+    if session.get('minebank_client_id'):
+        try:
+            return {'minebank_pending_requests': count_pending_requests(session['minebank_client_id'])}
+        except Exception:
+            return {'minebank_pending_requests': 0}
+    return {'minebank_pending_requests': 0}
+
+
 def wants_html_response():
     best = request.accept_mimetypes.best_match(['application/json', 'text/html'])
     return best == 'text/html' and request.accept_mimetypes[best] > request.accept_mimetypes['application/json']
