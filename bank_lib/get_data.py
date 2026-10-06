@@ -1,4 +1,4 @@
-import platform
+import platform\nfrom datetime import datetime, UTC\n\nfrom .log_module import create_log
 import time
 
 import psutil
@@ -6,6 +6,47 @@ from flask import g, request
 
 from .database import execute_query_dict, execute_query, check_db_connection
 from .global_vars import DB_POOL
+
+
+# Get total currency in circulation
+def get_user_account_profile(wallet_name):
+    """Return tier and credit information for a wallet."""
+    rows = execute_query_dict("""
+        SELECT u.wallet_name, u.account_tier, u.credit_limit, u.credit_used,
+               t.monthly_fee, t.credit_enabled
+        FROM users u
+        LEFT JOIN account_tiers t ON t.name = u.account_tier
+        WHERE u.wallet_name = %s
+    """, (wallet_name,))
+    return rows[0] if rows else None
+
+
+def charge_monthly_tier_fee(wallet_name):
+    """Charge one account-tier fee per calendar month."""
+    if wallet_name == 'admin':
+        return
+    profile = get_user_account_profile(wallet_name)
+    if not profile or not profile['monthly_fee'] or profile['monthly_fee'] <= 0:
+        return
+    period = datetime.now(UTC).strftime('%Y-%m')
+    existing = execute_query("SELECT 1 FROM account_charges WHERE wallet_name=%s AND billing_period=%s",
+                             (wallet_name, period))
+    if existing:
+        return
+    amount = float(profile['monthly_fee'])
+    user = get_user_by_wallet_name(wallet_name)
+    status = 'Charged'
+    if user and user['current_currency'] >= amount:
+        execute_query("UPDATE users SET current_currency=current_currency-%s WHERE wallet_name=%s",
+                      (amount, wallet_name), commit=True)
+        create_log("Monthly Fee", f"{amount} {get_settings()['currency_name']} charged for {profile['account_tier']} account", "Private")
+    else:
+        status = 'Unpaid'
+        create_log("Monthly Fee", f"Monthly {profile['account_tier']} account fee of {amount} {get_settings()['currency_name']} could not be charged", "Private")
+    execute_query("""
+        INSERT INTO account_charges (wallet_name,tier_name,amount,billing_period,status)
+        VALUES (%s,%s,%s,%s,%s)
+    """, (wallet_name, profile['account_tier'], amount, period, status), commit=True)
 
 
 # Get total currency in circulation
@@ -138,6 +179,13 @@ def get_server_health():
                 }
             ]
         }
+
+
+# Update admin balance to reflect available currency
+def get_user_by_wallet_name(wallet_name):
+    """Get a wallet record by name."""
+    result = execute_query_dict("SELECT * FROM users WHERE wallet_name = %s", (wallet_name,))
+    return result[0] if result else None
 
 
 # Update admin balance to reflect available currency
