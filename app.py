@@ -41,7 +41,7 @@ from bank_lib.minebank_requests import create_request, list_requests, count_pend
 from bank_lib.minebank_features import (save_recipient, delete_recipient, list_recipients, save_transfer_template,
     list_transfer_templates, delete_transfer_template, create_scheduled_transfer, list_scheduled_transfers,
     set_scheduled_transfer_status, get_notification_preferences, save_notification_preferences,
-    list_notifications, mark_notification_read, queue_email, analytics_for_account)
+    list_notifications, mark_notification_read, queue_email, analytics_for_account, preview_transfer)
 
 # Set up logging once in your app setup code (if not already done)
 logging.basicConfig(
@@ -319,38 +319,51 @@ def _minebank_selected_account():
 @require_minebank_login
 def minebank_transfer_page():
     accounts, selected = _minebank_selected_account()
+    error = None
+    preview = session.get('minebank_transfer_preview')
     if request.method == 'POST':
         if selected is None:
-            return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
-                                   error='No active account is available for transfers.', settings=get_settings(),
-                                   portal_active='transfer', is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
-        pin = request.form.get('wallet_pin') or ''
-        ok, error = verify_wallet_pin(session['minebank_client_id'], pin)
-        if not ok:
-            return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
-                                   error=error, settings=get_settings(), portal_active='transfer',
-                                   is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
-        try:
-            amount = int(request.form.get('amount') or 0)
-            result = minebank_transfer(
-                sender_account_id=selected[0],
-                recipient_account_number=(request.form.get('recipient_account_number') or '').strip(),
-                amount=amount,
-                description=(request.form.get('description') or '').strip() or None,
-                reference=(request.form.get('reference') or '').strip() or None,
-                actor_client_id=session['minebank_client_id'],
-                ip_address=request.remote_addr,
-            )
-            return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
-                                   success=result, settings=get_settings(), portal_active='transfer',
-                                   is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
-        except (ValueError, TypeError) as exc:
-            return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
-                                   error=str(exc), settings=get_settings(), portal_active='transfer',
-                                   is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
+            error = 'No active account is available for transfers.'
+        else:
+            stage = request.form.get('stage','review')
+            if stage == 'review':
+                try:
+                    preview = preview_transfer(session['minebank_client_id'], selected[0],
+                        (request.form.get('recipient_account_number') or '').strip(),
+                        int(request.form.get('amount') or 0))
+                    preview.update(description=(request.form.get('description') or '').strip(),
+                                   reference=(request.form.get('reference') or '').strip())
+                    session['minebank_transfer_preview'] = preview
+                except (ValueError, TypeError) as exc:
+                    error = str(exc)
+            elif stage == 'confirm':
+                pin = request.form.get('wallet_pin') or ''
+                ok, pin_error = verify_wallet_pin(session['minebank_client_id'], pin)
+                if not ok:
+                    error = pin_error
+                elif not preview:
+                    error = 'The transfer review has expired. Please start again.'
+                else:
+                    try:
+                        result = minebank_transfer(
+                            sender_account_id=selected[0],
+                            recipient_account_number=preview['recipient_account_number'],
+                            amount=int(preview['amount']),
+                            description=preview.get('description') or None,
+                            reference=preview.get('reference') or None,
+                            actor_client_id=session['minebank_client_id'],
+                            ip_address=request.remote_addr,
+                        )
+                        session.pop('minebank_transfer_preview', None)
+                        preview = None
+                        return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
+                            success=result, settings=get_settings(), portal_active='transfer', is_logged_in=True,
+                            is_admin=session.get('minebank_role') == 'ADMIN')
+                    except (ValueError, TypeError) as exc:
+                        error = str(exc)
     return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
-                           settings=get_settings(), portal_active='transfer', is_logged_in=True,
-                           is_admin=session.get('minebank_role') == 'ADMIN')
+                           preview=preview, error=error, settings=get_settings(), portal_active='transfer',
+                           is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
 
 
 @app.route('/portal/recipients', methods=['GET','POST'])
