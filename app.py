@@ -244,9 +244,20 @@ def minebank_dashboard():
     accounts = get_client_accounts(client_id)
     if accounts and not session.get('minebank_account_id'):
         session['minebank_account_id'] = accounts[0][0]
+    selected = next((row for row in accounts if row[0] == session.get('minebank_account_id')), None)
+    recent_transactions = []
+    if selected is not None:
+        recent_transactions = execute_query_dict(
+            """SELECT transaction_id, transaction_type, amount, fee, currency, status,
+                      description, created_at, sender_account_id, recipient_account_id
+               FROM ledger_transactions
+               WHERE sender_account_id=%s OR recipient_account_id=%s
+               ORDER BY created_at DESC LIMIT 5""",
+            (selected[0], selected[0]),
+        )
     return render_template('minebank_dashboard.html', accounts=accounts,
                            selected_account_id=session.get('minebank_account_id'),
-                           selected_account=next((row for row in accounts if row[0] == session.get('minebank_account_id')), None),
+                           selected_account=selected, recent_transactions=recent_transactions,
                            settings=get_settings(), portal_active='dashboard', is_logged_in=True,
                            is_admin=session.get('minebank_role') == 'ADMIN')
 
