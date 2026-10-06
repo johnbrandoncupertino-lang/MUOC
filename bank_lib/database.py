@@ -240,11 +240,6 @@ def init_db():
             )
         """, commit=True)
         execute_query("""
-            INSERT INTO settings (bank_name,currency_name,admin_password)
-            SELECT 'MineBank','Emerald',''
-            WHERE NOT EXISTS (SELECT 1 FROM settings)
-        """, commit=True)
-        execute_query("""
             INSERT INTO fee_rules (name,transaction_type,percentage_bps,fixed_amount,active,priority)
             VALUES ('Standard transfer fee','TRANSFER',0,0,TRUE,100)
             ON CONFLICT (name) DO NOTHING
