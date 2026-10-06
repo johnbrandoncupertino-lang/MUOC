@@ -228,6 +228,27 @@ def init_db():
 
         from .minebank_schema import init_minebank_v2
         init_minebank_v2()
+        execute_query("""
+            CREATE TABLE IF NOT EXISTS minebank_economy_events (
+                id BIGSERIAL PRIMARY KEY,
+                actor_client_id BIGINT REFERENCES bank_clients(id),
+                event_type VARCHAR(30) NOT NULL,
+                account_id BIGINT REFERENCES bank_accounts(id),
+                amount BIGINT NOT NULL CHECK (amount > 0),
+                reason VARCHAR(500),
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """, commit=True)
+        execute_query("""
+            INSERT INTO settings (bank_name,currency_name,admin_password)
+            SELECT 'MineBank','Emerald',''
+            WHERE NOT EXISTS (SELECT 1 FROM settings)
+        """, commit=True)
+        execute_query("""
+            INSERT INTO fee_rules (name,transaction_type,percentage_bps,fixed_amount,active,priority)
+            VALUES ('Standard transfer fee','TRANSFER',0,0,TRUE,100)
+            ON CONFLICT (name) DO NOTHING
+        """, commit=True)
         return True
     except Exception as e:
         print(f"Error initializing database: {e}")
