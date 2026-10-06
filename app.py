@@ -493,6 +493,78 @@ def minebank_requests_page():
     return render_template("minebank_portal.html",mode="requests",
                            requests=list_requests(session["minebank_client_id"]),portal_active="requests")
 
+@app.route("/portal/payment-requests",methods=["GET","POST"])
+@require_login
+def minebank_payment_requests_page():
+    cid=session["minebank_client_id"]
+    account=selected_account()
+    error=None
+    if request.method=="POST":
+        try:
+            payer_number=request.form.get("payer_account_number","").strip().upper()
+            amount=int(request.form.get("amount","0"))
+            if amount<=0: raise ValueError("Requested amount must be positive.")
+            payer=execute_query_dict("SELECT id,client_id FROM bank_accounts WHERE account_number=%s AND status<>'CLOSED'",(payer_number,))
+            if not payer: raise ValueError("Payer account not found.")
+            if payer[0]["client_id"]==cid: raise ValueError("You cannot request payment from your own account.")
+            execute_query("""INSERT INTO minebank_payment_requests
+                             (requester_client_id,payer_client_id,requester_account_id,payer_account_number,amount,description,expires_at)
+                             VALUES(%s,%s,%s,%s,%s,%s,CURRENT_TIMESTAMP+INTERVAL '30 days')""",
+                          (cid,payer[0]["client_id"],account["id"],payer_number,amount,
+                           request.form.get("description","")[:500]),commit=True)
+            flash("Payment request sent. It expires in 30 days.","success")
+        except Exception as exc:
+            error=str(exc)
+    incoming=execute_query_dict("""SELECT p.*,a.account_number requester_account_number,c.email requester_email
+                                    FROM minebank_payment_requests p
+                                    JOIN bank_accounts a ON a.id=p.requester_account_id
+                                    JOIN bank_clients c ON c.id=p.requester_client_id
+                                    WHERE p.payer_client_id=%s AND p.status='PENDING' AND p.expires_at>CURRENT_TIMESTAMP
+                                    ORDER BY p.created_at DESC""",(cid,))
+    outgoing=execute_query_dict("""SELECT p.*,a.account_number requester_account_number
+                                    FROM minebank_payment_requests p
+                                    JOIN bank_accounts a ON a.id=p.requester_account_id
+                                    WHERE p.requester_client_id=%s ORDER BY p.created_at DESC LIMIT 100""",(cid,))
+    return render_template("minebank_portal.html",mode="payment_requests",account=account,error=error,
+                           incoming_requests=incoming,outgoing_requests=outgoing,portal_active="payment_requests")
+
+@app.route("/portal/payment-requests/<int:request_id>/reject",methods=["POST"])
+@require_login
+def reject_payment_request(request_id):
+    execute_query("UPDATE minebank_payment_requests SET status='REJECTED' WHERE id=%s AND payer_client_id=%s AND status='PENDING'",
+                  (request_id,session["minebank_client_id"]),commit=True)
+    flash("Payment request rejected.","success")
+    return redirect(url_for("minebank_payment_requests_page"))
+
+@app.route("/portal/payment-requests/<int:request_id>/pay",methods=["POST"])
+@require_login
+def pay_payment_request(request_id):
+    row=execute_query_dict("""SELECT p.*,a.account_number requester_account_number
+                              FROM minebank_payment_requests p JOIN bank_accounts a ON a.id=p.requester_account_id
+                              WHERE p.id=%s AND p.payer_client_id=%s AND p.status='PENDING' AND p.expires_at>CURRENT_TIMESTAMP""",
+                           (request_id,session["minebank_client_id"]))
+    if not row:
+        flash("Payment request not found, expired or already processed.","error")
+        return redirect(url_for("minebank_payment_requests_page"))
+    payer=execute_query_dict("SELECT id FROM bank_accounts WHERE account_number=%s AND client_id=%s",(row[0]["payer_account_number"],session["minebank_client_id"]))
+    try:
+        from bank_lib.minebank_auth import verify_wallet_pin
+        ok,msg=verify_wallet_pin(session["minebank_client_id"],request.form.get("wallet_pin",""))
+        if not ok: raise ValueError(msg)
+        result=transfer(sender_account_id=payer[0]["id"],recipient_account_number=row[0]["requester_account_number"],
+                        amount=int(row[0]["amount"]),description=row[0]["description"],actor_client_id=session["minebank_client_id"],
+                        ip_address=request.remote_addr,transfer_kind="PAYMENT_REQUEST",
+                        idempotency_key=f"PAYREQ-{request_id}")
+        if result["status"]=="COMPLETED":
+            execute_query("UPDATE minebank_payment_requests SET status='PAID',paid_transaction_id=%s WHERE id=%s AND status='PENDING'",
+                          (result["transaction_id"],request_id),commit=True)
+            flash("Payment request paid.","success")
+        else:
+            flash("Payment submitted and is pending bank approval.","success")
+    except Exception as exc:
+        flash(str(exc),"error")
+    return redirect(url_for("minebank_payment_requests_page"))
+
 @app.route("/portal/profile", methods=["GET","POST"])
 @require_login
 def minebank_profile_page():
