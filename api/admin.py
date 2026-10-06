@@ -350,6 +350,21 @@ def register_admin_api_routes(app):
                                            f"Refund request from {request_item['wallet_name']} doesn't match original sender {sender}",
                                            "Admin")
                                 return jsonify({"error": "Refund requester doesn't match original sender"}), 400
+
+            elif request_item['request_type'] == "CreditLine":
+                wallet_name = request_item['wallet_name']
+                match = re.search(r'Requested limit:\s*([0-9]+(?:\\.[0-9]+)?)', request_item['reason'] or '')
+                requested_limit = float(match.group(1)) if match else 0
+                user = get_user_by_wallet_name(wallet_name)
+                if not user or requested_limit <= 0:
+                    return jsonify({"error": "Invalid credit request"}), 400
+                tier = execute_query_dict("SELECT credit_enabled,default_credit_limit FROM account_tiers WHERE name=%s", (user['account_tier'],))
+                if not tier or not tier[0]['credit_enabled']:
+                    return jsonify({"error": "Account tier does not allow credit"}), 403
+                approved_limit = min(requested_limit, float(tier[0]['default_credit_limit']))
+                execute_query("UPDATE users SET credit_limit=%s, credit_used=0 WHERE wallet_name=%s",
+                              (approved_limit, wallet_name), commit=True)
+                create_log("Credit Line Approved", f"Admin approved {approved_limit} credit for {wallet_name}", "Admin")
             elif request_item['request_type'] == "PasswordReset":
                 # Process password reset logic here
                 user = get_user_by_wallet_name(request_item['wallet_name'])
@@ -495,6 +510,38 @@ def register_admin_api_routes(app):
         except Exception as e:
             print(f"Error rejecting request: {e}")
             return jsonify({"error": f"Failed to reject request: {str(e)}"}), 500
+
+    @app.route('/api/admin/setTier', methods=['POST'])
+    @admin_required
+    def api_admin_set_tier():
+        data = request.json or {}
+        wallet_name = data.get('wallet_name')
+        tier_name = data.get('tier')
+        tier = execute_query_dict("SELECT * FROM account_tiers WHERE name=%s", (tier_name,))
+        user = get_user_by_wallet_name(wallet_name)
+        if not tier or not user or wallet_name == 'admin':
+            return jsonify({"error": "Invalid wallet or account tier"}), 400
+        execute_query("UPDATE users SET account_tier=%s WHERE wallet_name=%s", (tier_name, wallet_name), commit=True)
+        create_log("Account Tier Changed", f"Admin changed {wallet_name} to {tier_name}", "Admin")
+        return jsonify({"message": f"{wallet_name} is now on the {tier_name} account tier"})
+
+    @app.route('/api/admin/setCreditLimit', methods=['POST'])
+    @admin_required
+    def api_admin_set_credit_limit():
+        data = request.json or {}
+        wallet_name = data.get('wallet_name')
+        try:
+            limit = float(data.get('credit_limit', 0))
+        except (TypeError, ValueError):
+            return jsonify({"error": "Invalid credit limit"}), 400
+        user = get_user_by_wallet_name(wallet_name)
+        if not user or wallet_name == 'admin' or limit < 0:
+            return jsonify({"error": "Invalid wallet or credit limit"}), 400
+        if float(user['credit_used'] or 0) > limit:
+            return jsonify({"error": "Credit limit cannot be below current credit usage"}), 400
+        execute_query("UPDATE users SET credit_limit=%s WHERE wallet_name=%s", (limit, wallet_name), commit=True)
+        create_log("Credit Limit Changed", f"Admin set {wallet_name} credit limit to {limit}", "Admin")
+        return jsonify({"message": "Credit limit updated"})
 
     @app.route('/api/admin/purgeLogs', methods=['POST'])
     @admin_required
