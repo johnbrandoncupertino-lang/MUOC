@@ -339,10 +339,38 @@ def minebank_transfer_page():
 @app.route("/portal/transactions")
 @require_login
 def minebank_transactions_page():
-    account = selected_account()
-    transactions = recent_transactions(account,250)
-    return render_template("minebank_portal.html", mode="transactions", account=account,
-                           transactions=transactions, portal_active="transactions")
+    account=selected_account()
+    q=request.args.get("q","").strip()
+    status=request.args.get("status","").strip().upper()
+    direction=request.args.get("direction","").strip().upper()
+    category=request.args.get("category","").strip()
+    date_from=request.args.get("date_from","").strip()
+    date_to=request.args.get("date_to","").strip()
+    min_amount=request.args.get("min_amount","").strip()
+    max_amount=request.args.get("max_amount","").strip()
+    params=[account["id"],account["id"]]
+    where=["(sender_account_id=%s OR recipient_account_id=%s)"]
+    if q:
+        where.append("(transaction_id ILIKE %s OR COALESCE(description,'') ILIKE %s OR COALESCE(reference_id,'') ILIKE %s)")
+        like=f"%{q}%"; params.extend([like,like,like])
+    if status:
+        where.append("status=%s"); params.append(status)
+    if direction=="INCOMING":
+        where.append("recipient_account_id=%s"); params.append(account["id"])
+    elif direction=="OUTGOING":
+        where.append("sender_account_id=%s"); params.append(account["id"])
+    if category:
+        where.append("category=%s"); params.append(category)
+    if date_from:
+        where.append("created_at::date>=%s"); params.append(date_from)
+    if date_to:
+        where.append("created_at::date<=%s"); params.append(date_to)
+    if min_amount:
+        where.append("amount>=%s"); params.append(int(min_amount))
+    if max_amount:
+        where.append("amount<=%s"); params.append(int(max_amount))
+    transactions=execute_query_dict("SELECT transaction_id,transaction_type,amount,fee,status,description,reference_id,created_at,sender_account_id,recipient_account_id,category FROM ledger_transactions WHERE "+" AND ".join(where)+" ORDER BY created_at DESC LIMIT 500",tuple(params))
+    return render_template("minebank_portal.html",mode="transactions",account=account,transactions=transactions,portal_active="transactions")
 
 @app.route("/portal/transactions/<transaction_id>")
 @require_login
@@ -375,6 +403,17 @@ def minebank_transaction_receipt(transaction_id):
                             (transaction_id,session["minebank_client_id"],session["minebank_client_id"]))
     if not rows: return "Transaction not found",404
     return render_template("minebank_portal.html",mode="receipt",account=selected_account(),transaction=rows[0],portal_active="transactions")
+
+@app.route("/portal/transactions/<transaction_id>/category",methods=["POST"])
+@require_login
+def minebank_transaction_category(transaction_id):
+    category=request.form.get("category","").strip()[:60] or None
+    execute_query("""UPDATE ledger_transactions SET category=%s
+                     WHERE transaction_id=%s AND (sender_account_id IN (SELECT id FROM bank_accounts WHERE client_id=%s)
+                     OR recipient_account_id IN (SELECT id FROM bank_accounts WHERE client_id=%s))""",
+                  (category,transaction_id,session["minebank_client_id"],session["minebank_client_id"]),commit=True)
+    flash("Transaction category updated.","success")
+    return redirect(url_for("minebank_transaction_detail",transaction_id=transaction_id))
 
 @app.route("/portal/transactions/<transaction_id>/refund", methods=["POST"])
 @require_login
