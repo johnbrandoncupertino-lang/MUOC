@@ -273,6 +273,56 @@ def wallet_page(wallet_name):
                            resetPasswordForm=resetPasswordForm, bankTransferForm=bankTransferForm, delAccountForm=delAccountForm)
 
 
+
+@app.route('/reports')
+@login_required
+def reports_page():
+    wallet_name = session['wallet_name']
+    settings = get_settings()
+    start = request.args.get('start')
+    end = request.args.get('end')
+    params = [f"%{wallet_name}%"]
+    query = "SELECT id, action, details, timestamp FROM logs WHERE private_level='Private' AND details ILIKE %s"
+    if start:
+        query += " AND timestamp >= %s"
+        params.append(start)
+    if end:
+        query += " AND timestamp < (%s::date + INTERVAL '1 day')"
+        params.append(end)
+    query += " ORDER BY timestamp DESC LIMIT 1000"
+    logs = execute_query_dict(query, tuple(params))
+    profile = get_user_account_profile(wallet_name)
+    return render_template('reports.html', logs=logs, profile=profile, settings=settings, start=start, end=end, is_admin='admin' in session and session['admin'], is_logged_in=True)
+
+
+@app.route('/reports/print')
+@login_required
+def reports_print():
+    wallet_name = session['wallet_name']
+    settings = get_settings()
+    logs = execute_query_dict("SELECT id, action, details, timestamp FROM logs WHERE private_level='Private' AND details ILIKE %s ORDER BY timestamp DESC LIMIT 1000", (f"%{wallet_name}%",))
+    profile = get_user_account_profile(wallet_name)
+    return render_template('report_print.html', logs=logs, profile=profile, settings=settings, generated_at=datetime.now(UTC), wallet_name=wallet_name)
+
+
+@app.route('/admin/account-tiers')
+@admin_required
+def admin_account_tiers():
+    settings = get_settings()
+    tiers = execute_query_dict("SELECT * FROM account_tiers ORDER BY id")
+    users = execute_query_dict("SELECT wallet_name, account_tier, credit_limit, credit_used FROM users WHERE wallet_name != 'admin' ORDER BY wallet_name")
+    return render_template('admin_account_tiers.html', tiers=tiers, users=users, settings=settings, is_admin=True, is_logged_in=True)
+
+
+@app.route('/admin/credit')
+@admin_required
+def admin_credit():
+    settings = get_settings()
+    requests = execute_query_dict("SELECT * FROM requests WHERE request_type='CreditLine' AND status='Pending' ORDER BY timestamp DESC")
+    users = execute_query_dict("SELECT wallet_name, current_currency, account_tier, credit_limit, credit_used FROM users WHERE wallet_name != 'admin' ORDER BY wallet_name")
+    return render_template('admin_credit.html', requests=requests, users=users, settings=settings, is_admin=True, is_logged_in=True)
+
+
 @app.route('/leaderboard')
 def leaderboard_page():
     settings = get_settings()
