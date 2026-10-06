@@ -190,3 +190,66 @@ VALUES
 ('BUSINESS_PRO','BUSINESS','Business Pro',0,NULL,NULL,TRUE,0,FALSE,'{}'),
 ('CORPORATE','BUSINESS','Corporate',0,NULL,NULL,TRUE,0,TRUE,'{"minimum_age":18,"minimum_balance":0,"minimum_operations":0}')
 ON CONFLICT (code) DO NOTHING;
+
+
+CREATE TABLE IF NOT EXISTS minebank_saved_recipients (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
+    account_number VARCHAR(32) NOT NULL,
+    nickname VARCHAR(120) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(client_id, account_number)
+);
+
+CREATE TABLE IF NOT EXISTS minebank_transfer_templates (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
+    name VARCHAR(120) NOT NULL,
+    recipient_account_number VARCHAR(32) NOT NULL,
+    amount BIGINT CHECK (amount IS NULL OR amount > 0),
+    description VARCHAR(500),
+    reference VARCHAR(100),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS minebank_scheduled_transfers (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
+    account_id BIGINT NOT NULL REFERENCES bank_accounts(id),
+    recipient_account_number VARCHAR(32) NOT NULL,
+    amount BIGINT NOT NULL CHECK (amount > 0),
+    schedule_type VARCHAR(20) NOT NULL CHECK (schedule_type IN ('ONCE','WEEKLY','MONTHLY')),
+    next_run_at TIMESTAMPTZ NOT NULL,
+    end_at TIMESTAMPTZ,
+    description VARCHAR(500),
+    reference VARCHAR(100),
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','PAUSED','COMPLETED','CANCELLED')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS minebank_notification_preferences (
+    client_id BIGINT PRIMARY KEY REFERENCES bank_clients(id) ON DELETE CASCADE,
+    email_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    transfer_email BOOLEAN NOT NULL DEFAULT TRUE,
+    security_email BOOLEAN NOT NULL DEFAULT TRUE,
+    request_email BOOLEAN NOT NULL DEFAULT TRUE,
+    statement_email BOOLEAN NOT NULL DEFAULT TRUE,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS minebank_email_outbox (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT REFERENCES bank_clients(id),
+    email VARCHAR(320) NOT NULL,
+    notification_type VARCHAR(30) NOT NULL,
+    subject VARCHAR(255) NOT NULL,
+    body TEXT NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'QUEUED',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    sent_at TIMESTAMPTZ,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS minebank_email_outbox_idx ON minebank_email_outbox(status,created_at);
+
+ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS category VARCHAR(60);
