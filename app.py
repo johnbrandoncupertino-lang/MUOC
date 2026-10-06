@@ -38,6 +38,10 @@ from bank_lib.minebank_core import (transfer as minebank_transfer, approve_trans
                                      repay_credit, activate_credit, draw_credit, chargeback, accrue_monthly_credit_interest)
 from bank_lib.minebank_api import create_api_credential, authenticate_api_credential, revoke_api_credential
 from bank_lib.minebank_requests import create_request, list_requests, count_pending_requests, create_notification
+from bank_lib.minebank_features import (save_recipient, delete_recipient, list_recipients, save_transfer_template,
+    list_transfer_templates, delete_transfer_template, create_scheduled_transfer, list_scheduled_transfers,
+    set_scheduled_transfer_status, get_notification_preferences, save_notification_preferences,
+    list_notifications, mark_notification_read, queue_email, analytics_for_account)
 
 # Set up logging once in your app setup code (if not already done)
 logging.basicConfig(
@@ -246,7 +250,11 @@ def minebank_dashboard():
         session['minebank_account_id'] = accounts[0][0]
     selected = next((row for row in accounts if row[0] == session.get('minebank_account_id')), None)
     recent_transactions = []
+    notifications = []
+    analytics = None
     if selected is not None:
+        notifications = list_notifications(client_id, 5)
+        analytics = analytics_for_account(selected[0]) if selected[3] in ('BUSINESS','BUSINESS_PRO') or selected[3] == 'CORPORATE' else None
         recent_transactions = execute_query_dict(
             """SELECT transaction_id, transaction_type, amount, fee, currency, status,
                       description, created_at, sender_account_id, recipient_account_id
@@ -258,6 +266,7 @@ def minebank_dashboard():
     return render_template('minebank_dashboard.html', accounts=accounts,
                            selected_account_id=session.get('minebank_account_id'),
                            selected_account=selected, recent_transactions=recent_transactions,
+                           notifications=notifications, analytics=analytics,
                            settings=get_settings(), portal_active='dashboard', is_logged_in=True,
                            is_admin=session.get('minebank_role') == 'ADMIN')
 
@@ -343,6 +352,114 @@ def minebank_transfer_page():
                            settings=get_settings(), portal_active='transfer', is_logged_in=True,
                            is_admin=session.get('minebank_role') == 'ADMIN')
 
+
+@app.route('/portal/recipients', methods=['GET','POST'])
+@require_minebank_login
+def minebank_recipients_page():
+    accounts, selected = _minebank_selected_account()
+    error = None
+    if request.method == 'POST':
+        action = request.form.get('action')
+        try:
+            if action == 'save':
+                save_recipient(session['minebank_client_id'],
+                               (request.form.get('account_number') or '').strip(),
+                               (request.form.get('nickname') or '').strip())
+            elif action == 'delete':
+                delete_recipient(session['minebank_client_id'], int(request.form.get('recipient_id')))
+            else:
+                raise ValueError('Unknown recipient operation.')
+        except (ValueError, TypeError) as exc:
+            error = str(exc)
+    return render_template('minebank_recipients.html', accounts=accounts, selected_account=selected,
+                           recipients=list_recipients(session['minebank_client_id']), error=error,
+                           settings=get_settings(), portal_active='recipients', is_logged_in=True,
+                           is_admin=session.get('minebank_role') == 'ADMIN')
+
+@app.route('/portal/templates', methods=['GET','POST'])
+@require_minebank_login
+def minebank_transfer_templates_page():
+    accounts, selected = _minebank_selected_account()
+    error = None
+    if request.method == 'POST':
+        try:
+            action=request.form.get('action')
+            if action == 'save':
+                amount=request.form.get('amount')
+                save_transfer_template(session['minebank_client_id'],
+                    request.form.get('name',''), request.form.get('recipient_account_number',''),
+                    int(amount) if amount else None, request.form.get('description') or None,
+                    request.form.get('reference') or None)
+            elif action == 'delete':
+                delete_transfer_template(session['minebank_client_id'], int(request.form.get('template_id')))
+            else:
+                raise ValueError('Unknown transfer template operation.')
+        except (ValueError, TypeError) as exc:
+            error=str(exc)
+    return render_template('minebank_templates.html', accounts=accounts, selected_account=selected,
+                           templates=list_transfer_templates(session['minebank_client_id']), error=error,
+                           settings=get_settings(), portal_active='templates', is_logged_in=True,
+                           is_admin=session.get('minebank_role') == 'ADMIN')
+
+@app.route('/portal/scheduled', methods=['GET','POST'])
+@require_minebank_login
+def minebank_scheduled_page():
+    accounts, selected = _minebank_selected_account()
+    error=None
+    if request.method == 'POST':
+        try:
+            action=request.form.get('action')
+            if action == 'create':
+                next_run=datetime.fromisoformat(request.form['next_run'].replace('Z','+00:00'))
+                end_at=request.form.get('end_at')
+                end_dt=datetime.fromisoformat(end_at.replace('Z','+00:00')) if end_at else None
+                create_scheduled_transfer(session['minebank_client_id'], selected[0],
+                    request.form['recipient_account_number'], int(request.form['amount']),
+                    request.form['schedule_type'], next_run, end_dt,
+                    request.form.get('description') or None, request.form.get('reference') or None)
+            elif action == 'status':
+                set_scheduled_transfer_status(session['minebank_client_id'], int(request.form['schedule_id']),
+                                               request.form['status'])
+            else:
+                raise ValueError('Unknown scheduled transfer operation.')
+        except (ValueError, TypeError, KeyError) as exc:
+            error=str(exc)
+    return render_template('minebank_scheduled.html', accounts=accounts, selected_account=selected,
+                           scheduled=list_scheduled_transfers(session['minebank_client_id']), error=error,
+                           settings=get_settings(), portal_active='scheduled', is_logged_in=True,
+                           is_admin=session.get('minebank_role') == 'ADMIN')
+
+@app.route('/portal/preferences', methods=['GET','POST'])
+@require_minebank_login
+def minebank_preferences_page():
+    accounts, selected = _minebank_selected_account()
+    if request.method == 'POST':
+        save_notification_preferences(session['minebank_client_id'],
+            request.form.get('email_enabled') == 'on',
+            request.form.get('transfer_email') == 'on',
+            request.form.get('security_email') == 'on',
+            request.form.get('request_email') == 'on',
+            request.form.get('statement_email') == 'on')
+        return redirect(url_for('minebank_preferences_page'))
+    return render_template('minebank_preferences.html', accounts=accounts, selected_account=selected,
+                           preferences=get_notification_preferences(session['minebank_client_id']),
+                           settings=get_settings(), portal_active='preferences', is_logged_in=True,
+                           is_admin=session.get('minebank_role') == 'ADMIN')
+
+@app.route('/portal/notifications')
+@require_minebank_login
+def minebank_notifications_page_v2():
+    accounts, selected = _minebank_selected_account()
+    return render_template('minebank_notifications.html', accounts=accounts, selected_account=selected,
+                           notifications=list_notifications(session['minebank_client_id']), settings=get_settings(),
+                           portal_active='notifications', is_logged_in=True,
+                           is_admin=session.get('minebank_role') == 'ADMIN')
+
+@app.route('/portal/notifications/<int:notification_id>/read', methods=['POST'])
+@require_minebank_login
+def minebank_notification_read():
+    mark_notification_read(session['minebank_client_id'], notification_id)
+    return redirect(url_for('minebank_notifications_page'))
 
 @app.route('/portal/transactions')
 @require_minebank_login
