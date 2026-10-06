@@ -690,9 +690,11 @@ def review_request(request_id):
         status="APPROVED" if approve else "REJECTED"
         execute_query("UPDATE bank_requests_v2 SET status=%s,reviewed_by=%s,reviewed_at=CURRENT_TIMESTAMP WHERE id=%s",
                       (status,session["minebank_client_id"],request_id),commit=True)
-        return jsonify(status=status)
+        flash(f"Request {status.lower()}.", "success")
+        return redirect(url_for("admin_minebank_requests"))
     except Exception as exc:
-        return jsonify(error=str(exc)),400
+        flash(f"Could not review request: {exc}", "error")
+        return redirect(url_for("admin_minebank_requests"))
 
 @app.route("/admin/minebank/transfer/<transaction_id>/review",methods=["POST"])
 @require_role("ADMIN","OPERATOR")
@@ -704,9 +706,12 @@ def review_transfer(transaction_id):
             approve_transfer(transaction_id,session["minebank_client_id"],request.remote_addr)
         else:
             reject_transfer(transaction_id,session["minebank_client_id"],data.get("reason"),request.remote_addr)
-        return jsonify(status="APPROVED" if approve else "REJECTED")
+        status = "APPROVED" if approve else "REJECTED"
+        flash(f"Transfer {status.lower()}.", "success")
+        return redirect(url_for("admin_minebank_requests"))
     except Exception as exc:
-        return jsonify(error=str(exc)),400
+        flash(f"Could not review transfer: {exc}", "error")
+        return redirect(url_for("admin_minebank_requests"))
 
 @app.route("/setup", methods=["GET","POST"])
 @app.route("/admin/setup", methods=["GET","POST"])
