@@ -812,6 +812,33 @@ def register_bonus_routes(app):
                                                                   request.form["subject"],request.form["body"]))
         except Exception as e: return jsonify(error=str(e)),400
 
+    @app.post("/portal/bonus/trusted-device")
+    def minebank_bonus_trusted_device():
+        import hashlib, secrets
+        try:
+            raw=secrets.token_urlsafe(32)
+            did=trusted_device(session["minebank_client_id"],request.form.get("label","Trusted device"),
+                               hashlib.sha256(raw.encode()).hexdigest(),
+                               request.headers.get("User-Agent",""),_ip())
+            return jsonify(ok=True,device_id=did,device_token=raw)
+        except Exception as e:
+            return jsonify(error=str(e)),400
+
+    @app.get("/portal/bonus/business/members")
+    def minebank_bonus_business_members():
+        conn=get_db_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("""SELECT bm.account_id,bm.client_id,bm.role,bm.permissions,bm.spending_limit,bm.active
+                                   FROM minebank_business_members bm
+                                   JOIN bank_accounts ba ON ba.id=bm.account_id
+                                   WHERE ba.client_id=%s OR bm.client_id=%s
+                                   ORDER BY bm.account_id,bm.client_id""",
+                                (session["minebank_client_id"],session["minebank_client_id"]))
+                    return jsonify(members=_rowdict(cur))
+        finally: release_db_connection(conn)
+
     @app.get("/portal/bonus/security-events")
     def minebank_bonus_security_events():
         conn=get_db_connection()
