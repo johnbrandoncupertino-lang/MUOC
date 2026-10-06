@@ -19,7 +19,7 @@ from bank_lib.minebank_auth import (
 )
 from bank_lib.minebank_core import (
     approve_transfer, chargeback, deposit, draw_credit, process_monthly_billing,
-    reject_transfer, repay_credit, transfer,
+    reject_transfer, repay_credit, transfer, cancel_transfer,
 )
 from bank_lib.minebank_requests import create_request, list_requests
 from bank_lib.minebank_security import ensure_security_schema, validate_session, list_active_sessions, terminate_session, terminate_other_sessions, security_event
@@ -413,6 +413,16 @@ def minebank_transaction_category(transaction_id):
                      OR recipient_account_id IN (SELECT id FROM bank_accounts WHERE client_id=%s))""",
                   (category,transaction_id,session["minebank_client_id"],session["minebank_client_id"]),commit=True)
     flash("Transaction category updated.","success")
+    return redirect(url_for("minebank_transaction_detail",transaction_id=transaction_id))
+
+@app.route("/portal/transactions/<transaction_id>/cancel",methods=["POST"])
+@require_login
+def minebank_cancel_transfer(transaction_id):
+    try:
+        cancel_transfer(transaction_id,session["minebank_client_id"],request.remote_addr)
+        flash("Pending transfer cancelled and funds released.","success")
+    except Exception as exc:
+        flash(str(exc),"error")
     return redirect(url_for("minebank_transaction_detail",transaction_id=transaction_id))
 
 @app.route("/portal/transactions/<transaction_id>/refund", methods=["POST"])
