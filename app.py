@@ -57,7 +57,7 @@ def current_client():
     rows = execute_query_dict(
         "SELECT id,email,role,status,date_of_birth,password_hash,password_changed_at,last_login,"
         "wallet_pin_hash,wallet_pin_failed_attempts,wallet_pin_locked_until,admin_reauth_at FROM bank_clients WHERE id=%s", (cid,)
-    )    )
+    )
     return rows[0] if rows else None
 
 def get_accounts(client_id):
@@ -65,7 +65,8 @@ def get_accounts(client_id):
         """SELECT a.id,a.account_number,a.account_type,a.balance,a.status,
                   a.monthly_outgoing_used,a.monthly_outgoing_period,a.last_outgoing_at,a.freeze_type,
                   t.code,t.display_name,t.monthly_fee,t.max_balance,t.monthly_outgoing_limit,
-                  t.daily_outgoing_limit,t.single_transfer_limit,t.credit_enabled,t.default_credit_limit           FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
+                  t.daily_outgoing_limit,t.single_transfer_limit,t.credit_enabled,t.default_credit_limit
+           FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
            WHERE a.client_id=%s AND a.status<>'CLOSED'
            ORDER BY a.account_type,a.id""", (client_id,)
     )
