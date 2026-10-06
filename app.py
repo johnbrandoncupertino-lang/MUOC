@@ -801,34 +801,6 @@ def minebank_password_request():
                            is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
 
 
-@app.route('/portal/security/password', methods=['POST'])
-@require_minebank_login
-def minebank_password_request():
-    accounts, selected = _minebank_selected_account()
-    password = request.form.get('new_password') or ''
-    confirmation = request.form.get('password_confirmation') or ''
-    reason = (request.form.get('reason') or '').strip()
-    if len(password) < 8:
-        error = 'Password must contain at least 8 characters.'
-    elif password != confirmation:
-        error = 'Password confirmation does not match.'
-    elif len(reason) < 3 or len(reason) > 500:
-        error = 'Please provide a reason between 3 and 500 characters.'
-    else:
-        from werkzeug.security import generate_password_hash
-        request_id = create_request(
-            session['minebank_client_id'], 'PASSWORD_RESET',
-            selected[0] if selected else None,
-            {'password_hash': generate_password_hash(password), 'reason': reason},
-        )
-        create_notification(session['minebank_client_id'], 'REQUEST_CREATED',
-                            'Password change requested',
-                            f'Password change request #{request_id} is pending bank review.',
-                            selected[0] if selected else None)
-        return redirect(url_for('minebank_security_page'))
-    return render_template('minebank_security.html', accounts=accounts, selected_account=selected,
-                           error=error, settings=get_settings(), portal_active='security',
-                           is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
 
 
 @app.route('/portal/notifications')
