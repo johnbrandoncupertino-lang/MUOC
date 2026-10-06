@@ -299,6 +299,18 @@ ALTER TABLE minebank_scheduled_transfers DROP CONSTRAINT IF EXISTS minebank_sche
 ALTER TABLE minebank_scheduled_transfers ADD CONSTRAINT minebank_scheduled_transfers_schedule_type_check
 CHECK (schedule_type IN ('ONCE','DAILY','WEEKLY','MONTHLY','CUSTOM'));
 
+CREATE TABLE IF NOT EXISTS minebank_business_payment_approvals (
+    id BIGSERIAL PRIMARY KEY,
+    transaction_id VARCHAR(32) UNIQUE NOT NULL REFERENCES ledger_transactions(transaction_id),
+    account_id BIGINT NOT NULL REFERENCES bank_accounts(id),
+    requested_by BIGINT NOT NULL REFERENCES bank_clients(id),
+    approved_by BIGINT REFERENCES bank_clients(id),
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','APPROVED','REJECTED')),
+    risk_score INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at TIMESTAMPTZ
+);
+
 CREATE TABLE IF NOT EXISTS minebank_payment_requests (
     id BIGSERIAL PRIMARY KEY,
     requester_client_id BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
