@@ -378,11 +378,6 @@ def minebank_transfer_page():
                         except (ValueError, TypeError, PermissionError) as exc:
                             error = str(exc)
     return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
-                            success=result, settings=get_settings(), portal_active='transfer', is_logged_in=True,
-                            is_admin=session.get('minebank_role') == 'ADMIN')
-                    except (ValueError, TypeError, PermissionError) as exc:
-                        error = str(exc)
-    return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
                            preview=preview, error=error, settings=get_settings(), portal_active='transfer',
                            is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
 
