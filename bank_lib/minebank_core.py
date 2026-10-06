@@ -259,7 +259,7 @@ def deposit(account_id, amount, actor_user_id=None, description=None):
             with conn.cursor() as cur:
                 account=_lock_account(cur,account_id)
                 if account: _assert_banking_unlocked(cur, account[1])
-                if not account or account[6] != "ENABLED":
+                if not account or account[6] not in ("ACTIVE","LIMITED"):
                     raise ValueError("Account cannot receive deposits.")
                 cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s",(account[4],))
                 max_balance=cur.fetchone()[0]
@@ -343,7 +343,7 @@ def draw_credit(account_id, amount, actor_client_id=None, ip_address=None):
             with conn.cursor() as cur:
                 account = _lock_account(cur, account_id)
                 if account: _assert_banking_unlocked(cur, account[1])
-                if not account or account[6] != "ENABLED":
+                if not account or account[6] not in ("ACTIVE","LIMITED"):
                     raise ValueError("Account is not active.")
                 if actor_client_id is not None and account[1] != actor_client_id:
                     raise ValueError("Account does not belong to the logged-in client.")
@@ -505,7 +505,7 @@ def process_monthly_billing():
                                FROM bank_accounts a
                                JOIN account_tiers_v2 t ON t.id=a.tier_id
                                LEFT JOIN credit_facilities c ON c.account_id=a.id
-                               WHERE a.status='ENABLED'""")
+                               WHERE a.status IN ('ACTIVE','LIMITED')""")
                 accounts=cur.fetchall()
                 period=_now().strftime("%Y-%m")
                 for a in accounts:
