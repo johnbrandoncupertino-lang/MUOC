@@ -26,16 +26,24 @@ async function fetchData(url, options = {}) {
     }
 }
 
-// Confirm dangerous actions
+// MUOC confirmation dialog — intentionally styled like the rest of the classic
+// banking interface rather than using the default rounded SweetAlert appearance.
 function confirmAction(title, text, icon, confirmButtonText, callback) {
     Swal.fire({
         title: title,
         text: text,
         icon: icon,
         showCancelButton: true,
-        confirmButtonColor: "#d33",
-        cancelButtonColor: "#3085d6",
         confirmButtonText: confirmButtonText,
+        cancelButtonText: "Cancel",
+        reverseButtons: true,
+        customClass: {
+            popup: "muoc-alert",
+            title: "muoc-alert-title",
+            htmlContainer: "muoc-alert-text",
+            confirmButton: "muoc-alert-confirm",
+            cancelButton: "muoc-alert-cancel"
+        }
     }).then((result) => {
         if (result.isConfirmed) {
             callback()
