@@ -1,5 +1,6 @@
 {% extends "layout.html" %}
-{% block title %}Credit Line Application{% endblock %}
+{% block title %}Credit Line Application<script src="{{ url_for('static', filename='js/credit.js') }}"></script>
+{% endblock %}
 {% block header %}Credit Line Application{% endblock %}
 {% block content %}
 <div class="row"><div class="col-lg-8">
@@ -15,6 +16,4 @@
 <div class="card"><div class="card-header">Credit Terms</div><div class="card-body small"><ul class="mb-0"><li>Credit is not available until approved by an administrator.</li><li>The approved limit cannot exceed the limit assigned to your account tier.</li><li>Credit draws increase your outstanding credit balance.</li><li>Incoming funds automatically reduce outstanding credit usage.</li></ul></div></div>
 </div></div>
 {% endblock %}
-{% block scripts %}<script>
-document.getElementById('creditApplicationForm').addEventListener('submit',async e=>{e.preventDefault();const token=document.querySelector('input[name="csrf_token"]').value;const f=e.target;const r=await fetch('/api/request/credit',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':token},body:JSON.stringify({requested_limit:Number(f.requested_limit.value),reason:f.reason.value})});const d=await r.json();Swal.fire(r.ok?'Application Submitted':'Application Error',d.message||d.error,r.ok?'success':'error').then(()=>r.ok&&(location.href='/wallet/'+document.body.dataset.walletName))});
-</script>{% endblock %}
+{% block scripts %}{% endblock %}
