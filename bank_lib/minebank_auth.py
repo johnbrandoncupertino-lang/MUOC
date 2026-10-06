@@ -67,8 +67,7 @@ def login_client(email, password, captcha_answer=None):
                     record_login_failure(client_id,"DISABLED_ACCOUNT")
                     return False,"This account is disabled. Please contact the bank."
                 if row[4] == "FROZEN":
-                    record_login_failure(client_id,"FROZEN_ACCOUNT")
-                    return False,"This account is frozen. Please contact the bank."
+                    security_event(client_id,"FROZEN_ACCOUNT_LOGIN","WARNING",{"message":"Frozen account login allowed for viewing and support access."})
                 if not check_password_hash(row[2],password):
                     attempts,minutes=record_login_failure(client_id,"INVALID_PASSWORD")
                     if attempts>=3:
