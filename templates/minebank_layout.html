@@ -36,6 +36,7 @@
       <details class="mb-nav-group" {% if portal_active in ['credit','requests'] %}open{% endif %}>
         <summary>Services &amp; Credit</summary>
         <a class="{% if portal_active == 'credit' %}active{% endif %}" href="{{ url_for('minebank_credit_page') }}">Credit Facility</a>
+        <a class="{% if portal_active == 'plans' %}active{% endif %}" href="{{ url_for('minebank_plans_page') }}">Account Plans</a>
         <a class="{% if portal_active == 'requests' %}active{% endif %}" href="{{ url_for('minebank_requests_page') }}">Requests {% if minebank_pending_requests %}<span class="mb-nav-badge">{{ minebank_pending_requests }}</span>{% endif %}</a>
       </details>
 
