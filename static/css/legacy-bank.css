@@ -212,3 +212,31 @@ main > .d-flex h1 {
     main > .d-flex h1 { font-size: 18px; }
     .muoc-kpi { min-height: 74px; }
 }
+
+
+[data-bs-theme="dark"] body {
+    background: linear-gradient(#202a34, #161d24 180px);
+    color: #dce4ec;
+}
+[data-bs-theme="dark"] main > .d-flex {
+    background: rgba(35,45,56,.78);
+    border-bottom-color: #4b5b6b !important;
+}
+[data-bs-theme="dark"] main > .d-flex h1,
+[data-bs-theme="dark"] .muoc-dashboard-title { color: #c5dff5; }
+[data-bs-theme="dark"] .muoc-kpi,
+[data-bs-theme="dark"] .muoc-toolbar {
+    background: linear-gradient(#303b47, #26313c);
+    border-color: #4b5b6b;
+}
+[data-bs-theme="dark"] .muoc-kpi-value { color: #d8eafa; }
+[data-bs-theme="dark"] .muoc-table thead th {
+    color: #d6e1eb;
+    background: #303b47;
+}
+[data-bs-theme="dark"] .muoc-status { background: #303b47; border-color: #607284; }
+[data-bs-theme="dark"] .muoc-status.ok { color: #a9e0ad; background: #24452a; }
+[data-bs-theme="dark"] .muoc-status.warn { color: #ffe69a; background: #51451f; }
+[data-bs-theme="dark"] .muoc-status.bad { color: #ffb3ba; background: #51272c; }
+[data-bs-theme="dark"] .sidebar { background: #26313c !important; border-color: #4b5b6b; }
+[data-bs-theme="dark"] .sidebar .nav-link { color: #dce4ec; }
