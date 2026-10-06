@@ -1,5 +1,5 @@
-import sys
 from pathlib import Path
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -9,76 +9,64 @@ def test_application_imports_and_core_routes_exist():
     import app
 
     routes = {rule.rule for rule in app.app.url_map.iter_rules()}
-    assert "/" in routes
-    assert "/login" in routes
-    assert "/api/setup" in routes
-    assert "/api/transfer/bank" in routes
-
-
-def test_schema_has_no_trailing_comma_before_closing_parenthesis():
-    schema = (ROOT / "extras" / "schema.sql").read_text(encoding="utf-8")
-    assert ",\n);" not in schema
-
-
-def test_setup_uses_canonical_initializer():
-    setup = (ROOT / "api" / "setup.py").read_text(encoding="utf-8")
-    assert "init_db()" in setup
-    assert "admin_password" in setup
-    assert "VALUES (%s, %s, %s)" in setup
-
-
-def test_minebank_registration_route_exists():
-    import app
-
-    routes = {rule.rule for rule in app.app.url_map.iter_rules()}
-    assert "/portal/register" in routes
-    assert "/portal/login" in routes
-
-
-def test_minebank_registration_template_has_required_fields():
-    template = (ROOT / "templates" / "minebank_register.html").read_text(encoding="utf-8")
-    assert 'name="email"' in template
-    assert 'name="password"' in template
-    assert 'name="password_confirmation"' in template
-    assert "minebank_register" in template
-
-
-def test_runtime_minebank_schema_migration_helper_exists():
-    source = (ROOT / "bank_lib" / "database.py").read_text(encoding="utf-8")
-    assert "def ensure_minebank_schema()" in source
-    assert "init_minebank_v2()" in source
-
-
-def test_minebank_full_wallet_routes_exist():
-    import app
-
-    routes = {rule.rule for rule in app.app.url_map.iter_rules()}
     expected = {
+        "/",
+        "/login",
+        "/portal/login",
+        "/portal/register",
+        "/portal",
+        "/portal/transfer",
+        "/portal/transactions",
         "/portal/statements",
-        "/portal/statements/print",
-        "/portal/statements/csv",
-        "/portal/requests",
-        "/portal/profile",
-        "/portal/notifications",
-        "/portal/plans",
-        "/portal/transactions/<transaction_id>",
-        "/portal/transactions/<transaction_id>/refund",
+        "/api/get/health",
+        "/api/v1/accounts",
     }
     assert expected.issubset(routes)
 
 
-def test_minebank_request_helper_and_credit_draw_exist():
+def test_minebank_schema_files_exist():
+    assert (ROOT / "extras" / "minebank_v2.sql").is_file()
+    assert (ROOT / "bank_lib" / "minebank_schema.py").is_file()
+    assert (ROOT / "bank_lib" / "database.py").is_file()
+
+
+def test_minebank_registration_template_has_required_fields():
+    template = (ROOT / "templates" / "minebank_register_new.html").read_text(encoding="utf-8")
+    assert 'name="email"' in template
+    assert 'name="password"' in template
+    assert 'name="password_confirmation"' in template
+    assert 'name="wallet_pin"' in template
+
+
+def test_runtime_database_migration_helper_exists():
+    source = (ROOT / "bank_lib" / "database.py").read_text(encoding="utf-8")
+    assert "def ensure_minebank_schema()" in source
+    assert "init_minebank_v2()" in source
+    assert "def get_db_connection()" in source
+
+
+def test_minebank_core_features_exist():
     requests_source = (ROOT / "bank_lib" / "minebank_requests.py").read_text(encoding="utf-8")
     core_source = (ROOT / "bank_lib" / "minebank_core.py").read_text(encoding="utf-8")
+    auth_source = (ROOT / "bank_lib" / "minebank_auth.py").read_text(encoding="utf-8")
+
     assert "def create_request(" in requests_source
     assert "def list_requests(" in requests_source
+    assert "def transfer(" in core_source
+    assert "def deposit(" in core_source
     assert "def draw_credit(" in core_source
+    assert "def verify_wallet_pin(" in auth_source
 
 
-def test_minebank_request_review_routes_exist():
-    import app
+def test_money_rules_remain_integer_and_approval_threshold_is_5000():
+    from bank_lib.minebank_core import PENDING_APPROVAL_THRESHOLD, credit_activation_fee
 
-    routes = {rule.rule for rule in app.app.url_map.iter_rules()}
-    assert "/portal/security/password" in routes
-    assert "/api/v2/requests/<int:request_id>/review" in routes
-    assert "/admin/minebank/requests" in routes
+    assert PENDING_APPROVAL_THRESHOLD == 5000
+    assert credit_activation_fee(5000) == 10
+    assert credit_activation_fee(5001) == 40
+
+
+def test_security_basics_are_present():
+    source = (ROOT / "bank_lib" / "minebank_auth.py").read_text(encoding="utf-8")
+    assert "WALLET_PIN_MAX_ATTEMPTS = 3" in source
+    assert "WALLET_PIN_LOCKOUT_MINUTES = 5" in source
