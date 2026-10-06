@@ -361,6 +361,21 @@ def minebank_transaction_detail(transaction_id):
     return render_template("minebank_portal.html", mode="transaction", account=account,
                            transaction=rows[0], portal_active="transactions")
 
+@app.route("/portal/transactions/<transaction_id>/receipt")
+@require_login
+def minebank_transaction_receipt(transaction_id):
+    rows=execute_query_dict("""SELECT l.*,s.account_number sender_number,r.account_number recipient_number,
+                                      sc.email sender_email,rc.email recipient_email
+                               FROM ledger_transactions l
+                               LEFT JOIN bank_accounts s ON s.id=l.sender_account_id
+                               LEFT JOIN bank_accounts r ON r.id=l.recipient_account_id
+                               LEFT JOIN bank_clients sc ON sc.id=s.client_id
+                               LEFT JOIN bank_clients rc ON rc.id=r.client_id
+                               WHERE l.transaction_id=%s AND (s.client_id=%s OR r.client_id=%s)""",
+                            (transaction_id,session["minebank_client_id"],session["minebank_client_id"]))
+    if not rows: return "Transaction not found",404
+    return render_template("minebank_portal.html",mode="receipt",account=selected_account(),transaction=rows[0],portal_active="transactions")
+
 @app.route("/portal/transactions/<transaction_id>/refund", methods=["POST"])
 @require_login
 def minebank_refund(transaction_id):
