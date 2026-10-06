@@ -44,7 +44,7 @@ def login_client(email, password, captcha_answer=None):
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT id,email,password_hash,role,status,login_failed_attempts,login_blocked_until,login_captcha_required
+                cur.execute("""SELECT id,email,password_hash,role,status,login_failed_attempts,login_blocked_until,login_captcha_required,password_changed_at
                                FROM bank_clients WHERE LOWER(email)=LOWER(%s)""",(email.strip(),))
                 row=cur.fetchone()
                 if not row:
@@ -93,7 +93,10 @@ def login_client(email, password, captcha_answer=None):
                 session["minebank_client_id"]=row[0]
                 session["minebank_role"]=row[3]
                 session["minebank_email"]=row[1]
-                session["csrf"]=secrets.token_urlsafe(32) if False else session.get("csrf")
+                try:
+                    session["minebank_password_expired"] = (_now() - row[8]).days >= 180 if row[8] else True
+                except Exception:
+                    session["minebank_password_expired"] = False
                 create_session(client_id)
                 return True,None
     finally:
