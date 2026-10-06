@@ -73,3 +73,12 @@ def test_minebank_request_helper_and_credit_draw_exist():
     assert "def create_request(" in requests_source
     assert "def list_requests(" in requests_source
     assert "def draw_credit(" in core_source
+
+
+def test_minebank_request_review_routes_exist():
+    import app
+
+    routes = {rule.rule for rule in app.app.url_map.iter_rules()}
+    assert "/portal/security/password" in routes
+    assert "/api/v2/requests/<int:request_id>/review" in routes
+    assert "/admin/minebank/requests" in routes
