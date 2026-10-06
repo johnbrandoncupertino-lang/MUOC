@@ -43,6 +43,7 @@ def charge_monthly_tier_fee(wallet_name):
     else:
         status = 'Unpaid'
         create_log("Monthly Fee", f"Monthly {profile['account_tier']} account fee of {amount} {get_settings()['currency_name']} could not be charged", "Private")
+    update_admin_balance()
     execute_query("""
         INSERT INTO account_charges (wallet_name,tier_name,amount,billing_period,status)
         VALUES (%s,%s,%s,%s,%s)
