@@ -1,0 +1,75 @@
+{% extends "minebank_layout.html" %}
+{% block title %}MineBank — Advanced Banking{% endblock %}
+{% block content %}
+<div class="mb-page-head">
+  <div><div class="mb-eyebrow">ADVANCED SERVICES</div><h1>MineBank Bonus Suite</h1><p>Advanced banking capabilities connected to the same secure ledger.</p></div>
+</div>
+{% if announcements %}
+<section class="mb-panel mb-bonus-panel"><div class="mb-panel-title">Bank Announcements</div>
+{% for a in announcements %}<div class="mb-notice"><strong>{{ a.title }}</strong><span>{{ a.message }}</span></div>{% endfor %}
+</section>
+{% endif %}
+{% if locked %}
+<section class="mb-warning">EMERGENCY BANKING LOCK ACTIVE — financial operations are suspended until Bank Operations unlocks the account.</section>
+{% endif %}
+<div class="row g-3 mt-1">
+<section class="col-xl-6"><div class="mb-panel"><div class="mb-panel-title">Business Banking</div>
+<p class="mb-help">Business accounts support Owner, Employee and Read-Only users with granular permissions and optional spending limits.</p>
+<form method="post" action="{{ url_for('minebank_bonus_business_member') }}" class="mb-request-form">
+<input type="hidden" name="account_id" value="{{ request.args.get('account_id','') }}">
+<label class="mb-label">Business account ID</label><input class="form-control mb-input" name="account_id" required>
+<label class="mb-label">Client ID</label><input class="form-control mb-input" name="client_id" required>
+<label class="mb-label">Role</label><select class="form-control mb-input" name="role"><option>EMPLOYEE</option><option>READ_ONLY</option><option>OWNER</option></select>
+<label class="mb-label">Permissions JSON</label><input class="form-control mb-input" name="permissions" value='{"VIEW":true,"TRANSFER":true,"PAYROLL":false}'>
+<label class="mb-label">Spending limit <span>(optional)</span></label><input class="form-control mb-input" name="spending_limit" type="number" min="0">
+<button class="btn btn-primary mb-submit" type="submit">Save Business User</button>
+</form></div></section>
+<section class="col-xl-6"><div class="mb-panel"><div class="mb-panel-title">Loans</div>
+<p class="mb-help">Personal loans: 5,000–500,000 Emerald. Business loans: up to 10,000,000. Every loan requires Bank approval.</p>
+<form method="post" action="{{ url_for('minebank_bonus_loan') }}" class="mb-request-form">
+<label class="mb-label">Account ID</label><input class="form-control mb-input" name="account_id" required>
+<label class="mb-label">Amount</label><input class="form-control mb-input" name="amount" type="number" min="5000" required>
+<label class="mb-label">Interest (monthly bps)</label><input class="form-control mb-input" name="interest_bps" type="number" value="700">
+<label class="mb-label">Term (months)</label><input class="form-control mb-input" name="term_months" type="number" min="1" max="120" value="12">
+<label class="mb-label">Purpose</label><input class="form-control mb-input" name="purpose" maxlength="500">
+<label class="mb-label">Collateral required</label><input class="form-control mb-input" name="collateral_required" type="number" min="0" value="0">
+<label class="mb-label">Collateral note</label><input class="form-control mb-input" name="collateral_note">
+<button class="btn btn-primary mb-submit" type="submit">Apply for Loan</button>
+</form></div></section>
+<section class="col-xl-6"><div class="mb-panel"><div class="mb-panel-title">Recurring Payments</div>
+<form method="post" action="{{ url_for('minebank_bonus_direct_debit') }}" class="mb-request-form">
+<label class="mb-label">Account ID</label><input class="form-control mb-input" name="account_id" required>
+<label class="mb-label">Merchant account</label><input class="form-control mb-input" name="merchant_account_number" required>
+<label class="mb-label">Merchant name</label><input class="form-control mb-input" name="merchant_name" required>
+<label class="mb-label">Maximum amount</label><input class="form-control mb-input" name="maximum_amount" type="number" min="1" required>
+<label class="mb-label">Monthly limit</label><input class="form-control mb-input" name="monthly_limit" type="number" min="1">
+<label class="mb-label">Reference</label><input class="form-control mb-input" name="reference">
+<button class="btn btn-primary mb-submit" type="submit">Authorise Direct Debit</button>
+</form></div></section>
+<section class="col-xl-6"><div class="mb-panel"><div class="mb-panel-title">Subscriptions</div>
+<form method="post" action="{{ url_for('minebank_bonus_subscription') }}" class="mb-request-form">
+<label class="mb-label">Account ID</label><input class="form-control mb-input" name="account_id" required>
+<label class="mb-label">Merchant account</label><input class="form-control mb-input" name="merchant_account_number" required>
+<label class="mb-label">Merchant name</label><input class="form-control mb-input" name="merchant_name" required>
+<label class="mb-label">Amount</label><input class="form-control mb-input" name="amount" type="number" min="1" required>
+<label class="mb-label">Frequency</label><select class="form-control mb-input" name="frequency"><option>MONTHLY</option><option>WEEKLY</option></select>
+<label class="mb-label">Next charge</label><input class="form-control mb-input" name="next_charge_at" type="datetime-local" required>
+<label class="mb-label">End date</label><input class="form-control mb-input" name="end_at" type="datetime-local">
+<label class="mb-label">Reference</label><input class="form-control mb-input" name="reference">
+<button class="btn btn-primary mb-submit" type="submit">Start Subscription</button>
+</form></div></section>
+{% if stats %}
+<section class="col-12"><div class="mb-panel"><div class="mb-panel-title">Bank Statistics</div>
+<div class="mb-detail-wide">
+<div><span>Clients</span><strong>{{ stats.clients }}</strong></div><div><span>Accounts</span><strong>{{ stats.accounts }}</strong></div>
+<div><span>Total Balance</span><strong>{{ stats.total_balance }} Emerald</strong></div><div><span>Monthly Transactions</span><strong>{{ stats.month_transactions }}</strong></div>
+<div><span>Monthly Volume</span><strong>{{ stats.month_volume }} Emerald</strong></div><div><span>Active Loans</span><strong>{{ stats.active_loans }}</strong></div>
+<div><span>Loan Principal</span><strong>{{ stats.loan_principal }} Emerald</strong></div><div><span>Open High Risk</span><strong>{{ stats.open_high_risk }}</strong></div>
+</div></div></section>
+{% endif %}
+<section class="col-12"><div class="mb-panel"><div class="mb-panel-title">Security</div>
+<form method="post" action="{{ url_for('minebank_bonus_emergency_lock') }}"><button class="btn btn-outline-danger" type="submit" onclick="return confirm('Lock all banking operations for this client?')">Emergency Banking Lock</button></form>
+<p class="mb-help">This freezes banking operations, but does not prevent portal access. Bank Operations can unlock the account after verification.</p>
+</div></section>
+</div>
+{% endblock %}
