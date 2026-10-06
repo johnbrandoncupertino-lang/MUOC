@@ -4,9 +4,11 @@ import secrets
 from datetime import datetime, UTC, timedelta
 
 import json
+import csv
+from io import StringIO
 from urllib.request import Request as URLRequest, urlopen
 from flask import Flask, render_template, redirect, url_for, send_from_directory, request, session
-from flask import jsonify
+from flask import jsonify, Response
 from flask_talisman import Talisman
 from flask_wtf import CSRFProtect
 # noinspection PyProtectedMember
@@ -35,6 +37,7 @@ from bank_lib.minebank_core import (transfer as minebank_transfer, approve_trans
                                      deposit as minebank_deposit, withdraw as minebank_withdraw,
                                      repay_credit, activate_credit, chargeback, accrue_monthly_credit_interest)
 from bank_lib.minebank_api import create_api_credential, authenticate_api_credential, revoke_api_credential
+from bank_lib.minebank_requests import create_request, list_requests, count_pending_requests, create_notification
 
 # Set up logging once in your app setup code (if not already done)
 logging.basicConfig(
@@ -406,6 +409,243 @@ def minebank_security_page():
     return render_template('minebank_security.html', accounts=accounts, selected_account=selected,
                            settings=get_settings(), portal_active='security', is_logged_in=True,
                            is_admin=session.get('minebank_role') == 'ADMIN')
+
+
+@app.route('/portal/statements')
+@require_minebank_login
+def minebank_statements_page():
+    accounts, selected = _minebank_selected_account()
+    transactions = []
+    start = (request.args.get('start') or '').strip()
+    end = (request.args.get('end') or '').strip()
+    if selected is not None:
+        conn = None
+        try:
+            from bank_lib.database import get_db_connection, release_db_connection
+            conn = get_db_connection()
+            with conn:
+                with conn.cursor() as cur:
+                    query = """SELECT transaction_id, transaction_type, amount, fee, currency,
+                                      status, description, reference_id, created_at,
+                                      sender_account_id, recipient_account_id
+                               FROM ledger_transactions
+                               WHERE (sender_account_id=%s OR recipient_account_id=%s)"""
+                    params = [selected[0], selected[0]]
+                    if start:
+                        query += " AND created_at >= %s::date"
+                        params.append(start)
+                    if end:
+                        query += " AND created_at < (%s::date + INTERVAL '1 day')"
+                        params.append(end)
+                    query += " ORDER BY created_at DESC LIMIT 1000"
+                    cur.execute(query, tuple(params))
+                    transactions = cur.fetchall()
+        finally:
+            if conn is not None:
+                from bank_lib.database import release_db_connection
+                release_db_connection(conn)
+    return render_template('minebank_statements.html', accounts=accounts, selected_account=selected,
+                           transactions=transactions, start=start, end=end,
+                           settings=get_settings(), portal_active='statements',
+                           is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
+
+
+@app.route('/portal/statements/print')
+@require_minebank_login
+def minebank_statements_print():
+    accounts, selected = _minebank_selected_account()
+    transactions = []
+    if selected is not None:
+        transactions = execute_query_dict(
+            """SELECT transaction_id, transaction_type, amount, fee, currency, status,
+                      description, reference_id, created_at, sender_account_id, recipient_account_id
+               FROM ledger_transactions
+               WHERE sender_account_id=%s OR recipient_account_id=%s
+               ORDER BY created_at DESC LIMIT 1000""",
+            (selected[0], selected[0]),
+        )
+    return render_template('minebank_statement_print.html', selected_account=selected,
+                           transactions=transactions, settings=get_settings(),
+                           generated_at=datetime.now(UTC), session=session)
+
+
+@app.route('/portal/statements/csv')
+@require_minebank_login
+def minebank_statements_csv():
+    accounts, selected = _minebank_selected_account()
+    if selected is None:
+        return Response("Transaction ID,Date,Type,Amount,Fee,Currency,Status,Description,Reference\\n",
+                        mimetype="text/csv")
+    rows = execute_query_dict(
+        """SELECT transaction_id, transaction_type, amount, fee, currency, status,
+                  description, reference_id, created_at, sender_account_id, recipient_account_id
+           FROM ledger_transactions
+           WHERE sender_account_id=%s OR recipient_account_id=%s
+           ORDER BY created_at DESC LIMIT 1000""",
+        (selected[0], selected[0]),
+    )
+    output = StringIO()
+    writer = csv.writer(output)
+    writer.writerow(["Transaction ID", "Date", "Type", "Direction", "Amount", "Fee", "Currency", "Status", "Description", "Reference"])
+    for row in rows:
+        direction = "IN" if row["recipient_account_id"] == selected[0] else "OUT"
+        writer.writerow([row["transaction_id"], row["created_at"].isoformat(), row["transaction_type"],
+                         direction, row["amount"], row["fee"], row["currency"], row["status"],
+                         row["description"] or "", row["reference_id"] or ""])
+    return Response(output.getvalue(), mimetype="text/csv",
+                    headers={"Content-Disposition": "attachment; filename=minebank-statement.csv"})
+
+
+@app.route('/portal/requests', methods=['GET', 'POST'])
+@require_minebank_login
+def minebank_requests_page():
+    accounts, selected = _minebank_selected_account()
+    error = None
+    success = None
+    if request.method == 'POST':
+        request_type = (request.form.get('request_type') or '').strip().upper()
+        reason = (request.form.get('reason') or '').strip()
+        allowed = {
+            'GENERAL': 'General service request',
+            'ACCOUNT_SUPPORT': 'Account support',
+            'PASSWORD_RESET': 'Password reset request',
+            'ACCOUNT_DELETION': 'Account deletion request',
+        }
+        if request_type not in allowed:
+            error = 'Please select a valid request type.'
+        elif len(reason) < 3 or len(reason) > 500:
+            error = 'Please provide a reason between 3 and 500 characters.'
+        elif request_type == 'ACCOUNT_DELETION' and session.get('minebank_role') == 'ADMIN':
+            error = 'Administrator accounts cannot be deleted.'
+        else:
+            request_id = create_request(session['minebank_client_id'], request_type,
+                                        selected[0] if selected else None,
+                                        {'reason': reason})
+            if request_id:
+                create_notification(session['minebank_client_id'], 'REQUEST_CREATED',
+                                     'Request submitted',
+                                     f'{allowed[request_type]} #{request_id} has been submitted for review.',
+                                     selected[0] if selected else None)
+                success = {'request_id': request_id, 'status': 'PENDING'}
+            else:
+                error = 'The request could not be submitted.'
+    requests = list_requests(session['minebank_client_id'], selected[0] if selected else None)
+    return render_template('minebank_requests.html', accounts=accounts, selected_account=selected,
+                           requests=requests, error=error, success=success,
+                           settings=get_settings(), portal_active='requests',
+                           is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
+
+
+@app.route('/portal/profile', methods=['GET', 'POST'])
+@require_minebank_login
+def minebank_profile_page():
+    accounts, selected = _minebank_selected_account()
+    client = execute_query_dict(
+        "SELECT id,email,role,status,date_of_birth,created_at,last_login FROM bank_clients WHERE id=%s",
+        (session['minebank_client_id'],)
+    )
+    profile = client[0] if client else None
+    error = None
+    success = None
+    if request.method == 'POST':
+        reason = (request.form.get('reason') or '').strip()
+        new_email = (request.form.get('email') or '').strip().lower()
+        if new_email and ('@' not in new_email or len(new_email) > 320):
+            error = 'Please enter a valid email address.'
+        elif reason and len(reason) < 3:
+            error = 'The request reason is too short.'
+        elif reason:
+            request_id = create_request(session['minebank_client_id'], 'PROFILE_CHANGE',
+                                         selected[0] if selected else None,
+                                         {'requested_email': new_email, 'reason': reason})
+            success = {'request_id': request_id, 'status': 'PENDING'}
+        else:
+            error = 'Please provide a reason for the requested change.'
+    return render_template('minebank_profile.html', accounts=accounts, selected_account=selected,
+                           profile=profile, error=error, success=success,
+                           settings=get_settings(), portal_active='profile',
+                           is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
+
+
+@app.route('/portal/notifications')
+@require_minebank_login
+def minebank_notifications_page():
+    accounts, selected = _minebank_selected_account()
+    notifications = execute_query_dict(
+        """SELECT id, notification_type, title, message, read_at, created_at
+           FROM bank_notifications WHERE client_id=%s
+           ORDER BY created_at DESC LIMIT 200""",
+        (session['minebank_client_id'],),
+    )
+    unread = [n['id'] for n in notifications if n['read_at'] is None]
+    if unread:
+        execute_query(
+            "UPDATE bank_notifications SET read_at=CURRENT_TIMESTAMP WHERE client_id=%s AND read_at IS NULL",
+            (session['minebank_client_id'],), commit=True
+        )
+    return render_template('minebank_notifications.html', accounts=accounts, selected_account=selected,
+                           notifications=notifications, settings=get_settings(),
+                           portal_active='notifications', is_logged_in=True,
+                           is_admin=session.get('minebank_role') == 'ADMIN')
+
+
+@app.route('/portal/transactions/<transaction_id>')
+@require_minebank_login
+def minebank_transaction_detail(transaction_id):
+    accounts, selected = _minebank_selected_account()
+    if selected is None:
+        return render_template('error.html', message='No active account is available.')
+    rows = execute_query_dict(
+        """SELECT transaction_id, transaction_type, amount, fee, currency, status,
+                  description, reference_id, created_at, sender_account_id, recipient_account_id,
+                  approved_at
+           FROM ledger_transactions
+           WHERE transaction_id=%s
+             AND (sender_account_id=%s OR recipient_account_id=%s)""",
+        (transaction_id, selected[0], selected[0]),
+    )
+    if not rows:
+        return render_template('error.html', message='Transaction not found.')
+    return render_template('minebank_transaction_detail.html', accounts=accounts,
+                           selected_account=selected, transaction=rows[0],
+                           settings=get_settings(), portal_active='transactions',
+                           is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
+
+
+@app.route('/portal/transactions/<transaction_id>/refund', methods=['POST'])
+@require_minebank_login
+def minebank_request_refund(transaction_id):
+    accounts, selected = _minebank_selected_account()
+    if selected is None:
+        return jsonify({'error': 'No active account selected.'}), 400
+    reason = (request.form.get('reason') or '').strip()
+    rows = execute_query_dict(
+        """SELECT transaction_id, amount, status, sender_account_id, recipient_account_id
+           FROM ledger_transactions
+           WHERE transaction_id=%s
+             AND sender_account_id=%s""",
+        (transaction_id, selected[0]),
+    )
+    if not rows:
+        return jsonify({'error': 'Only outgoing transactions belonging to this account can be refunded.'}), 404
+    tx = rows[0]
+    if tx['status'] != 'COMPLETED':
+        return jsonify({'error': 'Only completed transfers can be refunded.'}), 400
+    if len(reason) < 3 or len(reason) > 500:
+        return jsonify({'error': 'Refund reason must be between 3 and 500 characters.'}), 400
+    pending = execute_query(
+        """SELECT 1 FROM bank_requests_v2
+           WHERE client_id=%s AND request_type='REFUND'
+             AND status='PENDING' AND payload->>'transaction_id'=%s""",
+        (session['minebank_client_id'], transaction_id),
+    )
+    if pending:
+        return jsonify({'error': 'A refund request for this transaction is already pending.'}), 409
+    request_id = create_request(session['minebank_client_id'], 'REFUND', selected[0],
+                                 {'transaction_id': transaction_id, 'amount': tx['amount'], 'reason': reason})
+    create_notification(session['minebank_client_id'], 'REQUEST_CREATED', 'Refund request submitted',
+                        f'Refund request #{request_id} for {transaction_id} is pending bank review.', selected[0])
+    return jsonify({'message': 'Refund request submitted', 'request_id': request_id})
 
 
 @app.route('/api/v2/transfer', methods=['POST'])
