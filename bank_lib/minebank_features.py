@@ -110,3 +110,29 @@ def analytics_for_account(account_id):
                          (account_id,account_id,account_id,account_id))
     return {"by_type":rows,"incoming":totals[0][0] if totals else 0,
             "outgoing":totals[0][1] if totals else 0,"operations":totals[0][2] if totals else 0}
+
+def preview_transfer(client_id, account_id, recipient_account_number, amount):
+    if int(amount) <= 0:
+        raise ValueError("Transfer amount must be positive.")
+    rows=execute_query_dict("""SELECT a.id,a.client_id,a.account_number,a.account_type,a.tier_id,a.balance,a.status,
+                                      a.monthly_outgoing_used,a.last_outgoing_at,t.code,t.monthly_outgoing_limit
+                               FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
+                               WHERE a.id=%s AND a.client_id=%s AND a.status='ACTIVE'""",(account_id,client_id))
+    if not rows:
+        raise ValueError("Sender account is not available.")
+    recipient=execute_query_dict("SELECT id,account_number,client_id,status FROM bank_accounts WHERE account_number=%s",(recipient_account_number,))
+    if not recipient or recipient[0]["id"] == account_id:
+        raise ValueError("Recipient account is invalid.")
+    sender=rows[0]
+    fee_rows=execute_query("""SELECT percentage_bps,fixed_amount FROM fee_rules
+                              WHERE active=TRUE AND transaction_type='TRANSFER'
+                                AND (account_type IS NULL OR account_type=%s)
+                                AND (tier_code IS NULL OR tier_code=%s)
+                                AND (min_amount IS NULL OR %s>=min_amount)
+                                AND (max_amount IS NULL OR %s<=max_amount)
+                              ORDER BY priority ASC,id ASC LIMIT 1""",
+                           (sender["account_type"],sender["code"],amount,amount))
+    fee=((int(amount)*int(fee_rows[0][0] or 0)+9999)//10000+int(fee_rows[0][1] or 0)) if fee_rows else 0
+    return {"amount":int(amount),"fee":fee,"total":int(amount)+fee,
+            "recipient_account_number":recipient_account_number,"recipient_id":recipient[0]["id"],
+            "remaining_balance":int(sender["balance"])-int(amount)-fee}
