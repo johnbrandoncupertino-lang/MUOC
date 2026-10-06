@@ -6,6 +6,7 @@ the canonical identity/session layer for the new portal.
 from datetime import datetime, timedelta, timezone
 from functools import wraps
 
+from flask import request
 from flask import jsonify, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
@@ -56,6 +57,13 @@ def login_client(email, password):
                     "UPDATE bank_clients SET last_login=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
                     (row[0],),
                 )
+                try:
+                    cur.execute("""INSERT INTO minebank_security_events(client_id,event_type,severity,context,ip_address)
+                                   VALUES(%s,'LOGIN_SUCCESS','INFO',%s::jsonb,%s)""",
+                                (row[0], __import__('json').dumps({"user_agent": request.headers.get("User-Agent","")[:500]}),
+                                 request.headers.get("X-Forwarded-For", request.remote_addr or "")[:64]))
+                except Exception:
+                    pass
                 session.clear()
                 session.permanent = True
                 session["minebank_client_id"] = row[0]
