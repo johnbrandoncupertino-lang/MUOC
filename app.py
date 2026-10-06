@@ -302,7 +302,7 @@ def api_v1_transactions():
                 cur.execute("""SELECT l.transaction_id,l.transaction_type,l.amount,l.fee,l.currency,
                                       l.status,l.description,l.reference_id,l.created_at
                                FROM ledger_transactions l
-                               JOIN bank_accounts a ON a.id=COALESCE(l.sender_account_id,l.recipient_account_id)
+                               JOIN bank_accounts a ON (a.id=l.sender_account_id OR a.id=l.recipient_account_id)
                                WHERE a.client_id=%s ORDER BY l.created_at DESC LIMIT 200""",(auth["client_id"],))
                 rows=cur.fetchall()
         return jsonify({"transactions":[{"transaction_id":r[0],"type":r[1],"amount":r[2],"fee":r[3],
