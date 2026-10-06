@@ -9,7 +9,7 @@ import csv, io, secrets
 from datetime import datetime, timezone
 from functools import wraps
 
-from flask import Flask, Response, flash, jsonify, redirect, render_template, request, session, url_for
+from flask import Flask, Response, flash, jsonify, redirect, render_template, render_template_string, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from bank_lib.database import execute_query, execute_query_dict, ensure_minebank_schema
