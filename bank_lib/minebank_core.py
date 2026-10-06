@@ -233,6 +233,7 @@ def deposit(account_id, amount, actor_user_id=None, description=None):
         with conn:
             with conn.cursor() as cur:
                 account=_lock_account(cur,account_id)
+                if account: _assert_banking_unlocked(cur, account[1])
                 if not account or account[6] not in ("ACTIVE","LIMITED"):
                     raise ValueError("Account cannot receive deposits.")
                 cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s",(account[4],))
@@ -256,6 +257,7 @@ def withdraw(account_id, amount, actor_user_id=None, description=None):
         with conn:
             with conn.cursor() as cur:
                 account=_lock_account(cur,account_id)
+                if account: _assert_banking_unlocked(cur, account[1])
                 if not account or account[6]!="ACTIVE":
                     raise ValueError("Account is not active.")
                 credit=get_credit_limit(cur,account_id)
@@ -279,6 +281,7 @@ def repay_credit(account_id, amount, source_account_id):
         with conn:
             with conn.cursor() as cur:
                 debt_account=_lock_account(cur,account_id)
+                if debt_account: _assert_banking_unlocked(cur, debt_account[1])
                 source=_lock_account(cur,source_account_id)
                 if not debt_account or not source:
                     raise ValueError("Account not found.")
@@ -314,6 +317,7 @@ def draw_credit(account_id, amount, actor_client_id=None, ip_address=None):
         with conn:
             with conn.cursor() as cur:
                 account = _lock_account(cur, account_id)
+                if account: _assert_banking_unlocked(cur, account[1])
                 if not account or account[6] != "ACTIVE":
                     raise ValueError("Account is not active.")
                 if actor_client_id is not None and account[1] != actor_client_id:
