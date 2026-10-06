@@ -42,7 +42,7 @@ from bank_lib.minebank_features import (save_recipient, delete_recipient, list_r
     list_transfer_templates, delete_transfer_template, create_scheduled_transfer, list_scheduled_transfers,
     set_scheduled_transfer_status, get_notification_preferences, save_notification_preferences,
     list_notifications, mark_notification_read, queue_email, analytics_for_account, preview_transfer)
-from bank_lib.minebank_bonus import ensure_bonus_schema, register_bonus_routes
+from bank_lib.minebank_bonus import ensure_bonus_schema, register_bonus_routes, business_permission
 
 # Set up logging once in your app setup code (if not already done)
 logging.basicConfig(
@@ -349,6 +349,10 @@ def minebank_transfer_page():
                     error = 'The transfer review has expired. Please start again.'
                 else:
                     try:
+                        if selected[3] == 'BUSINESS' and not business_permission(
+                            session['minebank_client_id'], selected[0], 'TRANSFER', int(preview['amount'])
+                        ):
+                            raise PermissionError('You are not authorised to transfer from this Business account.')
                         result = minebank_transfer(
                             sender_account_id=selected[0],
                             recipient_account_number=preview['recipient_account_number'],
@@ -902,6 +906,11 @@ def minebank_transfer_api():
         return jsonify({"error": "Invalid sender account."}), 403
     try:
         amount = int(data.get('amount'))
+        account_row = next((r for r in get_client_accounts(session['minebank_client_id']) if r[0] == account_id), None)
+        if account_row and account_row[3] == 'BUSINESS' and not business_permission(
+            session['minebank_client_id'], account_id, 'TRANSFER', amount
+        ):
+            return jsonify({"error":"You are not authorised to transfer from this Business account."}),403
         result = minebank_transfer(
             sender_account_id=account_id,
             recipient_account_number=str(data.get('recipient_account_number') or '').strip(),
