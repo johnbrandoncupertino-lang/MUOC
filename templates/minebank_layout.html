@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}MineBank{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/legacy-bank.css') }}" rel="stylesheet">
+  <link href="{{ url_for('static', filename='css/minebank-portal.css') }}" rel="stylesheet">
+  {% block head %}{% endblock %}
+</head>
+<body class="minebank-portal">
+<header class="mb-header">
+  <div class="mb-brand">
+    <a href="{{ url_for('minebank_dashboard') }}">MineBank <span>The New Bank</span></a>
+  </div>
+  <div class="mb-header-right">
+    <span class="mb-user">{{ session.minebank_email }}</span>
+    <a class="mb-logout" href="{{ url_for('minebank_logout') }}">Logout</a>
+  </div>
+</header>
+<div class="mb-shell">
+  <aside class="mb-sidebar">
+    <div class="mb-sidebar-title">ONLINE BANKING</div>
+    <nav>
+      <a class="{% if portal_active == 'dashboard' %}active{% endif %}" href="{{ url_for('minebank_dashboard') }}">Dashboard</a>
+      <a class="{% if portal_active == 'transfer' %}active{% endif %}" href="{{ url_for('minebank_transfer_page') }}">Make a Transfer</a>
+      <a class="{% if portal_active == 'transactions' %}active{% endif %}" href="{{ url_for('minebank_transactions_page') }}">Transactions</a>
+      <a class="{% if portal_active == 'credit' %}active{% endif %}" href="{{ url_for('minebank_credit_page') }}">Credit</a>
+      <a class="{% if portal_active == 'account' %}active{% endif %}" href="{{ url_for('minebank_account_page') }}">My Account</a>
+      <a class="{% if portal_active == 'security' %}active{% endif %}" href="{{ url_for('minebank_security_page') }}">Security</a>
+    </nav>
+    <div class="mb-sidebar-separator"></div>
+    <div class="mb-sidebar-note">Currency: <strong>Emerald</strong></div>
+    <div class="mb-sidebar-note">Role: <strong>{{ session.minebank_role }}</strong></div>
+  </aside>
+  <main class="mb-main">
+    {% if error %}
+      <div class="alert alert-danger mb-alert"><strong>Action could not be completed.</strong><br>{{ error }}</div>
+    {% endif %}
+    {% if success %}
+      <div class="alert alert-success mb-alert"><strong>Operation completed.</strong>
+        {% if success is mapping %}
+          {% if success.transaction_id %} Transaction: <strong>{{ success.transaction_id }}</strong>{% endif %}
+          {% if success.status %} Status: <strong>{{ success.status }}</strong>{% endif %}
+        {% else %} {{ success }}{% endif %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"></script>
+<script src="{{ url_for('static', filename='js/main.js') }}"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

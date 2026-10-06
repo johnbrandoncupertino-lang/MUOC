@@ -1,0 +1,9 @@
+{% extends "minebank_layout.html" %}
+{% block title %}MineBank — Transactions{% endblock %}
+{% block content %}
+<div class="mb-page-head"><div><div class="mb-eyebrow">ACCOUNT ACTIVITY</div><h1>Transactions</h1><p>Latest movements for {{ selected_account[1] if selected_account else 'your account' }}.</p></div></div>
+<section class="mb-panel"><div class="mb-panel-title">Recent transactions</div>
+{% if transactions %}<div class="table-responsive"><table class="table mb-table"><thead><tr><th>Date</th><th>Transaction</th><th>Description</th><th>Status</th><th class="text-end">Amount</th></tr></thead><tbody>
+{% for t in transactions %}<tr><td>{{ t[8].strftime('%Y-%m-%d %H:%M') }}</td><td><strong>{{ t[0] }}</strong><small>{{ t[1] }}</small></td><td>{{ t[6] or '—' }}{% if t[7] %}<small>Ref: {{ t[7] }}</small>{% endif %}</td><td><span class="mb-status">{{ t[5] }}</span></td><td class="text-end {% if t[10] == selected_account[0] %}mb-credit{% else %}mb-debit{% endif %}">{% if t[10] == selected_account[0] %}+{% else %}-{% endif %}{{ t[2] }} <small>Emerald</small></td></tr>{% endfor %}
+</tbody></table></div>{% else %}<p class="mb-empty">No transactions have been recorded for this account yet.</p>{% endif %}
+</section>{% endblock %}

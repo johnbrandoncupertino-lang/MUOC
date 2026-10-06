@@ -233,7 +233,8 @@ def minebank_dashboard():
         session['minebank_account_id'] = accounts[0][0]
     return render_template('minebank_dashboard.html', accounts=accounts,
                            selected_account_id=session.get('minebank_account_id'),
-                           settings=get_settings(), is_logged_in=True,
+                           selected_account=next((row for row in accounts if row[0] == session.get('minebank_account_id')), None),
+                           settings=get_settings(), portal_active='dashboard', is_logged_in=True,
                            is_admin=session.get('minebank_role') == 'ADMIN')
 
 
@@ -254,13 +255,157 @@ def minebank_select_account():
 def minebank_set_pin():
     pin = request.form.get('pin') or ''
     confirmation = request.form.get('pin_confirmation') or ''
+    accounts, selected = _minebank_selected_account()
     if pin != confirmation:
-        return jsonify({"error": "PIN confirmation does not match."}), 400
+        return render_template('minebank_security.html', accounts=accounts, selected_account=selected,
+                               error='PIN confirmation does not match.', settings=get_settings(),
+                               portal_active='security', is_logged_in=True,
+                               is_admin=session.get('minebank_role') == 'ADMIN'), 400
     try:
         set_wallet_pin(session['minebank_client_id'], pin)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    return redirect(url_for('minebank_dashboard'))
+        return render_template('minebank_security.html', accounts=accounts, selected_account=selected,
+                               error=str(exc), settings=get_settings(), portal_active='security',
+                               is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN'), 400
+    return redirect(url_for('minebank_security_page'))
+
+
+def _minebank_selected_account():
+    client_id = session['minebank_client_id']
+    accounts = get_client_accounts(client_id)
+    selected_id = session.get('minebank_account_id')
+    if selected_id not in {row[0] for row in accounts}:
+        selected_id = accounts[0][0] if accounts else None
+        if selected_id is not None:
+            session['minebank_account_id'] = selected_id
+    selected = next((row for row in accounts if row[0] == selected_id), None)
+    return accounts, selected
+
+
+@app.route('/portal/transfer', methods=['GET', 'POST'])
+@require_minebank_login
+def minebank_transfer_page():
+    accounts, selected = _minebank_selected_account()
+    if request.method == 'POST':
+        if selected is None:
+            return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
+                                   error='No active account is available for transfers.', settings=get_settings(),
+                                   portal_active='transfer', is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
+        pin = request.form.get('wallet_pin') or ''
+        ok, error = verify_wallet_pin(session['minebank_client_id'], pin)
+        if not ok:
+            return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
+                                   error=error, settings=get_settings(), portal_active='transfer',
+                                   is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
+        try:
+            amount = int(request.form.get('amount') or 0)
+            result = minebank_transfer(
+                sender_account_id=selected[0],
+                recipient_account_number=(request.form.get('recipient_account_number') or '').strip(),
+                amount=amount,
+                description=(request.form.get('description') or '').strip() or None,
+                reference=(request.form.get('reference') or '').strip() or None,
+                actor_client_id=session['minebank_client_id'],
+                ip_address=request.remote_addr,
+            )
+            return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
+                                   success=result, settings=get_settings(), portal_active='transfer',
+                                   is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
+        except (ValueError, TypeError) as exc:
+            return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
+                                   error=str(exc), settings=get_settings(), portal_active='transfer',
+                                   is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
+    return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
+                           settings=get_settings(), portal_active='transfer', is_logged_in=True,
+                           is_admin=session.get('minebank_role') == 'ADMIN')
+
+
+@app.route('/portal/transactions')
+@require_minebank_login
+def minebank_transactions_page():
+    accounts, selected = _minebank_selected_account()
+    rows = []
+    if selected is not None:
+        conn = None
+        try:
+            from bank_lib.database import get_db_connection, release_db_connection
+            conn = get_db_connection()
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("""SELECT transaction_id,transaction_type,amount,fee,currency,status,
+                                          description,reference_id,created_at,sender_account_id,recipient_account_id
+                                   FROM ledger_transactions
+                                   WHERE sender_account_id=%s OR recipient_account_id=%s
+                                   ORDER BY created_at DESC LIMIT 200""",
+                                (selected[0], selected[0]))
+                    rows = cur.fetchall()
+        finally:
+            if conn is not None:
+                from bank_lib.database import release_db_connection
+                release_db_connection(conn)
+    return render_template('minebank_transactions.html', accounts=accounts, selected_account=selected,
+                           transactions=rows, settings=get_settings(), portal_active='transactions',
+                           is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
+
+
+@app.route('/portal/credit', methods=['GET', 'POST'])
+@require_minebank_login
+def minebank_credit_page():
+    accounts, selected = _minebank_selected_account()
+    error = None
+    success = None
+    if request.method == 'POST' and selected is not None:
+        try:
+            action = request.form.get('action')
+            if action == 'activate':
+                requested_limit = int(request.form.get('credit_limit') or 0)
+                success = activate_credit(selected[0], requested_limit)
+            elif action == 'repay':
+                amount = int(request.form.get('repayment_amount') or 0)
+                source_account = int(request.form.get('source_account_id') or 0)
+                success = repay_credit(selected[0], amount, source_account)
+            else:
+                raise ValueError('Unknown credit operation.')
+        except (ValueError, TypeError) as exc:
+            error = str(exc)
+    facility = None
+    if selected is not None:
+        conn = None
+        try:
+            from bank_lib.database import get_db_connection, release_db_connection
+            conn = get_db_connection()
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("""SELECT credit_limit,interest_monthly_bps,activation_fee_monthly,status,
+                                          activated_at,last_interest_at,overdue_since
+                                   FROM credit_facilities WHERE account_id=%s""", (selected[0],))
+                    facility = cur.fetchone()
+        finally:
+            if conn is not None:
+                from bank_lib.database import release_db_connection
+                release_db_connection(conn)
+    return render_template('minebank_credit.html', accounts=accounts, selected_account=selected,
+                           facility=facility, error=error, success=success, settings=get_settings(),
+                           portal_active='credit', is_logged_in=True,
+                           is_admin=session.get('minebank_role') == 'ADMIN')
+
+
+@app.route('/portal/account')
+@require_minebank_login
+def minebank_account_page():
+    accounts, selected = _minebank_selected_account()
+    return render_template('minebank_account.html', accounts=accounts, selected_account=selected,
+                           settings=get_settings(), portal_active='account', is_logged_in=True,
+                           is_admin=session.get('minebank_role') == 'ADMIN')
+
+
+@app.route('/portal/security')
+@require_minebank_login
+def minebank_security_page():
+    accounts, selected = _minebank_selected_account()
+    return render_template('minebank_security.html', accounts=accounts, selected_account=selected,
+                           settings=get_settings(), portal_active='security', is_logged_in=True,
+                           is_admin=session.get('minebank_role') == 'ADMIN')
 
 
 @app.route('/api/v2/transfer', methods=['POST'])

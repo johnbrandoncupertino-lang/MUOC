@@ -1,67 +1,10 @@
-{% extends "layout.html" %}
-{% block title %}MineBank Dashboard{% endblock %}
-{% block header %}MineBank Dashboard{% endblock %}
+{% extends "minebank_layout.html" %}
+{% block title %}MineBank — Dashboard{% endblock %}
 {% block content %}
-<div class="muoc-toolbar mb-3 d-flex flex-wrap gap-2 align-items-center">
-  <strong class="muoc-dashboard-title me-auto">Secure Banking • {{ session.minebank_email }}</strong>
-  <span class="muoc-status ok">{{ session.minebank_role }}</span>
-  <a class="btn btn-outline-secondary btn-sm" href="/portal/logout">Logout</a>
-</div>
-
-{% if accounts %}
-<div class="row g-3 mb-3">
-  {% for a in accounts %}
-  <div class="col-md-6 col-xl-4">
-    <div class="card h-100 {% if a[0] == selected_account_id %}border-primary{% endif %}">
-      <div class="card-header d-flex justify-content-between"><span>{{ a[4] }}</span><span class="muoc-status ok">{{ a[6] }}</span></div>
-      <div class="card-body">
-        <div class="muoc-section-note">Account number</div>
-        <strong>{{ a[1] }}</strong>
-        <div class="muoc-kpi-value mt-2">{{ a[5] }} <small>Emerald</small></div>
-        <div class="muoc-section-note">{{ a[3] }} · Outgoing {{ a[7] }}{% if a[8] is not none %} / {{ a[8] }}{% else %} / Unlimited{% endif %}</div>
-        <form method="post" action="/portal/account/select" class="mt-3">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="account_id" value="{{ a[0] }}">
-          <button class="btn {% if a[0] == selected_account_id %}btn-primary{% else %}btn-outline-secondary{% endif %} btn-sm" type="submit">{% if a[0] == selected_account_id %}Selected{% else %}Select account{% endif %}</button>
-        </form>
-      </div>
-    </div>
-  </div>
-  {% endfor %}
-</div>
-{% else %}
-<div class="card mb-3"><div class="card-body">
-  <strong>No MineBank account is attached to this client yet.</strong>
-  <p class="muoc-section-note mb-0">A Bank Operator or Admin must create the account before financial operations are available.</p>
-</div></div>
-{% endif %}
-
-<div class="row g-3">
-  <div class="col-lg-6">
-    <div class="card">
-      <div class="card-header">Wallet authorization PIN</div>
-      <div class="card-body">
-        <p class="muoc-section-note">This 6-digit PIN authorizes financial operations. Three wrong attempts trigger a 5-minute lockout.</p>
-        <form method="post" action="/portal/security/pin">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <div class="row g-2">
-            <div class="col"><input class="form-control" name="pin" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="6 digits" required></div>
-            <div class="col"><input class="form-control" name="pin_confirmation" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" placeholder="Confirm PIN" required></div>
-            <div class="col-12"><button class="btn btn-primary btn-sm" type="submit">Set / Change PIN</button></div>
-          </div>
-        </form>
-      </div>
-    </div>
-  </div>
-  <div class="col-lg-6">
-    <div class="card">
-      <div class="card-header">Core status</div>
-      <div class="card-body">
-        <div class="d-flex justify-content-between mb-2"><span>Currency</span><strong>Emerald</strong></div>
-        <div class="d-flex justify-content-between mb-2"><span>Identity</span><strong>MineBank v2</strong></div>
-        <div class="d-flex justify-content-between"><span>Transfer authorization</span><strong>Wallet PIN</strong></div>
-      </div>
-    </div>
-  </div>
-</div>
+<div class="mb-page-head"><div><div class="mb-eyebrow">SECURE ONLINE BANKING</div><h1>Welcome back</h1><p>Manage your MineBank accounts and Emerald funds.</p></div><div class="mb-date">{{ session.minebank_email }}</div></div>
+{% if selected_account %}
+<section class="mb-account-hero"><div><div class="mb-eyebrow">SELECTED ACCOUNT</div><h2>{{ selected_account[4] }}</h2><div class="mb-account-number">{{ selected_account[1] }} · {{ selected_account[3] }}</div></div><div class="mb-balance"><span>Available balance</span><strong>{{ selected_account[5] }} <small>Emerald</small></strong></div></section>
+<div class="row g-3 mb-3"><div class="col-md-4"><a class="mb-action-card" href="{{ url_for('minebank_transfer_page') }}"><strong>Make a Transfer</strong><span>Send Emerald to another MineBank account.</span></a></div><div class="col-md-4"><a class="mb-action-card" href="{{ url_for('minebank_transactions_page') }}"><strong>Transactions</strong><span>Review your account movements and statuses.</span></a></div><div class="col-md-4"><a class="mb-action-card" href="{{ url_for('minebank_credit_page') }}"><strong>Credit</strong><span>View or manage your available credit facility.</span></a></div></div>
+<div class="row g-3"><div class="col-lg-7"><section class="mb-panel"><div class="mb-panel-title">Account overview</div><div class="mb-detail-grid"><div><span>Account number</span><strong>{{ selected_account[1] }}</strong></div><div><span>Account type</span><strong>{{ selected_account[2] }}</strong></div><div><span>Tier</span><strong>{{ selected_account[3] }}</strong></div><div><span>Status</span><strong>{{ selected_account[6] }}</strong></div><div><span>Outgoing this month</span><strong>{{ selected_account[7] }} / {% if selected_account[8] is not none %}{{ selected_account[8] }}{% else %}Unlimited{% endif %}</strong></div><div><span>Credit eligible</span><strong>{{ 'Yes' if selected_account[10] else 'No' }}</strong></div></div></section></div><div class="col-lg-5"><section class="mb-panel"><div class="mb-panel-title">Your accounts</div>{% for a in accounts %}<form method="post" action="{{ url_for('minebank_select_account') }}" class="mb-account-row"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="account_id" value="{{ a[0] }}"><div><strong>{{ a[4] }}</strong><small>{{ a[1] }}</small></div><button class="mb-select {% if a[0] == selected_account_id %}selected{% endif %}" type="submit">{{ 'Selected' if a[0] == selected_account_id else 'Select' }}</button></form>{% endfor %}</section></div></div>
+{% else %}<section class="mb-panel"><div class="mb-panel-title">No account available</div><p>Your MineBank identity exists, but no active account is attached yet.</p></section>{% endif %}
 {% endblock %}
