@@ -90,6 +90,19 @@ CREATE TABLE IF NOT EXISTS ledger_transactions (
 CREATE INDEX IF NOT EXISTS ledger_sender_idx ON ledger_transactions(sender_account_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS ledger_recipient_idx ON ledger_transactions(recipient_account_id, created_at DESC);
 
+
+CREATE TABLE IF NOT EXISTS bank_notifications (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT NOT NULL REFERENCES bank_clients(id),
+    account_id BIGINT REFERENCES bank_accounts(id),
+    notification_type VARCHAR(50) NOT NULL,
+    title VARCHAR(200) NOT NULL,
+    message VARCHAR(1000) NOT NULL,
+    read_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS bank_notifications_client_idx ON bank_notifications(client_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS fee_rules (
     id BIGSERIAL PRIMARY KEY,
     name VARCHAR(100) UNIQUE NOT NULL,
