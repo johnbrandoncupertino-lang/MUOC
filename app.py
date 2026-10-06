@@ -338,7 +338,7 @@ def minebank_transfer_page():
                     preview.update(description=(request.form.get('description') or '').strip(),
                                    reference=(request.form.get('reference') or '').strip())
                     session['minebank_transfer_preview'] = preview
-                except (ValueError, TypeError) as exc:
+                except (ValueError, TypeError, PermissionError) as exc:
                     error = str(exc)
             elif stage == 'confirm':
                 pin = request.form.get('wallet_pin') or ''
@@ -367,7 +367,7 @@ def minebank_transfer_page():
                         return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
                             success=result, settings=get_settings(), portal_active='transfer', is_logged_in=True,
                             is_admin=session.get('minebank_role') == 'ADMIN')
-                    except (ValueError, TypeError) as exc:
+                    except (ValueError, TypeError, PermissionError) as exc:
                         error = str(exc)
     return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
                            preview=preview, error=error, settings=get_settings(), portal_active='transfer',
@@ -390,7 +390,7 @@ def minebank_recipients_page():
                 delete_recipient(session['minebank_client_id'], int(request.form.get('recipient_id')))
             else:
                 raise ValueError('Unknown recipient operation.')
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, PermissionError) as exc:
             error = str(exc)
     return render_template('minebank_recipients.html', accounts=accounts, selected_account=selected,
                            recipients=list_recipients(session['minebank_client_id']), error=error,
@@ -415,7 +415,7 @@ def minebank_transfer_templates_page():
                 delete_transfer_template(session['minebank_client_id'], int(request.form.get('template_id')))
             else:
                 raise ValueError('Unknown transfer template operation.')
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, PermissionError) as exc:
             error=str(exc)
     return render_template('minebank_templates.html', accounts=accounts, selected_account=selected,
                            templates=list_transfer_templates(session['minebank_client_id']), error=error,
@@ -527,7 +527,7 @@ def minebank_credit_page():
                 success = repay_credit(selected[0], amount, source_account)
             else:
                 raise ValueError('Unknown credit operation.')
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, PermissionError) as exc:
             error = str(exc)
     facility = None
     if selected is not None:
@@ -919,7 +919,7 @@ def minebank_transfer_api():
             reference=data.get('reference'),
         )
         return jsonify(result), 201
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, PermissionError) as exc:
         return jsonify({"error": str(exc)}), 400
 
 
@@ -985,7 +985,7 @@ def minebank_review_request(request_id):
                             f'Your MineBank request #{request_id} was rejected.',
                             item['account_id'])
         return jsonify({'request_id': request_id, 'status': 'REJECTED'})
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, PermissionError) as exc:
         return jsonify({'error': str(exc)}), 400
 
 
@@ -1041,7 +1041,7 @@ def minebank_create_account_api():
         tier_code = str(data.get('tier_code') or ('PERSONAL' if account_type == 'PERSONAL' else 'BUSINESS')).upper()
         account = create_account(client_id, account_type, tier_code)
         return jsonify({"id": account[0], "account_number": account[1]}), 201
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, PermissionError) as exc:
         return jsonify({"error": str(exc)}), 400
 
 
