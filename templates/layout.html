@@ -57,24 +57,24 @@
             <nav id="sidebarMenu" class="col-md-3 col-lg-2 d-md-block sidebar collapse">
                 <div class="position-sticky sidebar-sticky">
                     <div class="px-3 pb-2">
-                        <div class="muoc-section-note">Area riservata</div>
+                        <div class="muoc-section-note">Secure Area</div>
                         <strong>{{ session.wallet_name }}</strong>
                     </div>
                     <ul class="nav flex-column">
                         <li class="nav-item"><a class="nav-link" href="/">Dashboard</a></li>
                         <li class="nav-item"><a class="nav-link" href="/wallet/{{ session.wallet_name }}">My Wallet</a></li>
-                        <li class="nav-item"><a class="nav-link" href="/user/logs">Movimenti / Logs</a></li>
-                        <li class="nav-item"><a class="nav-link" href="/user/requests">Richieste</a></li>
+                        <li class="nav-item"><a class="nav-link" href="/user/logs">Movements / Logs</a></li>
+                        <li class="nav-item"><a class="nav-link" href="/user/requests">Requests</a></li>
                         {% if settings and settings.allow_self_review %}
-                            <li class="nav-item"><a class="nav-link" href="/requests">Nuova richiesta</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/requests">New Request</a></li>
                         {% endif %}
                         {% if is_admin %}
-                            <li class="nav-header mt-3 mb-1 px-3">Amministrazione</li>
-                            <li class="nav-item"><a class="nav-link" href="/admin/treasury">Tesoreria</a></li>
+                            <li class="nav-header mt-3 mb-1 px-3">Administration</li>
+                            <li class="nav-item"><a class="nav-link" href="/admin/treasury">Treasury</a></li>
                             <li class="nav-item"><a class="nav-link" href="/admin/wallets">Wallet</a></li>
-                            <li class="nav-item"><a class="nav-link" href="/admin/logs">Log amministrativi</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/admin/logs">Administrative Logs</a></li>
                             <li class="nav-item"><a class="nav-link" href="/admin/rules">Regole</a></li>
-                            <li class="nav-item"><a class="nav-link" href="/admin/requests">Richieste da approvare</a></li>
+                            <li class="nav-item"><a class="nav-link" href="/admin/requests">Requests da approvare</a></li>
                             <li class="nav-item"><a class="nav-link" href="/admin/sql">Database Explorer</a></li>
                         {% endif %}
                     </ul>
