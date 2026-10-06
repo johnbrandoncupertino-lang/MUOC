@@ -274,6 +274,18 @@ def wallet_page(wallet_name):
 
 
 
+@app.route('/credit/apply')
+@login_required
+def credit_application():
+    wallet_name = session['wallet_name']
+    profile = get_user_account_profile(wallet_name)
+    tier = execute_query_dict("SELECT * FROM account_tiers WHERE name=%s", (profile['account_tier'],))
+    form = RequestForm()
+    return render_template('credit_application.html', profile=profile, tier=tier[0] if tier else None,
+                           form=form, settings=get_settings(), is_admin='admin' in session and session['admin'],
+                           is_logged_in=True)
+
+
 @app.route('/reports')
 @login_required
 def reports_page():
