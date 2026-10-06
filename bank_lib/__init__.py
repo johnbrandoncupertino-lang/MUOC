@@ -4,6 +4,5 @@ from .form_validators import SetupForm, WalletForm, TransferForm, BankTransferFo
     AdminActionForm, CurrencyForm
 from .get_data import get_settings, get_client_ip, get_total_currency, get_server_health, get_user_by_wallet_name, \
     update_admin_balance
-from .global_vars import DB_POOL
 from .log_module import create_log, rotate_logs
 from .validate import validate_uuid, validate_amount
