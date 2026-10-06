@@ -498,9 +498,9 @@ def minebank_setup():
         ensure_minebank_schema()
         initialized = bool(execute_query("SELECT id FROM settings LIMIT 1"))
     except Exception as exc:
-        return render_template("minebank_setup.html", error=f"Database is not ready: {exc}", initialized=False), 500
+        return render_template("minebank_public.html", setup=True, error=f"Database is not ready: {exc}", initialized=False), 500
     if initialized:
-        return render_template("minebank_setup.html", initialized=True), 409
+        return render_template("minebank_public.html", setup=True, initialized=True), 409
     error = None
     if request.method == "POST":
         bank_name = str(request.form.get("bank_name","MineBank")).strip() or "MineBank"
@@ -539,7 +539,7 @@ def minebank_setup():
                 return redirect(url_for("admin_minebank_requests"))
             except Exception as exc:
                 error = str(exc)
-    return render_template("minebank_setup.html", error=error, initialized=False)
+    return render_template("minebank_public.html", setup=True, error=error, initialized=False)
 
 @app.route("/api/setup",methods=["POST"])
 def api_setup():
