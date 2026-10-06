@@ -123,11 +123,30 @@ def verify_wallet_pin(client_id, pin):
                         "UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=%s WHERE id=%s",
                         (locked, client_id),
                     )
+                    try:
+                        from bank_lib.minebank_requests import create_notification
+                        from bank_lib.minebank_features import queue_email
+                        create_notification(client_id, "SECURITY", "Wallet PIN locked",
+                                             "Three failed Wallet PIN attempts triggered a 5-minute security lockout.", None)
+                        queue_email(client_id, "SECURITY", "MineBank security alert",
+                                   "Three failed Wallet PIN attempts triggered a 5-minute lockout on your MineBank account.")
+                    except Exception:
+                        pass
                     return False, "Wallet PIN temporarily locked for 5 minutes after three failed attempts."
                 cur.execute(
                     "UPDATE bank_clients SET wallet_pin_failed_attempts=%s WHERE id=%s",
                     (attempts, client_id),
                 )
+                if attempts >= 2:
+                    try:
+                        from bank_lib.minebank_requests import create_notification
+                        from bank_lib.minebank_features import queue_email
+                        create_notification(client_id, "SECURITY", "Security warning",
+                                             f"Wallet PIN failed attempt {attempts} of 3.", None)
+                        queue_email(client_id, "SECURITY", "MineBank security warning",
+                                   f"Your MineBank Wallet PIN has failed {attempts} times. Review Security Centre if this was not you.")
+                    except Exception:
+                        pass
                 return False, f"Invalid wallet PIN. Failed attempt {attempts} of 3."
     finally:
         from .database import release_db_connection
