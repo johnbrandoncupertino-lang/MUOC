@@ -234,6 +234,24 @@ def init_db():
         return False
 
 
+def ensure_minebank_schema():
+    """Apply the idempotent MineBank v2 schema to an already-initialized bank.
+
+    Setup runs the full initializer, but existing deployments may have been
+    initialized before MineBank v2 was introduced. Applying the idempotent
+    schema on application startup makes those deployments self-migrating.
+    """
+    if DB_POOL is None:
+        return False
+    try:
+        from .minebank_schema import init_minebank_v2
+        init_minebank_v2()
+        return True
+    except Exception as e:
+        print(f"Error applying MineBank schema: {e}")
+        return False
+
+
 # Check database connection
 def check_db_connection():
     """Check if database connection is working"""
