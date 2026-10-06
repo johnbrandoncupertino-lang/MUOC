@@ -207,6 +207,9 @@ def minebank_dashboard():
 
 def selected_account():
     accounts = get_accounts(session["minebank_client_id"])
+    if not accounts and session.get("minebank_role") == "ADMIN":
+        create_account(session["minebank_client_id"], "BUSINESS", "BUSINESS")
+        accounts = get_accounts(session["minebank_client_id"])
     if not accounts:
         return None
     wanted = session.get("minebank_account_id") or request.args.get("account_id")
