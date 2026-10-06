@@ -663,6 +663,9 @@ def pay_payment_request(request_id):
         flash("Payment request not found, expired or already processed.","error")
         return redirect(url_for("minebank_payment_requests_page"))
     payer=execute_query_dict("SELECT id FROM bank_accounts WHERE account_number=%s AND client_id=%s",(row[0]["payer_account_number"],session["minebank_client_id"]))
+    if not payer:
+        flash("The payer account is no longer available.","error")
+        return redirect(url_for("minebank_payment_requests_page"))
     try:
         from bank_lib.minebank_auth import verify_wallet_pin
         ok,msg=verify_wallet_pin(session["minebank_client_id"],request.form.get("wallet_pin",""))
