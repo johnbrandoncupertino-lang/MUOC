@@ -327,7 +327,8 @@ def api_v1_transfers():
         result=minebank_transfer(sender_account_id=account_id,
             recipient_account_number=str(data.get("recipient_account_number") or ""),
             amount=int(data.get("amount")),description=data.get("description"),
-            reference=data.get("reference"),idempotency_key=request.headers.get("Idempotency-Key"))
+            reference=data.get("reference"),idempotency_key=request.headers.get("Idempotency-Key"),
+            actor_client_id=auth["client_id"],ip_address=request.remote_addr)
         return jsonify(result),201
     except (ValueError,TypeError) as exc:
         return jsonify({"error":str(exc)}),400
