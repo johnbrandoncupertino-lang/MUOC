@@ -210,7 +210,21 @@ def login():
             create_log("Login", f"User {wallet_name} logged in", "Admin")
             return redirect(url_for('home'))
 
-        return render_template('login.html', error="Invalid credentials",
+        if user:
+            attempts = int(user.get('failed_login_attempts') or 0) + 1
+            if attempts >= 3:
+                execute_query("UPDATE users SET failed_login_attempts=0, locked_until=%s WHERE wallet_name=%s",
+                              (datetime.now(UTC) + timedelta(minutes=5), wallet_name), commit=True)
+                create_log("Security Lockout", f"Wallet {wallet_name} was locked for 5 minutes after three failed login attempts", "Admin")
+                error_message = "Wallet temporarily locked for 5 minutes after three failed login attempts."
+            else:
+                execute_query("UPDATE users SET failed_login_attempts=%s WHERE wallet_name=%s",
+                              (attempts, wallet_name), commit=True)
+                error_message = f"Invalid credentials. Failed attempt {attempts} of 3."
+        else:
+            error_message = "Invalid credentials"
+
+        return render_template('login.html', error=error_message,
                                is_admin='admin' in session and session['admin'],
                                is_logged_in='wallet_name' in session, loginForm=loginForm,
                                requestWalletForm=requestWalletForm)
