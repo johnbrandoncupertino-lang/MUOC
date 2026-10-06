@@ -146,8 +146,8 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                     currency=currency,sender_account_id=sender[0],recipient_account_id=recipient[0],
                     status=status,description=description,reference_id=reference)
                 if idempotency_key:
-                    cur.execute("INSERT INTO transfer_idempotency(idempotency_key,transaction_id) VALUES(%s,%s)",
-                                (idempotency_key,txid))
+                    cur.execute("INSERT INTO transfer_idempotency(idempotency_key,client_id,transaction_id) VALUES(%s,%s,%s)",
+                                (idempotency_key,sender[1],txid))
                 return {"transaction_id":txid,"ledger_id":ledger_id,"status":status,"amount":amount,"fee":fee}
 
 
@@ -242,9 +242,73 @@ def withdraw(account_id, amount, actor_user_id=None, description=None):
         release_db_connection(conn)
 
 
-def repay_credit(account_id, amount):
+def repay_credit(account_id, amount, source_account_id):
     if not isinstance(amount,int) or amount<=0:
         raise ValueError("Repayment must be a positive integer Emerald amount.")
+    conn=get_db_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                debt_account=_lock_account(cur,account_id)
+                source=_lock_account(cur,source_account_id)
+                if not debt_account or not source:
+                    raise ValueError("Account not found.")
+                if debt_account[1] != source[1]:
+                    raise ValueError("Repayment source must belong to the same client.")
+                debt=max(0,-int(debt_account[5]))
+                if debt<=0:
+                    raise ValueError("Account has no outstanding credit debt.")
+                if amount>debt:
+                    raise ValueError("Repayment exceeds outstanding debt.")
+                if int(source[5]) < amount:
+                    raise ValueError("Source account does not have enough positive balance.")
+                if source_account_id == account_id:
+                    raise ValueError("Repayment requires a separate source account.")
+                cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                            (amount,source_account_id))
+                cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                            (amount,account_id))
+                txid=next_transaction_id(cur)
+                lid=create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_REPAYMENT",
+                                              amount=amount,sender_account_id=source_account_id,
+                                              recipient_account_id=account_id)
+                return {"transaction_id":txid,"ledger_id":lid,"status":"COMPLETED","amount":amount}
+    finally:
+        release_db_connection(conn)
+
+
+def activate_credit(account_id, requested_limit):
+    if not isinstance(requested_limit,int) or requested_limit<=0:
+        raise ValueError("Credit limit must be a positive integer.")
+    conn=get_db_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                account=_lock_account(cur,account_id)
+                if not account or account[6]!="ACTIVE":
+                    raise ValueError("Account is not active.")
+                cur.execute("SELECT credit_enabled,default_credit_limit,private_or_corporate FROM account_tiers_v2 WHERE id=%s",
+                            (account[4],))
+                tier=cur.fetchone()
+                if not tier or not tier[0]:
+                    raise ValueError("This account tier does not support credit.")
+                cur.execute("SELECT id FROM credit_facilities WHERE account_id=%s FOR UPDATE",(account_id,))
+                existing=cur.fetchone()
+                fee=credit_activation_fee(requested_limit)
+                if existing:
+                    cur.execute("UPDATE credit_facilities SET credit_limit=%s,activation_fee_monthly=%s,status='ACTIVE' WHERE account_id=%s",
+                                (requested_limit,fee,account_id))
+                else:
+                    cur.execute("""INSERT INTO credit_facilities(account_id,credit_limit,interest_monthly_bps,
+                                   activation_fee_monthly,status) VALUES(%s,%s,%s,%s,'ACTIVE')""",
+                                (account_id,requested_limit,STANDARD_CREDIT_INTEREST_MONTHLY_BPS,fee))
+                return {"account_id":account_id,"credit_limit":requested_limit,"monthly_activation_fee":fee,
+                        "interest_monthly_bps":STANDARD_CREDIT_INTEREST_MONTHLY_BPS,"status":"ACTIVE"}
+    finally:
+        release_db_connection(conn)
+
+
+def freeze_overdue_credit(account_id):
     conn=get_db_connection()
     try:
         with conn:
@@ -254,17 +318,15 @@ def repay_credit(account_id, amount):
                     raise ValueError("Account not found.")
                 debt=max(0,-int(account[5]))
                 if debt<=0:
-                    raise ValueError("Account has no outstanding credit debt.")
-                if amount>debt:
-                    raise ValueError("Repayment exceeds outstanding debt.")
-                # Repayment is an explicit internal settlement: the client must
-                # have the funds in a positive balance source in a real channel.
-                cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
-                            (amount,account_id))
-                txid=next_transaction_id(cur)
-                lid=create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_REPAYMENT",
-                                              amount=amount,recipient_account_id=account_id)
-                return {"transaction_id":txid,"ledger_id":lid,"status":"COMPLETED","amount":amount}
+                    return {"status":"CURRENT"}
+                cur.execute("""UPDATE credit_facilities SET status='SUSPENDED',overdue_since=COALESCE(overdue_since,CURRENT_TIMESTAMP)
+                               WHERE account_id=%s AND status='ACTIVE'""",(account_id,))
+                cur.execute("UPDATE bank_accounts SET status='FROZEN',updated_at=CURRENT_TIMESTAMP WHERE id=%s",(account_id,))
+                cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
+                               VALUES(%s,%s,'CREDIT_OVERDUE','Credit line suspended',
+                               'Credit debt was not repaid within the required period; the account is frozen pending bank intervention.')""",
+                            (account[1],account_id))
+                return {"status":"FROZEN","account_id":account_id}
     finally:
         release_db_connection(conn)
 
