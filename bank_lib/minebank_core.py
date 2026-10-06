@@ -19,7 +19,7 @@ def _now():
 def _lock_account(cur, account_id):
     cur.execute(
         """SELECT id, client_id, account_number, account_type, tier_id, balance,
-                  status, monthly_outgoing_used, monthly_outgoing_period
+                  status, monthly_outgoing_used, monthly_outgoing_period, last_outgoing_at
            FROM bank_accounts WHERE id=%s FOR UPDATE""",
         (account_id,),
     )
@@ -29,7 +29,7 @@ def _lock_account(cur, account_id):
 def _lock_recipient(cur, account_number):
     cur.execute(
         """SELECT id, client_id, account_number, account_type, tier_id, balance, status,
-                  monthly_outgoing_used, monthly_outgoing_period
+                  monthly_outgoing_used, monthly_outgoing_period, last_outgoing_at
            FROM bank_accounts WHERE account_number=%s FOR UPDATE""",
         (account_number,),
     )
@@ -108,9 +108,27 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 if monthly_limit is not None and used + amount > monthly_limit:
                     raise ValueError("Monthly outgoing transfer limit exceeded.")
 
-                # Fee calculation is deliberately delegated to the configurable
-                # fee engine in production; zero is the safe base until a rule matches.
-                fee = 0
+                last_outgoing = sender[9]
+                if last_outgoing and (_now() - last_outgoing).total_seconds() < 30:
+                    raise ValueError("Outgoing transfers require a 30-second cooldown.")
+
+                # Central fee engine: highest-priority matching active rule wins.
+                cur.execute(
+                    """SELECT percentage_bps, fixed_amount FROM fee_rules
+                       WHERE active=TRUE
+                         AND transaction_type='TRANSFER'
+                         AND (account_type IS NULL OR account_type=%s)
+                         AND (tier_code IS NULL OR tier_code=(SELECT code FROM account_tiers_v2 WHERE id=%s))
+                         AND (min_amount IS NULL OR %s >= min_amount)
+                         AND (max_amount IS NULL OR %s <= max_amount)
+                       ORDER BY priority ASC, id ASC LIMIT 1""",
+                    (sender[3], sender[4], amount, amount),
+                )
+                fee_rule = cur.fetchone()
+                if fee_rule:
+                    fee = (amount * fee_rule[0] + 9999) // 10000 + fee_rule[1]
+                else:
+                    fee = 0
                 total = amount + fee
                 if sender[5] - total < -(get_credit_limit(cur, sender[0])):
                     raise ValueError("Insufficient available balance/credit.")
@@ -122,6 +140,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 cur.execute(
                     """UPDATE bank_accounts
                        SET balance=balance-%s, monthly_outgoing_used=%s,
+                           last_outgoing_at=CURRENT_TIMESTAMP,
                            monthly_outgoing_period=%s, updated_at=CURRENT_TIMESTAMP
                        WHERE id=%s""",
                     (total, used + amount, period, sender[0]),
