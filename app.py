@@ -30,7 +30,7 @@ from bank_lib.global_vars import DB_POOL
 from bank_lib.log_module import create_log, rotate_logs
 from bank_lib.minebank_auth import (login_client, logout_client, get_client_accounts, set_wallet_pin,
                                     verify_wallet_pin, require_minebank_login, require_role, require_admin_reauth,
-                                    reauthenticate_admin, create_account)
+                                    reauthenticate_admin, create_account, request_tier_change, review_tier_change)
 from bank_lib.minebank_core import (transfer as minebank_transfer, approve_transfer, reject_transfer,
                                      deposit as minebank_deposit, withdraw as minebank_withdraw,
                                      repay_credit, activate_credit, chargeback, accrue_monthly_credit_interest)
@@ -393,6 +393,54 @@ def api_v1_create_credential():
         scopes=data.get("scopes") or ["accounts:read","transactions:read"]
         return jsonify(create_api_credential(client_id,str(data.get("name") or "Minecraft"),scopes)),201
     except (KeyError,ValueError,TypeError) as exc:
+        return jsonify({"error":str(exc)}),400
+
+
+@app.route('/api/v2/transfers/<transaction_id>/approve', methods=['POST'])
+@require_role('ADMIN', 'OPERATOR')
+def minebank_approve_transfer_api(transaction_id):
+    try:
+        approve_transfer(transaction_id, session['minebank_client_id'], request.remote_addr)
+        return jsonify({"transaction_id":transaction_id,"status":"COMPLETED"})
+    except ValueError as exc:
+        return jsonify({"error":str(exc)}),400
+
+
+@app.route('/api/v2/transfers/<transaction_id>/reject', methods=['POST'])
+@require_role('ADMIN', 'OPERATOR')
+def minebank_reject_transfer_api(transaction_id):
+    data=request.get_json(silent=True) or {}
+    try:
+        reject_transfer(transaction_id, session['minebank_client_id'], data.get("reason"), request.remote_addr)
+        return jsonify({"transaction_id":transaction_id,"status":"REJECTED"})
+    except ValueError as exc:
+        return jsonify({"error":str(exc)}),400
+
+
+@app.route('/api/v2/accounts/<int:account_id>/tier-request', methods=['POST'])
+@require_minebank_login
+def minebank_tier_request(account_id):
+    data=request.get_json(silent=True) or {}
+    try:
+        allowed={r[0] for r in get_client_accounts(session['minebank_client_id'])}
+        if account_id not in allowed:
+            return jsonify({"error":"Account does not belong to client"}),403
+        request_id=request_tier_change(session['minebank_client_id'],account_id,
+                                       str(data.get("tier_code") or "").upper(),
+                                       data.get("requested_credit_limit"))
+        return jsonify({"request_id":request_id,"status":"PENDING"}),201
+    except (ValueError,TypeError) as exc:
+        return jsonify({"error":str(exc)}),400
+
+
+@app.route('/api/v2/tier-requests/<int:request_id>/review', methods=['POST'])
+@require_role('ADMIN','OPERATOR')
+def minebank_review_tier(request_id):
+    data=request.get_json(silent=True) or {}
+    try:
+        status=review_tier_change(request_id,session['minebank_client_id'],bool(data.get("approve")))
+        return jsonify({"request_id":request_id,"status":status})
+    except ValueError as exc:
         return jsonify({"error":str(exc)}),400
 
 
