@@ -67,7 +67,7 @@ def get_accounts(client_id):
                   t.code,t.display_name,t.monthly_fee,t.max_balance,t.monthly_outgoing_limit,
                   t.credit_enabled,t.default_credit_limit
            FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
-           WHERE a.client_id=%s AND a.status<>'CLOSED'
+           WHERE a.client_id=%s AND a.status<>'DISABLED'
            ORDER BY a.account_type,a.id""", (client_id,)
     )
 
@@ -529,8 +529,8 @@ def admin_minebank_dashboard():
     account = ensure_admin_account(session["minebank_client_id"])
     stats = execute_query_dict("""
         SELECT (SELECT COUNT(*) FROM bank_clients) AS clients,
-               (SELECT COUNT(*) FROM bank_accounts WHERE status<>'CLOSED') AS accounts,
-               (SELECT COALESCE(SUM(balance),0) FROM bank_accounts WHERE status<>'CLOSED') AS circulating,
+               (SELECT COUNT(*) FROM bank_accounts WHERE status<>'DISABLED') AS accounts,
+               (SELECT COALESCE(SUM(balance),0) FROM bank_accounts WHERE status<>'DISABLED') AS circulating,
                (SELECT COUNT(*) FROM ledger_transactions WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours') AS tx24,
                (SELECT COUNT(*) FROM bank_requests_v2 WHERE status='PENDING') AS pending_requests,
                (SELECT COUNT(*) FROM ledger_transactions WHERE status='PENDING_APPROVAL') AS pending_transfers
@@ -575,7 +575,7 @@ def admin_minebank_economy():
                 if not rows: raise ValueError("Account not found.")
                 account_id = rows[0]["id"]
                 if action == "mint":
-                    circulating = int(execute_query("SELECT COALESCE(SUM(balance),0) FROM bank_accounts WHERE status<>'CLOSED'")[0][0])
+                    circulating = int(execute_query("SELECT COALESCE(SUM(balance),0) FROM bank_accounts WHERE status<>'DISABLED'")[0][0])
                     maximum = int(execute_query("SELECT maximum_currency FROM settings ORDER BY id LIMIT 1")[0][0])
                     if circulating + amount > maximum:
                         raise ValueError(f"Mint would exceed the maximum supply of {maximum} Emerald.")
@@ -598,10 +598,10 @@ def admin_minebank_economy():
         except Exception as exc:
             error = str(exc)
     setting=execute_query_dict("SELECT bank_name,currency_name,maximum_currency,allow_debts,allow_public_logs FROM settings ORDER BY id LIMIT 1")[0]
-    circulating=int(execute_query("SELECT COALESCE(SUM(balance),0) FROM bank_accounts WHERE status<>'CLOSED'")[0][0])
+    circulating=int(execute_query("SELECT COALESCE(SUM(balance),0) FROM bank_accounts WHERE status<>'DISABLED'")[0][0])
     accounts=execute_query_dict("""SELECT a.id,a.account_number,a.balance,a.status,c.email
                                    FROM bank_accounts a JOIN bank_clients c ON c.id=a.client_id
-                                   WHERE a.status<>'CLOSED' ORDER BY a.account_number""")
+                                   WHERE a.status<>'DISABLED' ORDER BY a.account_number""")
     events=execute_query_dict("""SELECT e.*,c.email,a.account_number FROM minebank_economy_events e
                                  LEFT JOIN bank_clients c ON c.id=e.actor_client_id
                                  LEFT JOIN bank_accounts a ON a.id=e.account_id
@@ -617,7 +617,7 @@ def admin_minebank_clients():
     if request.method=="POST":
         account_id=int(request.form.get("account_id","0") or 0)
         status=request.form.get("status")
-        if status not in {"ACTIVE","LIMITED","FROZEN","CLOSED"}:
+        if status not in {"ENABLED","FROZEN","DISABLED"}:
             flash("Invalid account status.","error")
         else:
             execute_query("UPDATE bank_accounts SET status=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(status,account_id),commit=True)
@@ -626,7 +626,7 @@ def admin_minebank_clients():
                                          a.id account_id,a.account_number,a.balance,a.status account_status,
                                          t.display_name,t.code
                                   FROM bank_clients c
-                                  LEFT JOIN bank_accounts a ON a.client_id=c.id AND a.status<>'CLOSED'
+                                  LEFT JOIN bank_accounts a ON a.client_id=c.id AND a.status<>'DISABLED'
                                   LEFT JOIN account_tiers_v2 t ON t.id=a.tier_id
                                   ORDER BY c.created_at DESC""")
     return render_template("minebank_admin_new.html",mode="clients",clients=clients,
