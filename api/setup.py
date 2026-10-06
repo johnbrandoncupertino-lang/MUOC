@@ -3,7 +3,7 @@ import os
 from flask import jsonify, request
 from werkzeug.security import generate_password_hash
 
-from bank_lib.database import is_db_initialized, execute_query
+from bank_lib.database import is_db_initialized, init_db, execute_query
 from bank_lib.decorator import admin_required
 from bank_lib.form_validators import SetupForm, WalletForm
 from bank_lib.get_data import get_settings, get_total_currency, get_user_by_wallet_name, \
@@ -30,34 +30,26 @@ def register_setup_api_routes(app):
         admin_password = data.get('admin_password')
 
         try:
-            # Run DDL statements from schema.sql
-            schema_path = os.path.join(os.path.dirname(__file__), '../extras/schema.sql')
-            with open(schema_path, 'r') as f:
-                ddl_script = f.read()
-
-            # Assuming execute_query can run multiple statements if passed raw SQL
-            for statement in ddl_script.split(';'):
-                stmt = statement.strip()
-                if stmt:
-                    try:
-                        execute_query(stmt + ';', commit=True)
-                    except Exception as e:
-                        return jsonify(
-                            {"error": "Failed to submit query to construct database", "details": f"{stmt} --> {e}"})
+            # Initialize the canonical application schema, including
+            # security, account-tier, credit and billing extensions.
+            if not init_db():
+                return jsonify({"error": "Failed to initialize database schema"}), 500
 
             # Insert settings
             execute_query(
-                "INSERT INTO settings (bank_name, currency_name) VALUES (%s, %s, %s)",
-                (bank_name, currency_name),
+                "INSERT INTO settings (bank_name, currency_name, admin_password) VALUES (%s, %s, %s)",
+                (bank_name, currency_name, generate_password_hash(admin_password)),
                 commit=True
             )
 
             # Create admin user
             execute_query(
                 "INSERT INTO users (wallet_name, password, current_currency) VALUES (%s, %s, %s)",
-                ("admin", generate_password_hash(admin_password), 1000000),  # Admin starts with all currency
+                ("admin", generate_password_hash(admin_password), 0),  # Treasury balance is synchronized below
                 commit=True
             )
+
+            update_admin_balance()
 
             create_log("Setup", "Bank system initialized", "Admin")
             create_log("Bank Created", f"Bank {bank_name} has been created with {currency_name} as currency", "Global")
