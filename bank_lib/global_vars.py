@@ -2,7 +2,7 @@ import os
 
 from psycopg2.pool import ThreadedConnectionPool
 
-DATABASE_URL = os.environ.get("DATABASE_URL", "EMPTY")
+DATABASE_URL = (os.environ.get("DATABASE_URL") or os.environ.get("POSTGRES_URL") or os.environ.get("POSTGRES_PRISMA_URL") or os.environ.get("POSTGRES_URL_NON_POOLING") or "EMPTY").strip()
 if DATABASE_URL == "EMPTY":
     print("The Database URL env variable is missing, THIS IS A MAJOR ISSUE!!")
 MAX_CONNECTION_POOL = 20  # Set the maximum number of connections in the pool for PostgreSQL  # Set the maximum number of connections in the pool for PostgreSQL
