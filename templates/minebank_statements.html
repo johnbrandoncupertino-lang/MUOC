@@ -19,6 +19,7 @@
     <div><span>Tier</span><strong>{{ selected_account[3] }}</strong></div>
     <div><span>Balance</span><strong>{{ selected_account[5] }} Emerald</strong></div>
   </div>{% endif %}
+  {% if billing %}<div class="mb-panel-title mt-4">Monthly cost statement</div><div class="table-responsive"><table class="table mb-table"><thead><tr><th>Billing period</th><th>Charge</th><th class="text-end">Amount</th><th>Status</th></tr></thead><tbody>{% for b in billing %}<tr><td>{{ b[2] }}</td><td>{{ b[0] }}</td><td class="text-end">{{ b[1] }} <small>Emerald</small></td><td>{{ b[3] }}</td></tr>{% endfor %}</tbody></table></div>{% endif %}
   {% if transactions %}<div class="table-responsive"><table class="table mb-table"><thead><tr><th>Date</th><th>Transaction</th><th>Direction</th><th>Status</th><th class="text-end">Amount</th><th class="text-end">Fee</th></tr></thead><tbody>
   {% for t in transactions %}<tr>
     <td>{{ t[8].strftime('%Y-%m-%d %H:%M') }}</td>
