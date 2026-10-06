@@ -19,7 +19,7 @@ from api import register_request_api_routes, register_get_api_routes, \
     register_setup_api_routes, register_transfer_api_routes, register_admin_api_routes
 from api.admin import sync_admin_wallet
 from bank_lib import SetupForm
-from bank_lib.database import init_db, is_db_initialized, execute_query, execute_query_dict
+from bank_lib.database import init_db, is_db_initialized, execute_query, execute_query_dict, ensure_minebank_schema
 from bank_lib.decorator import admin_required, login_required
 from bank_lib.form_CSRF_validators import LoginForm, RequestWalletForm, FreezeForm, ResetForm, BurnForm, \
     MintCurrencyForm, BurnCurrencyForm, CreateWalletForm, RulesForm, RequestForm, AdminLogForm, AdminRequestsForm
@@ -78,6 +78,13 @@ Talisman(
 )
 
 csrf = CSRFProtect(app)
+
+# Existing deployments may have been initialized before MineBank v2 existed.
+# Apply the idempotent v2 schema during startup so portal registration and
+# account provisioning are available without requiring a destructive re-setup.
+if DB_POOL is not None and is_db_initialized():
+    if not ensure_minebank_schema():
+        logging.error("MineBank v2 schema migration could not be applied during startup")
 
 # Register API routes
 register_request_api_routes(app)
