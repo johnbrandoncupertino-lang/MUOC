@@ -1,0 +1,9 @@
+{% extends "minebank_layout.html" %}
+{% block title %}MineBank — Messages{% endblock %}
+{% block content %}
+<div class="mb-page-head"><div><div class="mb-eyebrow">SECURE MESSAGES</div><h1>Messages</h1><p>Important notices and updates from MineBank.</p></div></div>
+<section class="mb-panel"><div class="mb-panel-title">Message centre</div>
+{% for n in notifications %}<article class="mb-notification"><div class="mb-notification-title">{{ n.title }}</div><div class="mb-notification-message">{{ n.message }}</div><div class="mb-notification-time">{{ n.created_at.strftime('%Y-%m-%d %H:%M') }} · {{ n.notification_type }}</div></article>
+{% else %}<p class="mb-empty">You have no messages.</p>{% endfor %}
+</section>
+{% endblock %}
