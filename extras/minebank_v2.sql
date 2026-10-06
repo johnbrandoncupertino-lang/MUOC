@@ -47,6 +47,8 @@ CREATE TABLE IF NOT EXISTS bank_accounts (
 CREATE UNIQUE INDEX IF NOT EXISTS one_personal_account_per_client
 ON bank_accounts(client_id) WHERE account_type='PERSONAL' AND status <> 'CLOSED';
 
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS last_outgoing_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS credit_facilities (
     id BIGSERIAL PRIMARY KEY,
     account_id BIGINT UNIQUE NOT NULL REFERENCES bank_accounts(id),
