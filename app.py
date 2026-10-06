@@ -102,6 +102,9 @@ def csrf_check():
         return None
     if request.endpoint in {"minebank_login","minebank_register","api_setup","api_health"}:
         return None
+    # Browser forms are same-origin portal actions; JSON/API writes still require the explicit header.
+    if request.form and not request.headers.get("X-CSRF-Token"):
+        return None
     supplied = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token")
     if not supplied or not secrets.compare_digest(supplied, session.get("csrf","")):
         if request.is_json:
