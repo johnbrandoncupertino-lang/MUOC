@@ -13,6 +13,15 @@ CREATE TABLE IF NOT EXISTS bank_clients (
     last_login TIMESTAMPTZ
 );
 
+-- Authentication hardening for the v2 portal.
+CREATE SEQUENCE IF NOT EXISTS muoc_account_number_seq START 100001;
+
+ALTER TABLE bank_clients
+    ADD COLUMN IF NOT EXISTS wallet_pin_hash VARCHAR(255),
+    ADD COLUMN IF NOT EXISTS wallet_pin_failed_attempts INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS wallet_pin_locked_until TIMESTAMPTZ,
+    ADD COLUMN IF NOT EXISTS admin_reauth_at TIMESTAMPTZ;
+
 CREATE TABLE IF NOT EXISTS account_tiers_v2 (
     id BIGSERIAL PRIMARY KEY,
     code VARCHAR(40) UNIQUE NOT NULL,
