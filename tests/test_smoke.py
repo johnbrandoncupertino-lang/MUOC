@@ -41,3 +41,9 @@ def test_minebank_registration_template_has_required_fields():
     assert 'name="password"' in template
     assert 'name="password_confirmation"' in template
     assert "minebank_register" in template
+
+
+def test_runtime_minebank_schema_migration_helper_exists():
+    source = (ROOT / "bank_lib" / "database.py").read_text(encoding="utf-8")
+    assert "def ensure_minebank_schema()" in source
+    assert "init_minebank_v2()" in source
