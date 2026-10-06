@@ -283,6 +283,35 @@ def minebank_accounts_page():
     return render_template("minebank_portal.html",mode="account",account=selected_account(),accounts=get_accounts(session["minebank_client_id"]),
                            business_tiers=business_tiers,account_error=error,portal_active="account")
 
+@app.route("/portal/business/<int:account_id>/members",methods=["GET","POST"])
+@require_login
+def minebank_business_members(account_id):
+    owner=execute_query_dict("SELECT id,account_number,account_type FROM bank_accounts WHERE id=%s AND client_id=%s AND account_type='BUSINESS'",
+                             (account_id,session["minebank_client_id"]))
+    if not owner:
+        return "Business account not found",404
+    error=None
+    if request.method=="POST":
+        try:
+            email=request.form.get("email","").strip().lower()
+            role=request.form.get("role","EMPLOYEE")
+            if role not in {"ADMIN","FINANCE_MANAGER","EMPLOYEE","READ_ONLY","PAYROLL_MANAGER"}:
+                raise ValueError("Invalid Business role.")
+            user=execute_query_dict("SELECT id FROM bank_clients WHERE LOWER(email)=LOWER(%s) AND status<>'CLOSED'",(email,))
+            if not user: raise ValueError("The employee must already have a MUOC customer account.")
+            execute_query("""INSERT INTO minebank_business_members(account_id,client_id,role)
+                             VALUES(%s,%s,%s)
+                             ON CONFLICT(account_id,client_id) DO UPDATE SET role=EXCLUDED.role""",
+                          (account_id,user[0]["id"],role),commit=True)
+            flash("Business member access updated.","success")
+        except Exception as exc:
+            error=str(exc)
+    members=execute_query_dict("""SELECT m.*,c.email FROM minebank_business_members m
+                                  JOIN bank_clients c ON c.id=m.client_id
+                                  WHERE m.account_id=%s ORDER BY m.role,c.email""",(account_id,))
+    return render_template("minebank_portal.html",mode="business_members",business_account=owner[0],
+                           members=members,error=error,portal_active="account")
+
 @app.route("/portal/transfer", methods=["GET","POST"])
 @require_login
 def minebank_transfer_page():
