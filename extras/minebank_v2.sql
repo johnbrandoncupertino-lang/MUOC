@@ -30,6 +30,8 @@ CREATE TABLE IF NOT EXISTS account_tiers_v2 (
     monthly_fee INTEGER NOT NULL DEFAULT 0 CHECK (monthly_fee >= 0),
     max_balance INTEGER CHECK (max_balance IS NULL OR max_balance >= 0),
     monthly_outgoing_limit INTEGER CHECK (monthly_outgoing_limit IS NULL OR monthly_outgoing_limit >= 0),
+    daily_outgoing_limit INTEGER CHECK (daily_outgoing_limit IS NULL OR daily_outgoing_limit >= 0),
+    single_transfer_limit INTEGER CHECK (single_transfer_limit IS NULL OR single_transfer_limit >= 0),
     credit_enabled BOOLEAN NOT NULL DEFAULT FALSE,
     default_credit_limit INTEGER NOT NULL DEFAULT 0 CHECK (default_credit_limit >= 0),
     private_or_corporate BOOLEAN NOT NULL DEFAULT FALSE,
@@ -244,14 +246,14 @@ CREATE TABLE IF NOT EXISTS transfer_idempotency (
 );
 
 INSERT INTO account_tiers_v2
-(code,account_type,display_name,monthly_fee,max_balance,monthly_outgoing_limit,credit_enabled,default_credit_limit,private_or_corporate,eligibility_config)
+(code,account_type,display_name,monthly_fee,max_balance,monthly_outgoing_limit,daily_outgoing_limit,single_transfer_limit,credit_enabled,default_credit_limit,private_or_corporate,eligibility_config)
 VALUES
-('PERSONAL','PERSONAL','Personal',0,5000,5000,FALSE,0,FALSE,'{}'),
-('PERSONAL_PRO','PERSONAL','Personal Pro',0,NULL,20000,TRUE,2000,FALSE,'{}'),
-('PERSONAL_PRIVATE','PERSONAL','Personal Private',0,NULL,NULL,TRUE,1500,TRUE,'{"minimum_age":18,"minimum_balance":0,"minimum_operations":0,"max_requested_credit":20000}'),
-('BUSINESS','BUSINESS','Business',0,NULL,NULL,TRUE,0,FALSE,'{}'),
-('BUSINESS_PRO','BUSINESS','Business Pro',0,NULL,NULL,TRUE,0,FALSE,'{}'),
-('CORPORATE','BUSINESS','Corporate',0,NULL,NULL,TRUE,0,TRUE,'{"minimum_age":18,"minimum_balance":0,"minimum_operations":0}')
+('PERSONAL','PERSONAL','Personal',0,5000,5000,5000,5000,FALSE,0,FALSE,'{}'),
+('PERSONAL_PRO','PERSONAL','Personal Pro',0,NULL,20000,10000,10000,TRUE,2000,FALSE,'{}'),
+('PERSONAL_PRIVATE','PERSONAL','Personal Private',0,NULL,NULL,NULL,NULL,TRUE,1500,TRUE,'{"minimum_age":18,"minimum_balance":0,"minimum_operations":0,"max_requested_credit":20000}'),
+('BUSINESS','BUSINESS','Business',0,NULL,NULL,NULL,NULL,TRUE,0,FALSE,'{}'),
+('BUSINESS_PRO','BUSINESS','Business Pro',0,NULL,NULL,NULL,NULL,TRUE,0,FALSE,'{}'),
+('CORPORATE','BUSINESS','Corporate',0,NULL,NULL,NULL,NULL,TRUE,0,TRUE,'{"minimum_age":18,"minimum_balance":0,"minimum_operations":0}')
 ON CONFLICT (code) DO NOTHING;
 
 
@@ -291,9 +293,46 @@ CREATE TABLE IF NOT EXISTS minebank_scheduled_transfers (
 );
 
 ALTER TABLE minebank_scheduled_transfers ADD COLUMN IF NOT EXISTS recurrence_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE minebank_scheduled_transfers ADD COLUMN IF NOT EXISTS last_error VARCHAR(500);
+ALTER TABLE minebank_scheduled_transfers ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ;
 ALTER TABLE minebank_scheduled_transfers DROP CONSTRAINT IF EXISTS minebank_scheduled_transfers_schedule_type_check;
 ALTER TABLE minebank_scheduled_transfers ADD CONSTRAINT minebank_scheduled_transfers_schedule_type_check
 CHECK (schedule_type IN ('ONCE','DAILY','WEEKLY','MONTHLY','CUSTOM'));
+
+CREATE TABLE IF NOT EXISTS minebank_payment_requests (
+    id BIGSERIAL PRIMARY KEY,
+    requester_client_id BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
+    payer_client_id BIGINT REFERENCES bank_clients(id) ON DELETE SET NULL,
+    requester_account_id BIGINT NOT NULL REFERENCES bank_accounts(id),
+    payer_account_number VARCHAR(32) NOT NULL,
+    amount BIGINT NOT NULL CHECK (amount > 0),
+    description VARCHAR(500),
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','PAID','REJECTED','EXPIRED','CANCELLED')),
+    expires_at TIMESTAMPTZ NOT NULL,
+    paid_transaction_id VARCHAR(32),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS transfer_kind VARCHAR(40);
+ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS category VARCHAR(60);
+
+CREATE INDEX IF NOT EXISTS minebank_payment_requests_payer_idx ON minebank_payment_requests(payer_account_number,status);
+CREATE INDEX IF NOT EXISTS minebank_payment_requests_requester_idx ON minebank_payment_requests(requester_client_id,created_at DESC);
+
+CREATE TABLE IF NOT EXISTS minebank_limit_overrides (
+    id BIGSERIAL PRIMARY KEY,
+    account_id BIGINT NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+    requested_by BIGINT NOT NULL REFERENCES bank_clients(id),
+    reviewed_by BIGINT REFERENCES bank_clients(id),
+    field_name VARCHAR(40) NOT NULL,
+    old_value BIGINT,
+    new_value BIGINT NOT NULL,
+    reason VARCHAR(500) NOT NULL,
+    status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','APPROVED','REJECTED')),
+    expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    reviewed_at TIMESTAMPTZ
+);
 
 CREATE TABLE IF NOT EXISTS minebank_notification_preferences (
     client_id BIGINT PRIMARY KEY REFERENCES bank_clients(id) ON DELETE CASCADE,
