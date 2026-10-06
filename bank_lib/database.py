@@ -226,6 +226,8 @@ def init_db():
                           )
                       """, commit=True)
 
+        from .minebank_schema import init_minebank_v2
+        init_minebank_v2()
         return True
     except Exception as e:
         print(f"Error initializing database: {e}")
