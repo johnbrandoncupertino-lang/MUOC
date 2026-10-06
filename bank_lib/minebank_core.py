@@ -139,6 +139,10 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                                updated_at=CURRENT_TIMESTAMP WHERE id=%s""",
                             (total,used+amount,period,sender[0]))
                 if status == "COMPLETED":
+                    cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
+                    max_balance=cur.fetchone()[0]
+                    if max_balance is not None and int(recipient[5])+amount>int(max_balance):
+                        raise ValueError("Recipient account balance limit exceeded.")
                     cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
                                 (amount,recipient[0]))
                 ledger_id = create_ledger_transaction(
@@ -381,6 +385,8 @@ def accrue_monthly_credit_interest(account_id):
                 facility=cur.fetchone()
                 if not facility:
                     raise ValueError("Active credit facility not found.")
+                if facility[1] is not None and facility[1].strftime("%Y-%m") == _now().strftime("%Y-%m"):
+                    return {"interest":0,"status":"ALREADY_ACCRUED"}
                 bps=int(facility[0] or STANDARD_CREDIT_INTEREST_MONTHLY_BPS)
                 interest=(debt*bps+9999)//10000
                 cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
@@ -390,5 +396,75 @@ def accrue_monthly_credit_interest(account_id):
                                               recipient_account_id=account_id,description="Monthly credit interest")
                 cur.execute("UPDATE credit_facilities SET last_interest_at=CURRENT_TIMESTAMP WHERE account_id=%s",(account_id,))
                 return {"transaction_id":txid,"ledger_id":lid,"interest":interest,"status":"COMPLETED"}
+    finally:
+        release_db_connection(conn)
+
+
+def process_monthly_billing():
+    """Apply configured tier/credit fees and monthly credit interest once per account."""
+    conn=get_db_connection()
+    results=[]
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT a.id,a.client_id,a.tier_id,a.balance,c.credit_limit,c.activation_fee_monthly,
+                                      c.status,c.last_interest_at,c.overdue_since
+                               FROM bank_accounts a
+                               JOIN account_tiers_v2 t ON t.id=a.tier_id
+                               LEFT JOIN credit_facilities c ON c.account_id=a.id
+                               WHERE a.status IN ('ACTIVE','LIMITED')""")
+                accounts=cur.fetchall()
+                period=_now().strftime("%Y-%m")
+                for a in accounts:
+                    account_id,client_id,tier_id,balance,credit_limit,credit_fee,credit_status,last_interest,overdue=a
+                    cur.execute("SELECT monthly_fee FROM account_tiers_v2 WHERE id=%s",(tier_id,))
+                    tier_fee=int(cur.fetchone()[0] or 0)
+                    fees=[]
+                    if tier_fee:
+                        cur.execute("""INSERT INTO account_billing(account_id,billing_type,amount,billing_period,status)
+                                       VALUES(%s,'TIER_FEE',%s,%s,'COMPLETED')
+                                       ON CONFLICT(account_id,billing_type,billing_period) DO NOTHING""",
+                                    (account_id,tier_fee,period))
+                        if cur.rowcount:
+                            cur.execute("UPDATE bank_accounts SET balance=balance-%s WHERE id=%s",(tier_fee,account_id))
+                            txid=next_transaction_id(cur)
+                            create_ledger_transaction(cur,transaction_id=txid,transaction_type="TIER_FEE",
+                                                      amount=tier_fee,recipient_account_id=account_id,
+                                                      description=f"Monthly {period} tier fee")
+                            fees.append(tier_fee)
+                    if credit_status=="ACTIVE" and credit_fee:
+                        cur.execute("""INSERT INTO account_billing(account_id,billing_type,amount,billing_period,status)
+                                       VALUES(%s,'CREDIT_FEE',%s,%s,'COMPLETED')
+                                       ON CONFLICT(account_id,billing_type,billing_period) DO NOTHING""",
+                                    (account_id,int(credit_fee),period))
+                        if cur.rowcount:
+                            cur.execute("UPDATE bank_accounts SET balance=balance-%s WHERE id=%s",(int(credit_fee),account_id))
+                            txid=next_transaction_id(cur)
+                            create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_FEE",
+                                                      amount=int(credit_fee),recipient_account_id=account_id,
+                                                      description=f"Monthly credit activation fee {period}")
+                            fees.append(int(credit_fee))
+                    cur.execute("SELECT balance FROM bank_accounts WHERE id=%s FOR UPDATE",(account_id,))
+                    current_balance=int(cur.fetchone()[0])
+                    if credit_status=="ACTIVE" and current_balance<0:
+                        debt=-current_balance
+                        if not overdue:
+                            cur.execute("UPDATE credit_facilities SET overdue_since=CURRENT_TIMESTAMP WHERE account_id=%s",(account_id,))
+                            cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
+                                           VALUES(%s,%s,'CREDIT_OVERDUE','Credit repayment due',
+                                           'Your account has outstanding credit debt. Repay it within one month to avoid suspension and account freeze.')""",
+                                        (client_id,account_id))
+                        else:
+                            cur.execute("""SELECT CASE WHEN overdue_since <= CURRENT_TIMESTAMP - INTERVAL '1 month'
+                                           THEN TRUE ELSE FALSE END FROM credit_facilities WHERE account_id=%s""",(account_id,))
+                            if cur.fetchone()[0]:
+                                cur.execute("UPDATE credit_facilities SET status='SUSPENDED' WHERE account_id=%s",(account_id,))
+                                cur.execute("UPDATE bank_accounts SET status='FROZEN' WHERE id=%s",(account_id,))
+                                cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
+                                               VALUES(%s,%s,'ACCOUNT_FROZEN','Account frozen',
+                                               'Credit debt remained unpaid for one month. All credit lines are suspended pending bank intervention.')""",
+                                            (client_id,account_id))
+                    results.append({"account_id":account_id,"fees":fees})
+        return results
     finally:
         release_db_connection(conn)
