@@ -64,3 +64,9 @@ def create_notification(client_id, notification_type, title, message, account_id
         (client_id, account_id, notification_type, title, message),
         commit=True,
     )
+    try:
+        from bank_lib.minebank_features import queue_email
+        kind = "SECURITY" if "SECURITY" in notification_type else ("REQUEST" if "REQUEST" in notification_type else ("TRANSFER" if "TRANSFER" in notification_type else "STATEMENT" if "STATEMENT" in notification_type else "REQUEST"))
+        queue_email(client_id, kind, f"MineBank — {title}", message)
+    except Exception:
+        pass
