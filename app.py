@@ -28,6 +28,10 @@ from bank_lib.form_validators import TransferForm, ResetPasswordForm, BankTransf
 from bank_lib.get_data import get_settings, get_total_currency, get_user_by_wallet_name, get_user_account_profile, charge_monthly_tier_fee
 from bank_lib.global_vars import DB_POOL
 from bank_lib.log_module import create_log, rotate_logs
+from bank_lib.minebank_auth import (login_client, logout_client, get_client_accounts, set_wallet_pin,
+                                    verify_wallet_pin, require_minebank_login, require_role, require_admin_reauth,
+                                    reauthenticate_admin, create_account)
+from bank_lib.minebank_core import transfer as minebank_transfer, approve_transfer
 
 # Set up logging once in your app setup code (if not already done)
 logging.basicConfig(
@@ -113,6 +117,152 @@ def handle_general_error(e):
 def wants_html_response():
     best = request.accept_mimetypes.best_match(['application/json', 'text/html'])
     return best == 'text/html' and request.accept_mimetypes[best] > request.accept_mimetypes['application/json']
+
+
+# ---------------------------------------------------------------------------
+# MineBank v2 portal routes. The legacy wallet routes remain available while
+# the migration is completed.
+# ---------------------------------------------------------------------------
+@app.route('/portal/login', methods=['GET', 'POST'])
+def minebank_login():
+    if request.method == 'POST':
+        email = (request.form.get('email') or '').strip()
+        password = request.form.get('password') or ''
+        ok, error = login_client(email, password)
+        if ok:
+            return redirect(url_for('minebank_dashboard'))
+        return render_template('minebank_login.html', error=error, settings=get_settings(),
+                               is_admin=False, is_logged_in=False)
+    return render_template('minebank_login.html', settings=get_settings(),
+                           is_admin=False, is_logged_in=False)
+
+
+@app.route('/portal/logout')
+def minebank_logout():
+    logout_client()
+    return redirect(url_for('home'))
+
+
+@app.route('/portal')
+@require_minebank_login
+def minebank_dashboard():
+    client_id = session['minebank_client_id']
+    accounts = get_client_accounts(client_id)
+    if accounts and not session.get('minebank_account_id'):
+        session['minebank_account_id'] = accounts[0][0]
+    return render_template('minebank_dashboard.html', accounts=accounts,
+                           selected_account_id=session.get('minebank_account_id'),
+                           settings=get_settings(), is_logged_in=True,
+                           is_admin=session.get('minebank_role') == 'ADMIN')
+
+
+@app.route('/portal/account/select', methods=['POST'])
+@require_minebank_login
+def minebank_select_account():
+    account_id = request.form.get('account_id', type=int)
+    accounts = get_client_accounts(session['minebank_client_id'])
+    allowed = {row[0] for row in accounts}
+    if account_id not in allowed:
+        return jsonify({"error": "Account does not belong to the logged-in client."}), 403
+    session['minebank_account_id'] = account_id
+    return redirect(url_for('minebank_dashboard'))
+
+
+@app.route('/portal/security/pin', methods=['POST'])
+@require_minebank_login
+def minebank_set_pin():
+    pin = request.form.get('pin') or ''
+    confirmation = request.form.get('pin_confirmation') or ''
+    if pin != confirmation:
+        return jsonify({"error": "PIN confirmation does not match."}), 400
+    try:
+        set_wallet_pin(session['minebank_client_id'], pin)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    return redirect(url_for('minebank_dashboard'))
+
+
+@app.route('/api/v2/transfer', methods=['POST'])
+@require_minebank_login
+def minebank_transfer_api():
+    data = request.get_json(silent=True) or {}
+    pin = str(data.get('wallet_pin') or '')
+    ok, error = verify_wallet_pin(session['minebank_client_id'], pin)
+    if not ok:
+        return jsonify({"error": error}), 401
+
+    account_id = int(data.get('sender_account_id') or session.get('minebank_account_id') or 0)
+    accounts = {row[0] for row in get_client_accounts(session['minebank_client_id'])}
+    if account_id not in accounts:
+        return jsonify({"error": "Invalid sender account."}), 403
+    try:
+        amount = int(data.get('amount'))
+        result = minebank_transfer(
+            sender_account_id=account_id,
+            recipient_account_number=str(data.get('recipient_account_number') or '').strip(),
+            amount=amount,
+            description=data.get('description'),
+            reference=data.get('reference'),
+        )
+        return jsonify(result), 201
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+
+@app.route('/api/v2/admin/reauth', methods=['POST'])
+@require_role('ADMIN')
+def minebank_admin_reauth():
+    password = (request.get_json(silent=True) or {}).get('password') or ''
+    if not reauthenticate_admin(session['minebank_client_id'], password):
+        return jsonify({"error": "Admin re-authentication failed."}), 401
+    return jsonify({"message": "Admin re-authenticated."})
+
+
+@app.route('/api/v2/admin/clients', methods=['POST'])
+@require_role('ADMIN', 'OPERATOR')
+def minebank_create_client():
+    data = request.get_json(silent=True) or {}
+    email = (data.get('email') or '').strip().lower()
+    password = data.get('password') or ''
+    role = (data.get('role') or 'CLIENT').upper()
+    if not email or len(password) < 8 or role not in ('CLIENT', 'OPERATOR', 'ADMIN'):
+        return jsonify({"error": "Email, password (8+ chars) and valid role are required."}), 400
+    if role == 'ADMIN' and session.get('minebank_role') != 'ADMIN':
+        return jsonify({"error": "Only an Admin can create another Admin."}), 403
+    conn = None
+    from werkzeug.security import generate_password_hash
+    try:
+        from bank_lib.database import get_db_connection, release_db_connection
+        conn = get_db_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM bank_clients WHERE LOWER(email)=LOWER(%s)", (email,))
+                if cur.fetchone():
+                    return jsonify({"error": "Client email already exists."}), 409
+                cur.execute(
+                    "INSERT INTO bank_clients(email,password_hash,role) VALUES(%s,%s,%s) RETURNING id,email,role,status",
+                    (email, generate_password_hash(password), role),
+                )
+                client = cur.fetchone()
+        return jsonify({"id": client[0], "email": client[1], "role": client[2], "status": client[3]}), 201
+    finally:
+        if conn is not None:
+            from bank_lib.database import release_db_connection
+            release_db_connection(conn)
+
+
+@app.route('/api/v2/accounts', methods=['POST'])
+@require_role('ADMIN', 'OPERATOR')
+def minebank_create_account_api():
+    data = request.get_json(silent=True) or {}
+    try:
+        client_id = int(data.get('client_id'))
+        account_type = str(data.get('account_type') or 'PERSONAL').upper()
+        tier_code = str(data.get('tier_code') or ('PERSONAL' if account_type == 'PERSONAL' else 'BUSINESS')).upper()
+        account = create_account(client_id, account_type, tier_code)
+        return jsonify({"id": account[0], "account_number": account[1]}), 201
+    except (ValueError, TypeError) as exc:
+        return jsonify({"error": str(exc)}), 400
 
 
 # Routes
