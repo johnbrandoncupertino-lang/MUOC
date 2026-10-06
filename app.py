@@ -628,6 +628,66 @@ def minebank_plans_page():
                            is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
 
 
+@app.route('/portal/security/password', methods=['POST'])
+@require_minebank_login
+def minebank_password_request():
+    accounts, selected = _minebank_selected_account()
+    password = request.form.get('new_password') or ''
+    confirmation = request.form.get('password_confirmation') or ''
+    reason = (request.form.get('reason') or '').strip()
+    if len(password) < 8:
+        error = 'Password must contain at least 8 characters.'
+    elif password != confirmation:
+        error = 'Password confirmation does not match.'
+    elif len(reason) < 3 or len(reason) > 500:
+        error = 'Please provide a reason between 3 and 500 characters.'
+    else:
+        from werkzeug.security import generate_password_hash
+        request_id = create_request(
+            session['minebank_client_id'], 'PASSWORD_RESET',
+            selected[0] if selected else None,
+            {'password_hash': generate_password_hash(password), 'reason': reason},
+        )
+        create_notification(session['minebank_client_id'], 'REQUEST_CREATED',
+                            'Password change requested',
+                            f'Password change request #{request_id} is pending bank review.',
+                            selected[0] if selected else None)
+        return redirect(url_for('minebank_security_page'))
+    return render_template('minebank_security.html', accounts=accounts, selected_account=selected,
+                           error=error, settings=get_settings(), portal_active='security',
+                           is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
+
+
+@app.route('/portal/security/password', methods=['POST'])
+@require_minebank_login
+def minebank_password_request():
+    accounts, selected = _minebank_selected_account()
+    password = request.form.get('new_password') or ''
+    confirmation = request.form.get('password_confirmation') or ''
+    reason = (request.form.get('reason') or '').strip()
+    if len(password) < 8:
+        error = 'Password must contain at least 8 characters.'
+    elif password != confirmation:
+        error = 'Password confirmation does not match.'
+    elif len(reason) < 3 or len(reason) > 500:
+        error = 'Please provide a reason between 3 and 500 characters.'
+    else:
+        from werkzeug.security import generate_password_hash
+        request_id = create_request(
+            session['minebank_client_id'], 'PASSWORD_RESET',
+            selected[0] if selected else None,
+            {'password_hash': generate_password_hash(password), 'reason': reason},
+        )
+        create_notification(session['minebank_client_id'], 'REQUEST_CREATED',
+                            'Password change requested',
+                            f'Password change request #{request_id} is pending bank review.',
+                            selected[0] if selected else None)
+        return redirect(url_for('minebank_security_page'))
+    return render_template('minebank_security.html', accounts=accounts, selected_account=selected,
+                           error=error, settings=get_settings(), portal_active='security',
+                           is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
+
+
 @app.route('/portal/notifications')
 @require_minebank_login
 def minebank_notifications_page():
@@ -734,6 +794,72 @@ def minebank_transfer_api():
         return jsonify(result), 201
     except (ValueError, TypeError) as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+@app.route('/api/v2/requests/<int:request_id>/review', methods=['POST'])
+@require_role('ADMIN', 'OPERATOR')
+def minebank_review_request(request_id):
+    data = request.get_json(silent=True) or {}
+    approve = bool(data.get('approve'))
+    reason = (data.get('reason') or '').strip()
+    rows = execute_query_dict(
+        """SELECT id,client_id,account_id,request_type,status,payload
+           FROM bank_requests_v2 WHERE id=%s FOR UPDATE""",
+        (request_id,),
+    )
+    if not rows:
+        return jsonify({'error': 'Request not found.'}), 404
+    item = rows[0]
+    if item['status'] != 'PENDING':
+        return jsonify({'error': 'Request is not pending.'}), 400
+    try:
+        if approve:
+            payload = item['payload'] or {}
+            if item['request_type'] == 'PASSWORD_RESET':
+                password_hash = payload.get('password_hash')
+                if not password_hash:
+                    raise ValueError('Password reset request is missing its password payload.')
+                execute_query("UPDATE bank_clients SET password_hash=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                              (password_hash, item['client_id']), commit=True)
+            elif item['request_type'] == 'PROFILE_CHANGE':
+                requested_email = (payload.get('requested_email') or '').strip().lower()
+                if requested_email:
+                    existing = execute_query("SELECT 1 FROM bank_clients WHERE LOWER(email)=LOWER(%s) AND id<>%s",
+                                             (requested_email, item['client_id']))
+                    if existing:
+                        raise ValueError('Requested email is already in use.')
+                    execute_query("UPDATE bank_clients SET email=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                                  (requested_email, item['client_id']), commit=True)
+            elif item['request_type'] == 'ACCOUNT_DELETION':
+                execute_query("UPDATE bank_clients SET status='CLOSED',updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                              (item['client_id'],), commit=True)
+                execute_query("UPDATE bank_accounts SET status='CLOSED',updated_at=CURRENT_TIMESTAMP WHERE client_id=%s AND status<>'CLOSED'",
+                              (item['client_id'],), commit=True)
+            elif item['request_type'] == 'REFUND':
+                payload_tx = payload.get('transaction_id')
+                if not payload_tx:
+                    raise ValueError('Refund request is missing its transaction ID.')
+                chargeback(payload_tx, session['minebank_client_id'], payload.get('reason') or reason or 'Client refund request')
+            elif item['request_type'] == 'TIER_CHANGE':
+                review_tier_change(request_id, session['minebank_client_id'], True)
+                return jsonify({'request_id': request_id, 'status': 'APPROVED'})
+            execute_query("""UPDATE bank_requests_v2
+                             SET status='APPROVED',reviewed_by=%s,reviewed_at=CURRENT_TIMESTAMP
+                             WHERE id=%s""",
+                          (session['minebank_client_id'], request_id), commit=True)
+            create_notification(item['client_id'], 'REQUEST_APPROVED', 'Request approved',
+                                f'Your MineBank request #{request_id} has been approved.', item['account_id'])
+            return jsonify({'request_id': request_id, 'status': 'APPROVED'})
+        execute_query("""UPDATE bank_requests_v2
+                         SET status='REJECTED',reviewed_by=%s,reviewed_at=CURRENT_TIMESTAMP
+                         WHERE id=%s""",
+                      (session['minebank_client_id'], request_id), commit=True)
+        create_notification(item['client_id'], 'REQUEST_REJECTED', 'Request rejected',
+                            f'Your MineBank request #{request_id} was rejected.',
+                            item['account_id'])
+        return jsonify({'request_id': request_id, 'status': 'REJECTED'})
+    except (ValueError, TypeError) as exc:
+        return jsonify({'error': str(exc)}), 400
 
 
 @app.route('/api/v2/admin/reauth', methods=['POST'])
