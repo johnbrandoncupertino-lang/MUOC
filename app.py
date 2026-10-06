@@ -264,7 +264,9 @@ def wallet_page(wallet_name):
     bankTransferForm = BankTransferForm()
     delAccountForm = DelAccountForm()
 
-    return render_template('wallet.html', user=user, settings=settings, total_used=total_used,
+    profile = get_user_account_profile(wallet_name)
+
+    return render_template('wallet.html', user=user, profile=profile, settings=settings, total_used=total_used,
                            is_admin='admin' in session and session['admin'],
                            is_logged_in='wallet_name' in session,
                            resetForm=resetForm, burnForm=burnForm, freezeForm=freezeForm, transferForm=transferForm,
