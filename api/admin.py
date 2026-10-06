@@ -361,7 +361,14 @@ def register_admin_api_routes(app):
                 tier = execute_query_dict("SELECT credit_enabled,default_credit_limit FROM account_tiers WHERE name=%s", (user['account_tier'],))
                 if not tier or not tier[0]['credit_enabled']:
                     return jsonify({"error": "Account tier does not allow credit"}), 403
-                approved_limit = min(requested_limit, float(tier[0]['default_credit_limit']))
+                requested_approval = data.get('approved_limit', requested_limit)
+                try:
+                    approved_limit = float(requested_approval)
+                except (TypeError, ValueError):
+                    return jsonify({"error": "Invalid approved credit limit"}), 400
+                approved_limit = min(approved_limit, float(tier[0]['default_credit_limit']))
+                if approved_limit <= 0:
+                    return jsonify({"error": "Approved credit limit must be greater than zero"}), 400
                 execute_query("UPDATE users SET credit_limit=%s, credit_used=0 WHERE wallet_name=%s",
                               (approved_limit, wallet_name), commit=True)
                 create_log("Credit Line Approved", f"Admin approved {approved_limit} credit for {wallet_name}", "Admin")
