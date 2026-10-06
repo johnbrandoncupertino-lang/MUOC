@@ -1,0 +1,13 @@
+{% extends "minebank_layout.html" %}
+{% block title %}MineBank — Saved Recipients{% endblock %}
+{% block content %}
+<div class="mb-page-head"><div><div class="mb-eyebrow">PAYMENTS</div><h1>Saved Recipients</h1><p>Keep trusted MineBank account numbers ready for transfers.</p></div></div>
+<div class="row g-3"><div class="col-lg-5"><section class="mb-panel"><div class="mb-panel-title">Add recipient</div>
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="save">
+<label class="mb-label">Account number</label><input class="form-control mb-input mb-2" name="account_number" placeholder="MB-00000001" required>
+<label class="mb-label">Nickname</label><input class="form-control mb-input mb-3" name="nickname" maxlength="120" placeholder="Steve" required>
+<button class="btn btn-primary" type="submit">Save Recipient</button></form></section></div>
+<div class="col-lg-7"><section class="mb-panel"><div class="mb-panel-title">Your recipients</div>
+{% for r in recipients %}<div class="mb-account-row"><div><strong>{{ r.nickname }}</strong><small>{{ r.account_number }}</small></div><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="delete"><input type="hidden" name="recipient_id" value="{{ r.id }}"><button class="btn btn-sm btn-outline-danger" type="submit">Remove</button></form></div>{% else %}<p class="mb-empty">No saved recipients yet.</p>{% endfor %}
+</section></div></div>
+{% endblock %}

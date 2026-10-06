@@ -3,17 +3,22 @@
 {% block content %}
 <div class="mb-page-head"><div><div class="mb-eyebrow">PAYMENTS</div><h1>Make a Transfer</h1><p>Send Emerald from your selected account to another MineBank account.</p></div></div>
 {% if selected_account %}
-<div class="row g-3"><div class="col-lg-7"><section class="mb-panel"><div class="mb-panel-title">Transfer details</div>
-<form method="post" action="{{ url_for('minebank_transfer_page') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<div class="row g-3"><div class="col-lg-7"><section class="mb-panel"><div class="mb-panel-title">{% if preview %}Review transfer{% else %}Transfer details{% endif %}</div>
+{% if preview %}
+<div class="mb-detail-wide"><div><span>Recipient</span><strong>{{ preview.recipient_account_number }}</strong></div><div><span>Amount</span><strong>{{ preview.amount }} Emerald</strong></div><div><span>Fee</span><strong>{{ preview.fee }} Emerald</strong></div><div><span>Total deducted</span><strong>{{ preview.total }} Emerald</strong></div><div><span>Balance after</span><strong>{{ preview.remaining_balance }} Emerald</strong></div></div>
+<p class="mb-warning mt-3">Review every detail before authorising this payment. Your Wallet PIN is required to send it.</p>
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="stage" value="confirm"><label class="mb-label">Wallet PIN</label><input class="form-control mb-input" name="wallet_pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required><button class="btn btn-primary mb-submit" type="submit">Authorise Transfer</button></form>
+<form method="get" class="mt-2"><button class="btn btn-outline-secondary" type="submit">Cancel Review</button></form>
+{% else %}
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="stage" value="review">
 <label class="mb-label">From account</label><div class="mb-readonly">{{ selected_account[1] }} · {{ selected_account[5] }} Emerald available</div>
 <label class="mb-label">Recipient account number</label><input class="form-control mb-input" name="recipient_account_number" placeholder="MB-00000001" required>
 <label class="mb-label">Amount</label><div class="input-group mb-3"><input class="form-control mb-input" type="number" name="amount" min="1" step="1" required><span class="input-group-text">Emerald</span></div>
 <label class="mb-label">Description <span>(optional)</span></label><input class="form-control mb-input" name="description" maxlength="255">
 <label class="mb-label">Reference <span>(optional)</span></label><input class="form-control mb-input" name="reference" maxlength="100">
-<label class="mb-label">Wallet PIN</label><input class="form-control mb-input" name="wallet_pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="off" required>
-<div class="mb-warning">Transfers of 5,000 Emerald or more require Bank approval. The funds are reserved immediately.</div>
-<button class="btn btn-primary mb-submit" type="submit">Review &amp; Submit Transfer</button></form>
-</section></div>
-<div class="col-lg-5"><section class="mb-panel"><div class="mb-panel-title">Before you confirm</div><ul class="mb-list"><li>Transfers are authorised with your 6-digit Wallet PIN.</li><li>Outgoing transfers are subject to your monthly account limit.</li><li>A 30-second cooldown applies between outgoing transfers.</li><li>Fees, if configured, are applied by the bank fee engine.</li></ul></section></div></div>
+<button class="btn btn-primary mb-submit" type="submit">Review Transfer</button></form>
 {% endif %}
+</section></div>
+<div class="col-lg-5"><section class="mb-panel"><div class="mb-panel-title">Before you confirm</div><ul class="mb-list"><li>Fees are displayed before authorisation.</li><li>Transfers are authorised with your 6-digit Wallet PIN.</li><li>Outgoing transfers are subject to your monthly account limit.</li><li>A 30-second cooldown applies between outgoing transfers.</li><li>Transfers of 5,000 Emerald or more require Bank approval.</li></ul></section></div></div>
+{% endif %}}
 {% endblock %}

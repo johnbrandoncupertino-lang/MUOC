@@ -31,6 +31,9 @@
         <a class="{% if portal_active == 'transfer' %}active{% endif %}" href="{{ url_for('minebank_transfer_page') }}">Make a Transfer</a>
         <a class="{% if portal_active == 'transactions' %}active{% endif %}" href="{{ url_for('minebank_transactions_page') }}">Transactions</a>
         <a class="{% if portal_active == 'statements' %}active{% endif %}" href="{{ url_for('minebank_statements_page') }}">Statements</a>
+        <a class="{% if portal_active == 'recipients' %}active{% endif %}" href="{{ url_for('minebank_recipients_page') }}">Saved Recipients</a>
+        <a class="{% if portal_active == 'templates' %}active{% endif %}" href="{{ url_for('minebank_transfer_templates_page') }}">Transfer Templates</a>
+        <a class="{% if portal_active == 'scheduled' %}active{% endif %}" href="{{ url_for('minebank_scheduled_page') }}">Scheduled Transfers</a>
       </details>
 
       <details class="mb-nav-group" {% if portal_active in ['credit','plans','requests'] %}open{% endif %}>
@@ -45,6 +48,7 @@
         <a class="{% if portal_active == 'account' %}active{% endif %}" href="{{ url_for('minebank_account_page') }}">My Account</a>
         <a class="{% if portal_active == 'profile' %}active{% endif %}" href="{{ url_for('minebank_profile_page') }}">Profile</a>
         <a class="{% if portal_active == 'notifications' %}active{% endif %}" href="{{ url_for('minebank_notifications_page') }}">Messages</a>
+        <a class="{% if portal_active == 'preferences' %}active{% endif %}" href="{{ url_for('minebank_preferences_page') }}">Preferences</a>
       </details>
 
       <details class="mb-nav-group" {% if portal_active == 'security' %}open{% endif %}>
