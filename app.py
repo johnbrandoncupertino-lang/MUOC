@@ -31,7 +31,10 @@ from bank_lib.log_module import create_log, rotate_logs
 from bank_lib.minebank_auth import (login_client, logout_client, get_client_accounts, set_wallet_pin,
                                     verify_wallet_pin, require_minebank_login, require_role, require_admin_reauth,
                                     reauthenticate_admin, create_account)
-from bank_lib.minebank_core import transfer as minebank_transfer, approve_transfer
+from bank_lib.minebank_core import (transfer as minebank_transfer, approve_transfer, reject_transfer,
+                                     deposit as minebank_deposit, withdraw as minebank_withdraw,
+                                     repay_credit, activate_credit, chargeback, accrue_monthly_credit_interest)
+from bank_lib.minebank_api import create_api_credential, authenticate_api_credential, revoke_api_credential
 
 # Set up logging once in your app setup code (if not already done)
 logging.basicConfig(
@@ -263,6 +266,134 @@ def minebank_create_account_api():
         return jsonify({"id": account[0], "account_number": account[1]}), 201
     except (ValueError, TypeError) as exc:
         return jsonify({"error": str(exc)}), 400
+
+
+def _api_scope(required):
+    auth = authenticate_api_credential(request.headers.get("Authorization", "").replace("Bearer ", "").strip())
+    if not auth or required not in auth["scopes"] and "admin" not in auth["scopes"]:
+        return None
+    return auth
+
+
+@app.route('/api/v1/accounts', methods=['GET'])
+def api_v1_accounts():
+    auth = _api_scope("accounts:read")
+    if not auth:
+        return jsonify({"error":"API authentication failed"}), 401
+    return jsonify({"accounts":[
+        {"id":r[0],"account_number":r[1],"account_type":r[2],"tier":r[3],
+         "display_name":r[4],"balance":r[5],"status":r[6],"monthly_outgoing_used":r[7],
+         "monthly_outgoing_limit":r[8],"max_balance":r[9],"credit_enabled":r[10]}
+        for r in get_client_accounts(auth["client_id"])
+    ]})
+
+
+@app.route('/api/v1/transactions', methods=['GET'])
+def api_v1_transactions():
+    auth = _api_scope("transactions:read")
+    if not auth:
+        return jsonify({"error":"API authentication failed"}), 401
+    conn=None
+    try:
+        from bank_lib.database import get_db_connection
+        conn=get_db_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT l.transaction_id,l.transaction_type,l.amount,l.fee,l.currency,
+                                      l.status,l.description,l.reference_id,l.created_at
+                               FROM ledger_transactions l
+                               JOIN bank_accounts a ON a.id=COALESCE(l.sender_account_id,l.recipient_account_id)
+                               WHERE a.client_id=%s ORDER BY l.created_at DESC LIMIT 200""",(auth["client_id"],))
+                rows=cur.fetchall()
+        return jsonify({"transactions":[{"transaction_id":r[0],"type":r[1],"amount":r[2],"fee":r[3],
+          "currency":r[4],"status":r[5],"description":r[6],"reference":r[7],"created_at":r[8].isoformat()} for r in rows]})
+    finally:
+        if conn is not None:
+            from bank_lib.database import release_db_connection
+            release_db_connection(conn)
+
+
+@app.route('/api/v1/transfers', methods=['POST'])
+def api_v1_transfers():
+    auth=_api_scope("transfers:write")
+    if not auth:
+        return jsonify({"error":"API authentication failed"}),401
+    data=request.get_json(silent=True) or {}
+    try:
+        account_id=int(data.get("sender_account_id"))
+        allowed={r[0] for r in get_client_accounts(auth["client_id"])}
+        if account_id not in allowed:
+            return jsonify({"error":"Sender account is not owned by API client"}),403
+        result=minebank_transfer(sender_account_id=account_id,
+            recipient_account_number=str(data.get("recipient_account_number") or ""),
+            amount=int(data.get("amount")),description=data.get("description"),
+            reference=data.get("reference"),idempotency_key=request.headers.get("Idempotency-Key"))
+        return jsonify(result),201
+    except (ValueError,TypeError) as exc:
+        return jsonify({"error":str(exc)}),400
+
+
+@app.route('/api/v1/credit', methods=['POST'])
+def api_v1_credit():
+    auth=_api_scope("credit:write")
+    if not auth:
+        return jsonify({"error":"API authentication failed"}),401
+    data=request.get_json(silent=True) or {}
+    try:
+        account_id=int(data.get("account_id"))
+        allowed={r[0] for r in get_client_accounts(auth["client_id"])}
+        if account_id not in allowed:
+            return jsonify({"error":"Account is not owned by API client"}),403
+        if data.get("action")=="activate":
+            return jsonify(activate_credit(account_id,int(data["limit"])))
+        if data.get("action")=="repay":
+            return jsonify(repay_credit(account_id,int(data["amount"]),int(data["source_account_id"])))
+        return jsonify({"error":"Unknown credit action"}),400
+    except (ValueError,TypeError) as exc:
+        return jsonify({"error":str(exc)}),400
+
+
+@app.route('/api/v1/users', methods=['POST'])
+def api_v1_users():
+    auth=_api_scope("admin")
+    if not auth:
+        return jsonify({"error":"Admin API scope required"}),403
+    data=request.get_json(silent=True) or {}
+    from werkzeug.security import generate_password_hash
+    email=str(data.get("email") or "").strip().lower()
+    password=str(data.get("password") or "")
+    role=str(data.get("role") or "CLIENT").upper()
+    if not email or len(password)<8 or role not in ("CLIENT","OPERATOR","ADMIN"):
+        return jsonify({"error":"Invalid user payload"}),400
+    conn=None
+    try:
+        from bank_lib.database import get_db_connection
+        conn=get_db_connection()
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("INSERT INTO bank_clients(email,password_hash,role) VALUES(%s,%s,%s) RETURNING id,email,role",
+                            (email,generate_password_hash(password),role))
+                row=cur.fetchone()
+        return jsonify({"id":row[0],"email":row[1],"role":row[2]}),201
+    except Exception as exc:
+        return jsonify({"error":str(exc)}),400
+    finally:
+        if conn is not None:
+            from bank_lib.database import release_db_connection
+            release_db_connection(conn)
+
+
+@app.route('/api/v1/credentials', methods=['POST'])
+@require_role('ADMIN')
+@require_admin_reauth
+def api_v1_create_credential():
+    data=request.get_json(silent=True) or {}
+    try:
+        client_id=int(data["client_id"])
+        scopes=data.get("scopes") or ["accounts:read","transactions:read"]
+        return jsonify(create_api_credential(client_id,str(data.get("name") or "Minecraft"),scopes)),201
+    except (KeyError,ValueError,TypeError) as exc:
+        return jsonify({"error":str(exc)}),400
 
 
 # Routes
