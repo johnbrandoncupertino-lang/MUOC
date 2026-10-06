@@ -10,7 +10,7 @@ from functools import wraps
 from flask import request, session, jsonify, render_template
 
 from .database import get_db_connection, release_db_connection
-from .minebank_core import audit_event, next_transaction_id, create_ledger_transaction
+from .minebank_core import audit_event, next_transaction_id, create_ledger_transaction, transfer
 from .minebank_requests import create_notification
 
 BONUS_SCHEMA = r"""
@@ -417,44 +417,48 @@ def bank_statistics():
     finally: release_db_connection(conn)
 
 def process_due_schedules(limit=100):
-    """Process recurring direct-debit/subscription records.
-
-    This is intentionally callable by a scheduler (Vercel Cron/GitHub Actions).
-    It never bypasses the existing transfer ledger.
-    """
+    """Process due subscriptions through the canonical transfer ledger."""
     conn=get_db_connection()
     if conn is None: return {"processed":0,"errors":1}
-    processed=errors=0
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT id,payer_account_id,merchant_account_number,amount,frequency,next_charge_at,reference
-                               FROM minebank_subscriptions WHERE status='ACTIVE' AND next_charge_at<=CURRENT_TIMESTAMP
+                cur.execute("""SELECT id,payer_account_id,merchant_account_number,amount,frequency,next_charge_at,reference,
+                                      (SELECT client_id FROM bank_accounts WHERE id=payer_account_id)
+                               FROM minebank_subscriptions
+                               WHERE status='ACTIVE' AND next_charge_at<=CURRENT_TIMESTAMP
                                ORDER BY next_charge_at LIMIT %s FOR UPDATE SKIP LOCKED""",(limit,))
                 rows=cur.fetchall()
-                for sid,account,recipient,amount,freq,next_at,ref in rows:
-                    try:
-                        cur.execute("""SELECT client_id,account_number,balance,status FROM bank_accounts WHERE id=%s FOR UPDATE""",(account,))
-                        payer=cur.fetchone()
-                        cur.execute("""SELECT id,status FROM bank_accounts WHERE account_number=%s""",(recipient,))
-                        target=cur.fetchone()
-                        if not payer or not target or payer[3]!="ACTIVE": raise ValueError("Subscription account unavailable.")
-                        if payer[2]<amount: raise ValueError("Insufficient funds.")
-                        txid=next_transaction_id(cur)
-                        cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(amount,account))
-                        cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(amount,target[0]))
-                        create_ledger_transaction(cur,transaction_id=txid,transaction_type="SUBSCRIPTION_PAYMENT",amount=amount,
-                                                  sender_account_id=account,recipient_account_id=target[0],description=ref,status="COMPLETED")
-                        interval="1 week" if freq=="WEEKLY" else "1 month"
-                        cur.execute("UPDATE minebank_subscriptions SET next_charge_at=next_charge_at+%s::interval WHERE id=%s",(interval,sid))
-                        processed+=1
-                    except Exception:
-                        errors+=1
-                cur.execute("""SELECT id,payer_account_id,merchant_account_number,maximum_amount,reference
-                               FROM minebank_direct_debits WHERE active=TRUE""")
-                # Direct debits are mandates; merchants create actual debit requests through the API.
+        processed=errors=0
+        for sid,account,recipient,amount,freq,next_at,ref,client_id in rows:
+            try:
+                result=transfer(sender_account_id=account,recipient_account_number=recipient,amount=int(amount),
+                                description="Scheduled subscription payment",reference=ref,
+                                actor_client_id=client_id,ip_address=None)
+                conn2=get_db_connection()
+                try:
+                    with conn2:
+                        with conn2.cursor() as cur2:
+                            interval="1 week" if freq=="WEEKLY" else "1 month"
+                            cur2.execute("UPDATE minebank_subscriptions SET next_charge_at=next_charge_at+%s::interval WHERE id=%s AND status='ACTIVE'",
+                                         (interval,sid))
+                finally:
+                    release_db_connection(conn2)
+                processed+=1
+            except Exception as exc:
+                errors+=1
+                conn2=get_db_connection()
+                try:
+                    with conn2:
+                        with conn2.cursor() as cur2:
+                            cur2.execute("""INSERT INTO minebank_automation_alerts(account_id,client_id,alert_type,message,severity)
+                                            VALUES(%s,%s,'SUBSCRIPTION_FAILURE',%s,'WARNING')""",
+                                         (account,client_id,str(exc)[:500]))
+                finally:
+                    release_db_connection(conn2)
         return {"processed":processed,"errors":errors}
-    finally: release_db_connection(conn)
+    finally:
+        release_db_connection(conn)
 
 def register_bonus_routes(app):
     ensure_bonus_schema()
