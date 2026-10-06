@@ -1,0 +1,17 @@
+{% extends "minebank_layout.html" %}
+{% block title %}MineBank — Transaction{% endblock %}
+{% block content %}
+<div class="mb-page-head"><div><div class="mb-eyebrow">TRANSACTION DETAIL</div><h1>{{ transaction[0] }}</h1><p>Full details for this ledger transaction.</p></div></div>
+<section class="mb-panel">
+<div class="mb-panel-title">Transaction information</div>
+<div class="mb-detail-wide">
+<div><span>Type</span><strong>{{ transaction[1] }}</strong></div><div><span>Amount</span><strong>{{ transaction[2] }} {{ transaction[4] }}</strong></div><div><span>Fee</span><strong>{{ transaction[3] }} {{ transaction[4] }}</strong></div>
+<div><span>Status</span><strong>{{ transaction[5] }}</strong></div><div><span>Date</span><strong>{{ transaction[8].strftime('%Y-%m-%d %H:%M') }}</strong></div><div><span>Reference</span><strong>{{ transaction[7] or '—' }}</strong></div>
+</div>
+<div class="mb-panel mt-3"><div class="mb-panel-title">Description</div><p>{{ transaction[6] or 'No description provided.' }}</p></div>
+{% if transaction[1] == 'TRANSFER' and transaction[5] == 'COMPLETED' and transaction[9] == selected_account[0] %}
+<div class="mb-panel mt-3"><div class="mb-panel-title">Refund request</div><p class="mb-help">If this transfer needs to be reversed, submit a request to the bank. The recipient may be allowed to go negative when the bank approves a chargeback.</p>
+<form method="post" action="{{ url_for('minebank_request_refund', transaction_id=transaction[0]) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><label class="mb-label" for="refund_reason">Reason</label><textarea class="form-control mb-input" id="refund_reason" name="reason" rows="3" minlength="3" maxlength="500" required></textarea><button class="btn btn-outline-warning mt-3" type="submit">Request Refund</button></form></div>
+{% endif %}
+</section>
+{% endblock %}

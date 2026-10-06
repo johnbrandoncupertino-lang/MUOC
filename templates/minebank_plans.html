@@ -1,0 +1,12 @@
+{% extends "minebank_layout.html" %}
+{% block title %}MineBank — Account Plans{% endblock %}
+{% block content %}
+<div class="mb-page-head"><div><div class="mb-eyebrow">ACCOUNT SERVICES</div><h1>Account Plans</h1><p>Review the plans available for your selected account and request a change.</p></div></div>
+{% if selected_account %}<div class="row g-3">
+{% for tier in tiers %}<div class="col-lg-4"><section class="mb-panel"><div class="mb-panel-title">{{ tier.display_name }}{% if tier.code == selected_account[3] %} — Current{% endif %}</div>
+<div class="mb-detail-grid"><div><span>Monthly fee</span><strong>{{ tier.monthly_fee }} Emerald</strong></div><div><span>Credit</span><strong>{{ 'Available' if tier.credit_enabled else 'Not included' }}</strong></div><div><span>Balance limit</span><strong>{{ tier.max_balance if tier.max_balance is not none else 'Unlimited' }}</strong></div><div><span>Outgoing / month</span><strong>{{ tier.monthly_outgoing_limit if tier.monthly_outgoing_limit is not none else 'Unlimited' }}</strong></div></div>
+{% if tier.credit_enabled %}<div class="mb-help mt-2">Default credit limit: {{ tier.default_credit_limit }} Emerald.</div>{% endif %}
+{% if tier.code != selected_account[3] %}<form method="post" class="mt-3"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="tier_code" value="{{ tier.code }}"><label class="mb-label">Requested credit limit (optional)</label><input class="form-control mb-input" type="number" min="0" step="1" name="requested_credit_limit" placeholder="{{ tier.default_credit_limit }}"><button class="btn btn-primary mt-3 w-100" type="submit">Request {{ tier.display_name }}</button></form>{% endif %}
+</section></div>{% endfor %}
+</div>{% endif %}
+{% endblock %}

@@ -1,0 +1,21 @@
+{% extends "minebank_layout.html" %}
+{% block title %}MineBank — Profile{% endblock %}
+{% block content %}
+<div class="mb-page-head"><div><div class="mb-eyebrow">CLIENT PROFILE</div><h1>Profile</h1><p>Your MineBank identity and contact details.</p></div></div>
+<div class="row g-3">
+<section class="col-lg-7"><div class="mb-panel"><div class="mb-panel-title">Personal information</div>
+<div class="mb-detail-grid">
+<div><span>Email</span><strong>{{ profile.email }}</strong></div><div><span>Role</span><strong>{{ profile.role }}</strong></div>
+<div><span>Status</span><strong>{{ profile.status }}</strong></div><div><span>Client since</span><strong>{{ profile.created_at.strftime('%Y-%m-%d') }}</strong></div>
+<div><span>Date of birth</span><strong>{{ profile.date_of_birth or 'Not provided' }}</strong></div><div><span>Last access</span><strong>{{ profile.last_login.strftime('%Y-%m-%d %H:%M') if profile.last_login else 'First access' }}</strong></div>
+</div>
+</div></section>
+<section class="col-lg-5"><div class="mb-panel"><div class="mb-panel-title">Request a profile change</div>
+<p class="mb-help">Sensitive profile changes are reviewed by the bank before they take effect.</p>
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label class="mb-label" for="email">Requested email</label><input class="form-control mb-input" id="email" name="email" type="email" value="{{ profile.email }}" required>
+<label class="mb-label" for="reason">Reason</label><textarea class="form-control mb-input" id="reason" name="reason" rows="4" minlength="3" maxlength="500" required></textarea>
+<button class="btn btn-primary mt-3" type="submit">Submit Change Request</button>
+</form></div></section>
+</div>
+{% endblock %}

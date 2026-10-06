@@ -1,6 +1,17 @@
 {% extends "minebank_layout.html" %}
 {% block title %}MineBank — My Account{% endblock %}
 {% block content %}
-<div class="mb-page-head"><div><div class="mb-eyebrow">ACCOUNT</div><h1>My Account</h1><p>Your MineBank account and service details.</p></div></div>
-{% if selected_account %}<section class="mb-panel"><div class="mb-panel-title">Account details</div><div class="mb-detail-grid"><div><span>Account number</span><strong>{{ selected_account[1] }}</strong></div><div><span>Account type</span><strong>{{ selected_account[2] }}</strong></div><div><span>Tier</span><strong>{{ selected_account[3] }} — {{ selected_account[4] }}</strong></div><div><span>Balance</span><strong>{{ selected_account[5] }} Emerald</strong></div><div><span>Status</span><strong>{{ selected_account[6] }}</strong></div><div><span>Monthly outgoing</span><strong>{{ selected_account[7] }} / {% if selected_account[8] is not none %}{{ selected_account[8] }}{% else %}Unlimited{% endif %}</strong></div></div></section>{% endif %}
+<div class="mb-page-head"><div><div class="mb-eyebrow">ACCOUNT</div><h1>My Account</h1><p>Your account, service limits and account-management requests.</p></div></div>
+{% if selected_account %}
+<div class="row g-3">
+<section class="col-lg-8"><div class="mb-panel"><div class="mb-panel-title">Account details</div><div class="mb-detail-grid">
+<div><span>Account number</span><strong>{{ selected_account[1] }}</strong></div><div><span>Account type</span><strong>{{ selected_account[2] }}</strong></div>
+<div><span>Tier</span><strong>{{ selected_account[3] }} — {{ selected_account[4] }}</strong></div><div><span>Balance</span><strong>{{ selected_account[5] }} Emerald</strong></div>
+<div><span>Status</span><strong>{{ selected_account[6] }}</strong></div><div><span>Monthly outgoing</span><strong>{{ selected_account[7] }} / {% if selected_account[8] is not none %}{{ selected_account[8] }}{% else %}Unlimited{% endif %}</strong></div>
+</div></div>
+<div class="mb-panel mt-3"><div class="mb-panel-title">Account services</div><ul class="mb-list"><li>View and export statements from <a href="{{ url_for('minebank_statements_page') }}">Statements</a>.</li><li>Submit service, refund, profile or account requests through <a href="{{ url_for('minebank_requests_page') }}">Requests</a>.</li><li>Review bank notices in <a href="{{ url_for('minebank_notifications_page') }}">Messages</a>.</li></ul></div>
+</section>
+<section class="col-lg-4"><div class="mb-panel"><div class="mb-panel-title">Close this account</div><p class="mb-help">Account closure is a bank-reviewed request. Your account remains active until the bank processes the request.</p><a class="btn btn-outline-danger mt-2" href="{{ url_for('minebank_requests_page') }}">Request Account Closure</a></div></section>
+</div>
+{% endif %}
 {% endblock %}

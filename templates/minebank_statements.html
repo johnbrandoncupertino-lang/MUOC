@@ -1,0 +1,33 @@
+{% extends "minebank_layout.html" %}
+{% block title %}MineBank — Statements{% endblock %}
+{% block content %}
+<div class="mb-page-head"><div><div class="mb-eyebrow">DOCUMENTS &amp; ACTIVITY</div><h1>Statements</h1><p>Review and export the complete transaction history for your selected account.</p></div></div>
+<section class="mb-panel">
+  <div class="mb-panel-title">Statement tools</div>
+  <div class="mb-toolbar">
+    <a class="btn btn-primary" href="{{ url_for('minebank_statements_print') }}" target="_blank">Print Statement</a>
+    <a class="btn btn-outline-primary" href="{{ url_for('minebank_statements_csv') }}">Download CSV</a>
+    <a class="btn btn-outline-secondary" href="{{ url_for('minebank_transactions_page') }}">View Transactions</a>
+  </div>
+  <form class="mb-filter row g-2" method="get">
+    <div class="col-md-4"><label for="start">From</label><input id="start" class="form-control" type="date" name="start" value="{{ start or '' }}"></div>
+    <div class="col-md-4"><label for="end">To</label><input id="end" class="form-control" type="date" name="end" value="{{ end or '' }}"></div>
+    <div class="col-md-4 d-flex align-items-end"><button class="btn btn-primary w-100" type="submit">Generate Statement</button></div>
+  </form>
+  {% if selected_account %}<div class="mb-detail-wide mb-3">
+    <div><span>Account</span><strong>{{ selected_account[1] }}</strong></div>
+    <div><span>Tier</span><strong>{{ selected_account[3] }}</strong></div>
+    <div><span>Balance</span><strong>{{ selected_account[5] }} Emerald</strong></div>
+  </div>{% endif %}
+  {% if transactions %}<div class="table-responsive"><table class="table mb-table"><thead><tr><th>Date</th><th>Transaction</th><th>Direction</th><th>Status</th><th class="text-end">Amount</th><th class="text-end">Fee</th></tr></thead><tbody>
+  {% for t in transactions %}<tr>
+    <td>{{ t[8].strftime('%Y-%m-%d %H:%M') }}</td>
+    <td><a href="{{ url_for('minebank_transaction_detail', transaction_id=t[0]) }}">{{ t[0] }}</a><small>{{ t[1] }}{% if t[6] %} · {{ t[6] }}{% endif %}</small></td>
+    <td>{% if t[10] == selected_account[0] %}<span class="mb-credit">IN</span>{% else %}<span class="mb-debit">OUT</span>{% endif %}</td>
+    <td><span class="mb-status">{{ t[5] }}</span></td>
+    <td class="text-end">{{ '+' if t[10] == selected_account[0] else '-' }}{{ t[2] }} <small>Emerald</small></td>
+    <td class="text-end">{{ t[3] }} <small>Emerald</small></td>
+  </tr>{% endfor %}</tbody></table></div>
+  {% else %}<p class="mb-empty">No transactions match the selected period.</p>{% endif %}
+</section>
+{% endblock %}

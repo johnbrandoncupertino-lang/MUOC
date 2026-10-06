@@ -1,0 +1,29 @@
+{% extends "minebank_layout.html" %}
+{% block title %}MineBank — Requests{% endblock %}
+{% block content %}
+<div class="mb-page-head"><div><div class="mb-eyebrow">BANKING SERVICES</div><h1>Requests</h1><p>Submit service requests and follow their status from one place.</p></div></div>
+<section class="mb-panel">
+  <div class="mb-panel-title">New request</div>
+  <form method="post" class="mb-request-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="row g-2">
+      <div class="col-md-5"><label class="mb-label" for="request_type">Request type</label>
+        <select class="form-select mb-input" id="request_type" name="request_type" required>
+          <option value="GENERAL">General service request</option>
+          <option value="ACCOUNT_SUPPORT">Account support</option>
+          <option value="PASSWORD_RESET">Password reset</option>
+          <option value="ACCOUNT_DELETION">Account deletion</option>
+        </select>
+      </div>
+      <div class="col-md-7"><label class="mb-label" for="reason">Reason / details</label><textarea class="form-control mb-input" id="reason" name="reason" rows="3" minlength="3" maxlength="500" required></textarea></div>
+    </div>
+    <button class="btn btn-primary mt-3" type="submit">Submit Request</button>
+  </form>
+</section>
+<section class="mb-panel mt-3">
+  <div class="mb-panel-title">Request history</div>
+  {% if requests %}<div class="table-responsive"><table class="table mb-table"><thead><tr><th>ID</th><th>Type</th><th>Account</th><th>Status</th><th>Created</th><th>Details</th></tr></thead><tbody>
+  {% for r in requests %}<tr><td>#{{ r.id }}</td><td>{{ r.request_type }}</td><td>{{ r.account_id or 'Bank-wide' }}</td><td><span class="mb-request-status {{ r.status|lower }}">{{ r.status }}</span></td><td>{{ r.created_at.strftime('%Y-%m-%d %H:%M') }}</td><td>{% if r.payload %}{{ r.payload.get('reason','') }}{% else %}—{% endif %}</td></tr>{% endfor %}
+  </tbody></table></div>{% else %}<p class="mb-empty">You have not submitted any requests yet.</p>{% endif %}
+</section>
+{% endblock %}

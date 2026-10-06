@@ -1,6 +1,23 @@
 {% extends "minebank_layout.html" %}
 {% block title %}MineBank — Security{% endblock %}
 {% block content %}
-<div class="mb-page-head"><div><div class="mb-eyebrow">SECURITY</div><h1>Security</h1><p>Protect your account and authorise financial operations.</p></div></div>
-<div class="row g-3"><div class="col-lg-7"><section class="mb-panel"><div class="mb-panel-title">Wallet PIN</div><p>Your 6-digit Wallet PIN is required for financial operations. Three incorrect attempts trigger a 5-minute lockout.</p><form method="post" action="{{ url_for('minebank_set_pin') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="row g-2"><div class="col-md-6"><label class="mb-label">New PIN</label><input class="form-control mb-input" name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></div><div class="col-md-6"><label class="mb-label">Confirm PIN</label><input class="form-control mb-input" name="pin_confirmation" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></div></div><button class="btn btn-primary mt-3" type="submit">Set / Change PIN</button></form></section></div><div class="col-lg-5"><section class="mb-panel"><div class="mb-panel-title">Session</div><div class="mb-detail-grid"><div><span>Signed in as</span><strong>{{ session.minebank_email }}</strong></div><div><span>Role</span><strong>{{ session.minebank_role }}</strong></div></div></section></div></div>
+<div class="mb-page-head"><div><div class="mb-eyebrow">SECURITY</div><h1>Security Centre</h1><p>Protect your account and authorise financial operations.</p></div></div>
+<div class="row g-3">
+<div class="col-lg-7">
+<section class="mb-panel"><div class="mb-panel-title">Wallet PIN</div><p>Your 6-digit Wallet PIN is required for financial operations. Three incorrect attempts trigger a 5-minute lockout.</p>
+<form method="post" action="{{ url_for('minebank_set_pin') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><div class="row g-2"><div class="col-md-6"><label class="mb-label">New PIN</label><input class="form-control mb-input" name="pin" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></div><div class="col-md-6"><label class="mb-label">Confirm PIN</label><input class="form-control mb-input" name="pin_confirmation" type="password" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required></div></div><button class="btn btn-primary mt-3" type="submit">Set / Change PIN</button></form>
+</section>
+<section class="mb-panel mt-3"><div class="mb-panel-title">Password</div><p class="mb-help">Password changes from the portal are submitted as bank-reviewed requests.</p>
+<form method="post" action="{{ url_for('minebank_password_request') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<label class="mb-label">New password</label><input class="form-control mb-input mb-2" name="new_password" type="password" minlength="8" required>
+<label class="mb-label">Confirm password</label><input class="form-control mb-input mb-2" name="password_confirmation" type="password" minlength="8" required>
+<label class="mb-label">Reason</label><textarea class="form-control mb-input" name="reason" rows="3" minlength="3" maxlength="500" required></textarea>
+<button class="btn btn-primary mt-3" type="submit">Request Password Change</button></form>
+</section>
+</div>
+<div class="col-lg-5">
+<section class="mb-panel"><div class="mb-panel-title">Session</div><div class="mb-detail-grid"><div><span>Signed in as</span><strong>{{ session.minebank_email }}</strong></div><div><span>Role</span><strong>{{ session.minebank_role }}</strong></div></div></section>
+<section class="mb-panel mt-3"><div class="mb-panel-title">Requests &amp; alerts</div><p class="mb-help">Review pending security changes and bank decisions in your <a href="{{ url_for('minebank_requests_page') }}">Requests</a> and <a href="{{ url_for('minebank_notifications_page') }}">Messages</a>.</p></section>
+</div>
+</div>
 {% endblock %}
