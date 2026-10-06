@@ -353,7 +353,7 @@ def register_admin_api_routes(app):
 
             elif request_item['request_type'] == "CreditLine":
                 wallet_name = request_item['wallet_name']
-                match = re.search(r'Requested limit:\s*([0-9]+(?:\\.[0-9]+)?)', request_item['reason'] or '')
+                match = re.search(r'Requested limit:\s*([0-9]+(?:\.[0-9]+)?)', request_item['reason'] or '')
                 requested_limit = float(match.group(1)) if match else 0
                 user = get_user_by_wallet_name(wallet_name)
                 if not user or requested_limit <= 0:
