@@ -35,7 +35,7 @@ from bank_lib.minebank_auth import (login_client, logout_client, get_client_acco
                                     reauthenticate_admin, create_account, request_tier_change, review_tier_change)
 from bank_lib.minebank_core import (transfer as minebank_transfer, approve_transfer, reject_transfer,
                                      deposit as minebank_deposit, withdraw as minebank_withdraw,
-                                     repay_credit, activate_credit, chargeback, accrue_monthly_credit_interest)
+                                     repay_credit, activate_credit, draw_credit, chargeback, accrue_monthly_credit_interest)
 from bank_lib.minebank_api import create_api_credential, authenticate_api_credential, revoke_api_credential
 from bank_lib.minebank_requests import create_request, list_requests, count_pending_requests, create_notification
 
@@ -373,6 +373,11 @@ def minebank_credit_page():
             if action == 'activate':
                 requested_limit = int(request.form.get('credit_limit') or 0)
                 success = activate_credit(selected[0], requested_limit)
+            elif action == 'draw':
+                amount = int(request.form.get('draw_amount') or 0)
+                success = draw_credit(selected[0], amount,
+                                      actor_client_id=session['minebank_client_id'],
+                                      ip_address=request.remote_addr)
             elif action == 'repay':
                 amount = int(request.form.get('repayment_amount') or 0)
                 source_account = int(request.form.get('source_account_id') or 0)
