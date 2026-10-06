@@ -488,6 +488,32 @@ def minebank_password_request():
 def minebank_bonus_home():
     return redirect(url_for("minebank_credit_page"))
 
+def ensure_admin_bank_state():
+    """Ensure owner-facing tables have a usable settings row on an existing bank."""
+    execute_query("""CREATE TABLE IF NOT EXISTS minebank_economy_events (
+        id BIGSERIAL PRIMARY KEY,
+        actor_client_id BIGINT REFERENCES bank_clients(id),
+        event_type VARCHAR(30) NOT NULL,
+        account_id BIGINT REFERENCES bank_accounts(id),
+        amount BIGINT NOT NULL CHECK (amount > 0),
+        reason VARCHAR(500),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""", commit=True)
+    execute_query("""CREATE TABLE IF NOT EXISTS settings (
+        id SERIAL PRIMARY KEY,
+        bank_name VARCHAR(100) NOT NULL,
+        currency_name VARCHAR(50) NOT NULL,
+        admin_password VARCHAR(200) NOT NULL DEFAULT '',
+        allow_leaderboard BOOLEAN DEFAULT TRUE,
+        allow_public_logs BOOLEAN DEFAULT TRUE,
+        allow_debts BOOLEAN DEFAULT FALSE,
+        allow_self_review BOOLEAN DEFAULT FALSE,
+        maximum_currency DOUBLE PRECISION DEFAULT 1000000.0
+    )""", commit=True)
+    execute_query("""INSERT INTO settings(bank_name,currency_name,admin_password)
+                     SELECT 'MineBank','Emerald',''
+                     WHERE NOT EXISTS (SELECT 1 FROM settings)""", commit=True)
+
 def ensure_admin_account(client_id):
     accounts = get_accounts(client_id)
     if accounts:
@@ -499,6 +525,7 @@ def ensure_admin_account(client_id):
 @app.route("/admin/minebank/dashboard")
 @require_role("ADMIN")
 def admin_minebank_dashboard():
+    ensure_admin_bank_state()
     account = ensure_admin_account(session["minebank_client_id"])
     stats = execute_query_dict("""
         SELECT (SELECT COUNT(*) FROM bank_clients) AS clients,
@@ -529,6 +556,7 @@ def admin_minebank_dashboard():
 @app.route("/admin/minebank/economy", methods=["GET","POST"])
 @require_role("ADMIN")
 def admin_minebank_economy():
+    ensure_admin_bank_state()
     error = None
     if request.method == "POST":
         try:
@@ -585,6 +613,7 @@ def admin_minebank_economy():
 @app.route("/admin/minebank/clients", methods=["GET","POST"])
 @require_role("ADMIN")
 def admin_minebank_clients():
+    ensure_admin_bank_state()
     if request.method=="POST":
         account_id=int(request.form.get("account_id","0") or 0)
         status=request.form.get("status")
@@ -606,6 +635,7 @@ def admin_minebank_clients():
 @app.route("/admin/minebank/settings", methods=["GET","POST"])
 @require_role("ADMIN")
 def admin_minebank_settings():
+    ensure_admin_bank_state()
     if request.method=="POST":
         bank_name=request.form.get("bank_name","MineBank").strip()[:100] or "MineBank"
         currency=request.form.get("currency_name","Emerald").strip()[:50] or "Emerald"
@@ -619,6 +649,7 @@ def admin_minebank_settings():
 @app.route("/admin/minebank/requests")
 @require_role("ADMIN","OPERATOR")
 def admin_minebank_requests():
+    ensure_admin_bank_state()
     requests=execute_query_dict(
         """SELECT r.*,c.email,a.account_number FROM bank_requests_v2 r
            LEFT JOIN bank_clients c ON c.id=r.client_id LEFT JOIN bank_accounts a ON a.id=r.account_id
