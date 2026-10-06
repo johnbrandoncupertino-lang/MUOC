@@ -91,6 +91,29 @@ def register_request_api_routes(app):
         create_log("Credit Request", f"{wallet_name} requested a credit line of {requested_limit}", "Admin")
         return jsonify({"message": "Credit line request submitted", "request_ticket_uuid": ticket})
 
+    @app.route('/api/credit/draw', methods=['POST'])
+    @login_required
+    def api_credit_draw():
+        data = request.json or {}
+        try:
+            amount = float(data.get('amount', 0))
+        except (TypeError, ValueError):
+            amount = 0
+        wallet_name = session['wallet_name']
+        if amount <= 0:
+            return jsonify({"error": "Credit draw amount must be greater than zero"}), 400
+        user = get_user_by_wallet_name(wallet_name)
+        profile = execute_query_dict("SELECT t.credit_enabled FROM users u JOIN account_tiers t ON t.name=u.account_tier WHERE u.wallet_name=%s", (wallet_name,))
+        if not user or not profile or not profile[0]['credit_enabled']:
+            return jsonify({"error": "Your account is not eligible for credit"}), 403
+        available = float(user['credit_limit'] or 0) - float(user['credit_used'] or 0)
+        if amount > available:
+            return jsonify({"error": f"Insufficient available credit. Available: {available}"}), 400
+        execute_query("UPDATE users SET current_currency=current_currency-%s, credit_used=credit_used+%s WHERE wallet_name=%s", (amount, amount, wallet_name), commit=True)
+        settings = get_settings()
+        create_log("Credit Draw", f"{wallet_name} drew {amount} {settings['currency_name']} from their credit line", "Private")
+        return jsonify({"message": "Credit drawn successfully", "amount": amount, "available_credit": available - amount})
+
     @app.route('/api/request/refund', methods=['POST'])
     @login_required
     def api_request_refund():
