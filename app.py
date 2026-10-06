@@ -684,7 +684,10 @@ def admin_minebank_clients():
             flash("Invalid account status.","error")
         else:
             db_status={"ENABLED":"ACTIVE","FROZEN":"FROZEN","DISABLED":"CLOSED"}[status]
-            execute_query("UPDATE bank_accounts SET status=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(db_status,account_id),commit=True)
+            freeze_type=request.form.get("freeze_type") if status=="FROZEN" else None
+            if freeze_type not in {None,"MANUAL_FREEZE","SECURITY_FREEZE","CREDIT_FREEZE","COMPLIANCE_FREEZE","EMERGENCY_FREEZE","SYSTEM_FREEZE"}: freeze_type="MANUAL_FREEZE"
+            execute_query("UPDATE bank_accounts SET status=%s,freeze_type=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(db_status,freeze_type,account_id),commit=True)
+            security_event(session["minebank_client_id"],"ACCOUNT_STATUS_CHANGED","WARNING" if status!="ENABLED" else "INFO",{"account_id":account_id,"status":status,"freeze_type":freeze_type})
             flash(f"Account status changed to {status}.","success")
     clients=execute_query_dict("""SELECT c.id,c.email,c.role,c.status,c.created_at,
                                          a.id account_id,a.account_number,a.balance,a.status account_status,
