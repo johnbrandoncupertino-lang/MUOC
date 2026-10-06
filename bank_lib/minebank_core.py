@@ -53,14 +53,14 @@ def next_transaction_id(cur):
 def create_ledger_transaction(cur, *, transaction_id, transaction_type, amount, fee=0,
                               currency=CURRENCY, sender_account_id=None,
                               recipient_account_id=None, status="COMPLETED",
-                              description=None, reference_id=None, metadata=None):
+                              description=None, reference_id=None, metadata=None, transfer_kind=None):
     cur.execute(
         """INSERT INTO ledger_transactions
            (transaction_id,transaction_type,amount,fee,currency,sender_account_id,
             recipient_account_id,status,description,reference_id,transfer_kind)
            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
         (transaction_id,transaction_type,amount,fee,currency,sender_account_id,
-         recipient_account_id,status,description,reference_id),
+         recipient_account_id,status,description,reference_id,transfer_kind),
     )
     return cur.fetchone()[0]
 
@@ -203,7 +203,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 ledger_id = create_ledger_transaction(
                     cur,transaction_id=txid,transaction_type="TRANSFER",amount=amount,fee=fee,
                     currency=currency,sender_account_id=sender[0],recipient_account_id=recipient[0],
-                    status=status,description=description,reference_id=reference)
+                    status=status,description=description,reference_id=reference,transfer_kind=transfer_kind)
                 if idempotency_key:
                     cur.execute("INSERT INTO transfer_idempotency(idempotency_key,client_id,transaction_id) VALUES(%s,%s,%s)",
                                 (idempotency_key,sender[1],txid))
