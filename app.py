@@ -255,13 +255,19 @@ def minebank_select_account():
 def minebank_set_pin():
     pin = request.form.get('pin') or ''
     confirmation = request.form.get('pin_confirmation') or ''
+    accounts, selected = _minebank_selected_account()
     if pin != confirmation:
-        return jsonify({"error": "PIN confirmation does not match."}), 400
+        return render_template('minebank_security.html', accounts=accounts, selected_account=selected,
+                               error='PIN confirmation does not match.', settings=get_settings(),
+                               portal_active='security', is_logged_in=True,
+                               is_admin=session.get('minebank_role') == 'ADMIN'), 400
     try:
         set_wallet_pin(session['minebank_client_id'], pin)
     except ValueError as exc:
-        return jsonify({"error": str(exc)}), 400
-    return redirect(url_for('minebank_dashboard'))
+        return render_template('minebank_security.html', accounts=accounts, selected_account=selected,
+                               error=str(exc), settings=get_settings(), portal_active='security',
+                               is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN'), 400
+    return redirect(url_for('minebank_security_page'))
 
 
 def _minebank_selected_account():
@@ -400,27 +406,6 @@ def minebank_security_page():
     return render_template('minebank_security.html', accounts=accounts, selected_account=selected,
                            settings=get_settings(), portal_active='security', is_logged_in=True,
                            is_admin=session.get('minebank_role') == 'ADMIN')
-
-
-@app.route('/portal/security/pin', methods=['POST'])
-@require_minebank_login
-def minebank_set_pin_page():
-    pin = request.form.get('pin') or ''
-    confirmation = request.form.get('pin_confirmation') or ''
-    if pin != confirmation:
-        return render_template('minebank_security.html', accounts=get_client_accounts(session['minebank_client_id']),
-                               selected_account=_minebank_selected_account()[1],
-                               error='PIN confirmation does not match.', settings=get_settings(),
-                               portal_active='security', is_logged_in=True,
-                               is_admin=session.get('minebank_role') == 'ADMIN'), 400
-    try:
-        set_wallet_pin(session['minebank_client_id'], pin)
-    except ValueError as exc:
-        return render_template('minebank_security.html', accounts=get_client_accounts(session['minebank_client_id']),
-                               selected_account=_minebank_selected_account()[1],
-                               error=str(exc), settings=get_settings(), portal_active='security',
-                               is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN'), 400
-    return redirect(url_for('minebank_security_page'))
 
 
 @app.route('/api/v2/transfer', methods=['POST'])
