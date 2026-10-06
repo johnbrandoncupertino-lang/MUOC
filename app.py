@@ -627,7 +627,7 @@ def admin_minebank_clients():
                                          a.id account_id,a.account_number,a.balance,a.status account_status,
                                          t.display_name,t.code
                                   FROM bank_clients c
-                                  LEFT JOIN bank_accounts a ON a.client_id=c.id AND a.status<>'CLOSED'
+                                  LEFT JOIN bank_accounts a ON a.client_id=c.id
                                   LEFT JOIN account_tiers_v2 t ON t.id=a.tier_id
                                   ORDER BY c.created_at DESC""")
     return render_template("minebank_admin_new.html",mode="clients",clients=clients,
