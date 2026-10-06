@@ -1,4 +1,7 @@
-import platform\nfrom datetime import datetime, UTC\n\nfrom .log_module import create_log
+import platform
+from datetime import datetime, UTC
+
+from .log_module import create_log
 import time
 
 import psutil
