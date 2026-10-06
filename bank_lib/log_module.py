@@ -1,5 +1,6 @@
+from flask import request
+
 from .database import execute_query
-from .get_data import get_client_ip
 
 
 # Add log rotation for the logs table to prevent it from growing indefinitely
@@ -34,7 +35,7 @@ def create_log(action, details, private_level):
     try:
         execute_query(
             "INSERT INTO logs (action, details, private_level, ip_address) VALUES (%s, %s, %s, %s)",
-            (action, details, private_level, get_client_ip()),
+            (action, details, private_level, (request.headers.getlist('X-Forwarded-For') or [request.remote_addr])[0]),
             commit=True
         )
     except Exception as e:
