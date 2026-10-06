@@ -149,7 +149,35 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 if int(sender[5]) - total < -credit_limit:
                     raise ValueError("Insufficient available balance/credit.")
 
-                status = "PENDING_APPROVAL" if amount >= PENDING_APPROVAL_THRESHOLD else "COMPLETED"
+                risk_score = 0
+                risk_reasons = []
+                try:
+                    cur.execute("""SELECT COUNT(*) FROM ledger_transactions
+                                   WHERE sender_account_id=%s AND created_at>CURRENT_TIMESTAMP-INTERVAL '10 minutes'""",
+                                (sender[0],))
+                    if int(cur.fetchone()[0]) >= 10:
+                        risk_score += 35
+                        risk_reasons.append("High transaction velocity")
+                    if amount >= 50000:
+                        risk_score += 25
+                        risk_reasons.append("Large transaction amount")
+                    elif amount >= 10000:
+                        risk_score += 10
+                        risk_reasons.append("Elevated transaction amount")
+                    cur.execute("""SELECT COUNT(*) FROM ledger_transactions
+                                   WHERE sender_account_id=%s AND recipient_account_id=%s""",(sender[0],recipient[0]))
+                    if int(cur.fetchone()[0]) == 0:
+                        risk_score += 20
+                        risk_reasons.append("New recipient")
+                    if risk_score:
+                        cur.execute("""INSERT INTO minebank_risk_events(account_id,client_id,risk_score,severity,reason,context)
+                                       VALUES(%s,%s,%s,%s,%s,%s::jsonb)""",
+                                    (sender[0],sender[1],risk_score,
+                                     "HIGH" if risk_score>=60 else ("MEDIUM" if risk_score>=30 else "LOW"),
+                                     "; ".join(risk_reasons),__import__('json').dumps({"amount":amount})))
+                except Exception:
+                    pass
+                status = "PENDING_APPROVAL" if amount >= PENDING_APPROVAL_THRESHOLD or risk_score >= 60 else "COMPLETED"
                 txid = next_transaction_id(cur)
                 cur.execute("""UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
                                last_outgoing_at=CURRENT_TIMESTAMP,monthly_outgoing_period=%s,
