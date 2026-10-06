@@ -1,0 +1,13 @@
+{% extends "minebank_layout.html" %}
+{% block title %}MineBank — Preferences{% endblock %}
+{% block content %}
+<div class="mb-page-head"><div><div class="mb-eyebrow">MY BANK</div><h1>Notification Preferences</h1><p>Choose which bank events may also be delivered by email.</p></div></div>
+<section class="mb-panel"><div class="mb-panel-title">Email notifications</div>
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+<div class="mb-setting"><label><input type="checkbox" name="email_enabled" {% if preferences.email_enabled %}checked{% endif %}> Enable automatic email notifications</label></div>
+<div class="mb-setting"><label><input type="checkbox" name="transfer_email" {% if preferences.transfer_email %}checked{% endif %}> Transfers</label></div>
+<div class="mb-setting"><label><input type="checkbox" name="security_email" {% if preferences.security_email %}checked{% endif %}> Security</label></div>
+<div class="mb-setting"><label><input type="checkbox" name="request_email" {% if preferences.request_email %}checked{% endif %}> Requests</label></div>
+<div class="mb-setting"><label><input type="checkbox" name="statement_email" {% if preferences.statement_email %}checked{% endif %}> Statements</label></div>
+<button class="btn btn-primary mt-3">Save Preferences</button></form></section>
+{% endblock %}
