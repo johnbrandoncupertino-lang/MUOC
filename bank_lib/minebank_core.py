@@ -138,7 +138,12 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                     raise ValueError("Self-transfers are not allowed.")
                 if sender[6] != "ACTIVE":
                     raise ValueError("Sender account is not active.")
-                if recipient[6] not in ("ACTIVE","LIMITED"):
+                if recipient[6] == "FROZEN":
+                    cur.execute("SELECT freeze_type FROM bank_accounts WHERE id=%s",(recipient[0],))
+                    freeze_type=cur.fetchone()[0]
+                    if freeze_type not in ("SECURITY_FREEZE","EMERGENCY_FREEZE","CREDIT_FREEZE"):
+                        raise ValueError("Recipient account cannot receive transfers while frozen.")
+                elif recipient[6] not in ("ACTIVE","LIMITED"):
                     raise ValueError("Recipient account cannot receive transfers.")
 
                 used, period = _reset_month_if_needed(cur, sender)
@@ -233,7 +238,12 @@ def approve_transfer(transaction_id, actor_user_id, ip_address=None):
                 recipient = _lock_account(cur, tx[2])
                 if sender and sender[1] == actor_user_id:
                     raise ValueError("The person who initiated a transfer cannot approve their own transfer.")
-                if not recipient or recipient[6] not in ("ACTIVE","LIMITED"):
+                if recipient and recipient[6]=="FROZEN":
+                    cur.execute("SELECT freeze_type FROM bank_accounts WHERE id=%s",(recipient[0],))
+                    freeze_type=cur.fetchone()[0]
+                    if freeze_type not in ("SECURITY_FREEZE","EMERGENCY_FREEZE","CREDIT_FREEZE"):
+                        raise ValueError("Recipient account cannot receive the transfer while frozen.")
+                elif not recipient or recipient[6] not in ("ACTIVE","LIMITED"):
                     raise ValueError("Recipient account cannot receive the transfer.")
                 cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
                             (tx[3],tx[2]))
@@ -306,7 +316,7 @@ def deposit(account_id, amount, actor_user_id=None, description=None):
             with conn.cursor() as cur:
                 account=_lock_account(cur,account_id)
                 if account: _assert_banking_unlocked(cur, account[1])
-                if not account or account[6] not in ("ACTIVE","LIMITED"):
+                if not account or account[6] not in ("ACTIVE","LIMITED","FROZEN"):
                     raise ValueError("Account cannot receive deposits.")
                 cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s",(account[4],))
                 max_balance=cur.fetchone()[0]
