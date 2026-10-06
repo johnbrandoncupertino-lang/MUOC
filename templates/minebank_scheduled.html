@@ -1,0 +1,19 @@
+{% extends "minebank_layout.html" %}
+{% block title %}MineBank — Scheduled Transfers{% endblock %}
+{% block content %}
+<div class="mb-page-head"><div><div class="mb-eyebrow">PAYMENTS</div><h1>Scheduled Transfers</h1><p>Plan one-time, weekly or monthly payments. Each execution is independently authorised by the bank's scheduled-payment service.</p></div></div>
+<div class="row g-3"><div class="col-lg-5"><section class="mb-panel"><div class="mb-panel-title">Schedule a transfer</div>
+{% if selected_account %}<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="create">
+<label class="mb-label">Recipient</label><input class="form-control mb-input mb-2" name="recipient_account_number" required>
+<label class="mb-label">Amount</label><input class="form-control mb-input mb-2" type="number" min="1" name="amount" required>
+<label class="mb-label">Frequency</label><select class="form-select mb-input mb-2" name="schedule_type"><option value="ONCE">One time</option><option value="WEEKLY">Weekly</option><option value="MONTHLY">Monthly</option></select>
+<label class="mb-label">First execution (ISO time)</label><input class="form-control mb-input mb-2" name="next_run" placeholder="2026-10-07T18:00:00+02:00" required>
+<label class="mb-label">End date <span>(optional)</span></label><input class="form-control mb-input mb-2" name="end_at" placeholder="2027-01-01T00:00:00+01:00">
+<label class="mb-label">Description</label><input class="form-control mb-input mb-2" name="description">
+<label class="mb-label">Reference</label><input class="form-control mb-input mb-3" name="reference">
+<button class="btn btn-primary" type="submit">Create Schedule</button></form>{% endif %}
+</section></div>
+<div class="col-lg-7"><section class="mb-panel"><div class="mb-panel-title">Your schedules</div>
+{% for s in scheduled %}<div class="mb-account-row"><div><strong>{{ s.recipient_account_number }} · {{ s.amount }} Emerald</strong><small>{{ s.schedule_type }} · next {{ s.next_run_at }} · {{ s.status }}</small></div>{% if s.status == 'ACTIVE' %}<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="status"><input type="hidden" name="schedule_id" value="{{ s.id }}"><input type="hidden" name="status" value="PAUSED"><button class="btn btn-sm btn-outline-secondary">Pause</button></form>{% elif s.status == 'PAUSED' %}<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="status"><input type="hidden" name="schedule_id" value="{{ s.id }}"><input type="hidden" name="status" value="ACTIVE"><button class="btn btn-sm btn-outline-primary">Resume</button></form>{% endif %}</div>{% else %}<p class="mb-empty">No scheduled transfers.</p>{% endfor %}
+</section></div></div>
+{% endblock %}
