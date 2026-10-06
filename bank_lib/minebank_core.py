@@ -30,6 +30,15 @@ def _lock_recipient(cur, account_number):
     return cur.fetchone()
 
 
+def audit_event(cur, *, actor_client_id=None, action, target_type=None, target_id=None,
+                account_id=None, transaction_id=None, ip_address=None, context=None):
+    cur.execute("""INSERT INTO audit_events
+                   (actor_client_id,action,target_type,target_id,account_id,transaction_id,ip_address,context)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s::jsonb)""",
+                (actor_client_id,action,target_type,target_id,account_id,transaction_id,
+                 ip_address,__import__('json').dumps(context or {})))
+
+
 def next_transaction_id(cur):
     cur.execute("SELECT nextval('muoc_transaction_seq')")
     return f"MUOC-{_now().year}-{cur.fetchone()[0]:06d}"
@@ -84,7 +93,7 @@ def get_credit_limit(cur, account_id):
 
 
 def transfer(*, sender_account_id, recipient_account_number, amount,
-             description=None, reference=None, currency=CURRENCY, idempotency_key=None):
+             description=None, reference=None, currency=CURRENCY, idempotency_key=None, actor_client_id=None, ip_address=None):
     if not isinstance(amount, int) or amount <= 0:
         raise ValueError("Transfer amount must be a positive integer Emerald amount.")
     if not recipient_account_number:
@@ -152,10 +161,11 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 if idempotency_key:
                     cur.execute("INSERT INTO transfer_idempotency(idempotency_key,client_id,transaction_id) VALUES(%s,%s,%s)",
                                 (idempotency_key,sender[1],txid))
+                audit_event(cur,actor_client_id=actor_client_id,action="TRANSFER_CREATED",target_type="TRANSACTION",target_id=txid,account_id=sender[0],transaction_id=txid,ip_address=ip_address,context={"recipient_account":recipient[2],"status":status})
                 return {"transaction_id":txid,"ledger_id":ledger_id,"status":status,"amount":amount,"fee":fee}
 
 
-def approve_transfer(transaction_id, actor_user_id):
+def approve_transfer(transaction_id, actor_user_id, ip_address=None):
     conn = get_db_connection()
     try:
         with conn:
@@ -172,12 +182,13 @@ def approve_transfer(transaction_id, actor_user_id):
                             (tx[2],tx[1]))
                 cur.execute("""UPDATE ledger_transactions SET status='COMPLETED',approved_by=%s,
                                approved_at=CURRENT_TIMESTAMP WHERE id=%s""", (actor_user_id,tx[0]))
+                audit_event(cur,actor_client_id=actor_user_id,action="TRANSFER_APPROVED",target_type="TRANSACTION",target_id=transaction_id,account_id=tx[1],transaction_id=transaction_id,ip_address=ip_address)
                 return transaction_id
     finally:
         release_db_connection(conn)
 
 
-def reject_transfer(transaction_id, actor_user_id, reason=None):
+def reject_transfer(transaction_id, actor_user_id, reason=None, ip_address=None):
     conn = get_db_connection()
     try:
         with conn:
@@ -195,6 +206,7 @@ def reject_transfer(transaction_id, actor_user_id, reason=None):
                 cur.execute("""UPDATE ledger_transactions SET status='REJECTED',approved_by=%s,
                                approved_at=CURRENT_TIMESTAMP,description=COALESCE(description,'') || %s
                                WHERE id=%s""", (actor_user_id, f" [Rejected: {reason or 'No reason supplied'}]",tx[0]))
+                audit_event(cur,actor_client_id=actor_user_id,action="TRANSFER_REJECTED",target_type="TRANSACTION",target_id=transaction_id,account_id=tx[1],transaction_id=transaction_id,ip_address=ip_address,context={"reason":reason or ""})
                 return transaction_id
     finally:
         release_db_connection(conn)
