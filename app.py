@@ -446,15 +446,6 @@ def minebank_preferences_page():
                            settings=get_settings(), portal_active='preferences', is_logged_in=True,
                            is_admin=session.get('minebank_role') == 'ADMIN')
 
-@app.route('/portal/notifications')
-@require_minebank_login
-def minebank_notifications_page_v2():
-    accounts, selected = _minebank_selected_account()
-    return render_template('minebank_notifications.html', accounts=accounts, selected_account=selected,
-                           notifications=list_notifications(session['minebank_client_id']), settings=get_settings(),
-                           portal_active='notifications', is_logged_in=True,
-                           is_admin=session.get('minebank_role') == 'ADMIN')
-
 @app.route('/portal/notifications/<int:notification_id>/read', methods=['POST'])
 @require_minebank_login
 def minebank_notification_read():
@@ -809,23 +800,10 @@ def minebank_password_request():
 @require_minebank_login
 def minebank_notifications_page():
     accounts, selected = _minebank_selected_account()
-    notifications = execute_query_dict(
-        """SELECT id, notification_type, title, message, read_at, created_at
-           FROM bank_notifications WHERE client_id=%s
-           ORDER BY created_at DESC LIMIT 200""",
-        (session['minebank_client_id'],),
-    )
-    unread = [n['id'] for n in notifications if n['read_at'] is None]
-    if unread:
-        execute_query(
-            "UPDATE bank_notifications SET read_at=CURRENT_TIMESTAMP WHERE client_id=%s AND read_at IS NULL",
-            (session['minebank_client_id'],), commit=True
-        )
     return render_template('minebank_notifications.html', accounts=accounts, selected_account=selected,
-                           notifications=notifications, settings=get_settings(),
+                           notifications=list_notifications(session['minebank_client_id']), settings=get_settings(),
                            portal_active='notifications', is_logged_in=True,
                            is_admin=session.get('minebank_role') == 'ADMIN')
-
 
 @app.route('/portal/transactions/<transaction_id>')
 @require_minebank_login
