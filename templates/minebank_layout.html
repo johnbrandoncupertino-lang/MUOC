@@ -54,6 +54,7 @@
       <details class="mb-nav-group" {% if portal_active == 'security' %}open{% endif %}>
         <summary>Security</summary>
         <a class="{% if portal_active == 'security' %}active{% endif %}" href="{{ url_for('minebank_security_page') }}">Security Centre</a>
+        <a class="{% if portal_active == 'bonus' %}active{% endif %}" href="{{ url_for('minebank_bonus_home') }}">Advanced Services</a>
       </details>
     </nav>
     <div class="mb-sidebar-separator"></div>
