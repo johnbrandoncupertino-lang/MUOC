@@ -38,6 +38,25 @@ CREATE TABLE IF NOT EXISTS account_tiers_v2 (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS bank_accounts (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT NOT NULL REFERENCES bank_clients(id),
+    account_number VARCHAR(32) UNIQUE NOT NULL,
+    account_type VARCHAR(20) NOT NULL CHECK (account_type IN ('PERSONAL','BUSINESS')),
+    tier_id BIGINT NOT NULL REFERENCES account_tiers_v2(id),
+    balance BIGINT NOT NULL DEFAULT 0,
+    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','LIMITED','FROZEN','CLOSED')),
+    monthly_outgoing_used BIGINT NOT NULL DEFAULT 0,
+    monthly_outgoing_period CHAR(7) NOT NULL DEFAULT TO_CHAR(CURRENT_DATE,'YYYY-MM'),
+    last_outgoing_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS one_personal_account_per_client
+ON bank_accounts(client_id) WHERE account_type='PERSONAL' AND status <> 'CLOSED';
+
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS last_outgoing_at TIMESTAMPTZ;
 -- Account lifecycle, business ownership and security extensions.
 ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS freeze_type VARCHAR(40);
 
@@ -100,27 +119,7 @@ ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS login_failed_attempts INTEGER 
 ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS login_blocked_until TIMESTAMPTZ;
 ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS login_captcha_required BOOLEAN NOT NULL DEFAULT FALSE;
 
-ALTER TABLE minebank_scheduled_transfers ADD COLUMN IF NOT EXISTS recurrence_config JSONB NOT NULL DEFAULT '{}'::jsonb;
 
-CREATE TABLE IF NOT EXISTS bank_accounts (
-    id BIGSERIAL PRIMARY KEY,
-    client_id BIGINT NOT NULL REFERENCES bank_clients(id),
-    account_number VARCHAR(32) UNIQUE NOT NULL,
-    account_type VARCHAR(20) NOT NULL CHECK (account_type IN ('PERSONAL','BUSINESS')),
-    tier_id BIGINT NOT NULL REFERENCES account_tiers_v2(id),
-    balance BIGINT NOT NULL DEFAULT 0,
-    status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','LIMITED','FROZEN','CLOSED')),
-    monthly_outgoing_used BIGINT NOT NULL DEFAULT 0,
-    monthly_outgoing_period CHAR(7) NOT NULL DEFAULT TO_CHAR(CURRENT_DATE,'YYYY-MM'),
-    last_outgoing_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS one_personal_account_per_client
-ON bank_accounts(client_id) WHERE account_type='PERSONAL' AND status <> 'CLOSED';
-
-ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS last_outgoing_at TIMESTAMPTZ;
 
 CREATE TABLE IF NOT EXISTS credit_facilities (
     id BIGSERIAL PRIMARY KEY,
@@ -290,6 +289,11 @@ CREATE TABLE IF NOT EXISTS minebank_scheduled_transfers (
     status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE','PAUSED','COMPLETED','CANCELLED')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE minebank_scheduled_transfers ADD COLUMN IF NOT EXISTS recurrence_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE minebank_scheduled_transfers DROP CONSTRAINT IF EXISTS minebank_scheduled_transfers_schedule_type_check;
+ALTER TABLE minebank_scheduled_transfers ADD CONSTRAINT minebank_scheduled_transfers_schedule_type_check
+CHECK (schedule_type IN ('ONCE','DAILY','WEEKLY','MONTHLY','CUSTOM'));
 
 CREATE TABLE IF NOT EXISTS minebank_notification_preferences (
     client_id BIGINT PRIMARY KEY REFERENCES bank_clients(id) ON DELETE CASCADE,
