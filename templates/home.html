@@ -6,10 +6,10 @@
 {% block content %}
 {% if not settings %}
     <div class="card">
-        <div class="card-header">Sistema non inizializzato</div>
+        <div class="card-header">System Not Initialized</div>
         <div class="card-body">
-            <p class="mb-3">Il sistema bancario MUOC non è ancora configurato.</p>
-            <a href="/setup" class="btn btn-primary">Avvia configurazione</a>
+            <p class="mb-3">The MUOC banking system has not been configured yet.</p>
+            <a href="/setup" class="btn btn-primary">Start Setup</a>
         </div>
     </div>
 {% else %}
@@ -17,45 +17,45 @@
         <div class="row g-2 mb-3">
             <div class="col-12 col-md-6 col-xl-3">
                 <div class="muoc-kpi">
-                    <div class="muoc-kpi-label">Saldo disponibile</div>
+                    <div class="muoc-kpi-label">Available Balance</div>
                     <div id="dashBalance" class="muoc-kpi-value">—</div>
                     <div id="dashCurrency" class="muoc-kpi-sub">{{ settings.currency_name }}</div>
                 </div>
             </div>
             <div class="col-12 col-md-6 col-xl-3">
                 <div class="muoc-kpi">
-                    <div class="muoc-kpi-label">Stato wallet</div>
+                    <div class="muoc-kpi-label">Wallet Status</div>
                     <div id="dashStatus" class="muoc-kpi-value">—</div>
-                    <div class="muoc-kpi-sub">Conto corrente MUOC</div>
+                    <div class="muoc-kpi-sub">MUOC Current Account</div>
                 </div>
             </div>
             <div class="col-12 col-md-6 col-xl-3">
                 <div class="muoc-kpi">
-                    <div class="muoc-kpi-label">Richieste aperte</div>
+                    <div class="muoc-kpi-label">Requests aperte</div>
                     <div id="dashRequests" class="muoc-kpi-value">—</div>
-                    <div class="muoc-kpi-sub">Pratiche in lavorazione</div>
+                    <div class="muoc-kpi-sub">Requests in Progress</div>
                 </div>
             </div>
             <div class="col-12 col-md-6 col-xl-3">
                 <div class="muoc-kpi">
-                    <div class="muoc-kpi-label">Fondi disponibili</div>
+                    <div class="muoc-kpi-label">Available Funds</div>
                     <div id="dashPool" class="muoc-kpi-value">—</div>
-                    <div class="muoc-kpi-sub">Pool MUOC complessivo</div>
+                    <div class="muoc-kpi-sub">Total MUOC Pool</div>
                 </div>
             </div>
         </div>
 
         <div class="muoc-toolbar d-flex flex-wrap align-items-center gap-2 mb-3">
-            <strong class="muoc-dashboard-title me-2">Operazioni rapide</strong>
-            <a href="/wallet/{{ session.wallet_name }}" class="btn btn-primary btn-sm">Apri wallet</a>
-            <a href="/user/logs" class="btn btn-outline-secondary btn-sm">Vedi movimenti</a>
-            <a href="/user/requests" class="btn btn-outline-secondary btn-sm">Vedi richieste</a>
+            <strong class="muoc-dashboard-title me-2">Quick Actions</strong>
+            <a href="/wallet/{{ session.wallet_name }}" class="btn btn-primary btn-sm">Open Wallet</a>
+            <a href="/user/logs" class="btn btn-outline-secondary btn-sm">View Movements</a>
+            <a href="/user/requests" class="btn btn-outline-secondary btn-sm">View Requests</a>
             {% if settings.allow_self_review %}
-                <a href="/requests" class="btn btn-outline-secondary btn-sm">Nuova richiesta</a>
+                <a href="/requests" class="btn btn-outline-secondary btn-sm">New Request</a>
             {% endif %}
             {% if is_admin %}
-                <a href="/admin/treasury" class="btn btn-outline-secondary btn-sm">Tesoreria</a>
-                <a href="/admin/wallets" class="btn btn-outline-secondary btn-sm">Gestione wallet</a>
+                <a href="/admin/treasury" class="btn btn-outline-secondary btn-sm">Treasury</a>
+                <a href="/admin/wallets" class="btn btn-outline-secondary btn-sm">Wallet Management</a>
             {% endif %}
         </div>
 
@@ -63,8 +63,8 @@
             <div class="col-xl-8">
                 <div class="card mb-3">
                     <div class="card-header d-flex justify-content-between">
-                        <span>Ultimi movimenti</span>
-                        <span class="muoc-section-note">Aggiornamento automatico</span>
+                        <span>Recent Movements</span>
+                        <span class="muoc-section-note">Automatic Refresh</span>
                     </div>
                     <div class="table-responsive">
                         <table class="table table-sm muoc-table mb-0">
@@ -80,7 +80,7 @@
             </div>
             <div class="col-xl-4">
                 <div class="card mb-3">
-                    <div class="card-header">Richieste recenti</div>
+                    <div class="card-header">Requests recenti</div>
                     <div class="card-body p-0">
                         <div id="dashRequestList" class="list-group list-group-flush">
                             <div class="p-3 text-muted small">Caricamento...</div>
@@ -88,11 +88,11 @@
                     </div>
                 </div>
                 <div class="card">
-                    <div class="card-header">Informazioni conto</div>
+                    <div class="card-header">Account Information</div>
                     <div class="card-body">
                         <div class="d-flex justify-content-between mb-2"><span>Wallet</span><strong>{{ session.wallet_name }}</strong></div>
-                        <div class="d-flex justify-content-between mb-2"><span>Valuta</span><strong>{{ settings.currency_name }}</strong></div>
-                        <div class="d-flex justify-content-between"><span>Limite sistema</span><strong>{{ settings.maximum_currency }}</strong></div>
+                        <div class="d-flex justify-content-between mb-2"><span>Currency</span><strong>{{ settings.currency_name }}</strong></div>
+                        <div class="d-flex justify-content-between"><span>System Limit</span><strong>{{ settings.maximum_currency }}</strong></div>
                     </div>
                 </div>
             </div>
@@ -101,22 +101,22 @@
         <div class="row g-3">
             <div class="col-lg-8">
                 <div class="card">
-                    <div class="card-header">Benvenuto in {{ settings.bank_name }}</div>
+                    <div class="card-header">Welcome to {{ settings.bank_name }}</div>
                     <div class="card-body">
-                        <p class="mb-2">MUOC è una piattaforma bancaria virtuale per gestire {{ settings.currency_name }}.</p>
-                        <p class="muoc-section-note mb-3">Interfaccia in stile home-banking classico, con strumenti amministrativi e gestione wallet.</p>
-                        <a href="/login" class="btn btn-primary">Accedi all'area riservata</a>
+                        <p class="mb-2">MUOC is a virtual banking platform for managing {{ settings.currency_name }}.</p>
+                        <p class="muoc-section-note mb-3">Classic home-banking interface with administrative tools and wallet management.</p>
+                        <a href="/login" class="btn btn-primary">Access Secure Banking Area</a>
                     </div>
                 </div>
             </div>
             <div class="col-lg-4">
                 <div class="card">
-                    <div class="card-header">Servizi disponibili</div>
+                    <div class="card-header">Available Services</div>
                     <div class="list-group list-group-flush">
-                        <div class="list-group-item d-flex justify-content-between">Leaderboard <span class="muoc-status {% if settings.allow_leaderboard %}ok{% else %}bad{% endif %}">{% if settings.allow_leaderboard %}ATTIVA{% else %}OFF{% endif %}</span></div>
-                        <div class="list-group-item d-flex justify-content-between">Log pubblici <span class="muoc-status {% if settings.allow_public_logs %}ok{% else %}bad{% endif %}">{% if settings.allow_public_logs %}ATTIVI{% else %}OFF{% endif %}</span></div>
-                        <div class="list-group-item d-flex justify-content-between">Debiti <span class="muoc-status {% if settings.allow_debts %}ok{% else %}bad{% endif %}">{% if settings.allow_debts %}ATTIVI{% else %}OFF{% endif %}</span></div>
-                        <div class="list-group-item d-flex justify-content-between">Self-review <span class="muoc-status {% if settings.allow_self_review %}ok{% else %}bad{% endif %}">{% if settings.allow_self_review %}ATTIVO{% else %}OFF{% endif %}</span></div>
+                        <div class="list-group-item d-flex justify-content-between">Leaderboard <span class="muoc-status {% if settings.allow_leaderboard %}ok{% else %}bad{% endif %}">{% if settings.allow_leaderboard %}ACTIVE{% else %}OFF{% endif %}</span></div>
+                        <div class="list-group-item d-flex justify-content-between">Public Logs <span class="muoc-status {% if settings.allow_public_logs %}ok{% else %}bad{% endif %}">{% if settings.allow_public_logs %}ACTIVE{% else %}OFF{% endif %}</span></div>
+                        <div class="list-group-item d-flex justify-content-between">Debt <span class="muoc-status {% if settings.allow_debts %}ok{% else %}bad{% endif %}">{% if settings.allow_debts %}ACTIVE{% else %}OFF{% endif %}</span></div>
+                        <div class="list-group-item d-flex justify-content-between">Self-review <span class="muoc-status {% if settings.allow_self_review %}ok{% else %}bad{% endif %}">{% if settings.allow_self_review %}ACTIVE{% else %}OFF{% endif %}</span></div>
                     </div>
                 </div>
             </div>
