@@ -1,0 +1,214 @@
+/* MUOC classic banking skin — inspired by dense Italian home-banking UIs of the 2000s/2010s. */
+:root {
+    --muoc-blue: #0054a6;
+    --muoc-blue-dark: #003d7a;
+    --muoc-blue-soft: #eaf3fb;
+    --muoc-green: #2f7d32;
+    --muoc-border: #b7c5d4;
+    --muoc-border-dark: #8fa3b8;
+    --muoc-bg: #eef2f6;
+    --muoc-panel: #ffffff;
+    --muoc-text: #1d2733;
+    --muoc-muted: #667789;
+    --muoc-warning: #fff3cd;
+}
+
+html { font-size: 14px; }
+body {
+    padding-top: 72px;
+    padding-bottom: 32px;
+    background:
+        linear-gradient(#f7f9fb, #eef2f6 180px);
+    color: var(--muoc-text);
+    font-family: Arial, Helvetica, sans-serif;
+}
+
+.navbar {
+    min-height: 52px;
+    border-bottom: 3px solid #d3dde7;
+    background: linear-gradient(#0b5fae, #004684) !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,.22);
+}
+.navbar-brand {
+    font-weight: 700;
+    letter-spacing: .15px;
+    text-shadow: 0 1px rgba(0,0,0,.25);
+}
+.navbar .nav-link {
+    color: #fff !important;
+    font-size: 13px;
+    padding: 8px 11px !important;
+    border-left: 1px solid rgba(255,255,255,.12);
+}
+.navbar .nav-link:hover,
+.navbar .nav-link:focus {
+    background: rgba(255,255,255,.12);
+}
+.navbar .btn {
+    font-size: 12px;
+    border-radius: 2px;
+}
+
+main {
+    min-width: 0;
+}
+main > .d-flex {
+    min-height: 48px;
+    border-bottom: 1px solid var(--muoc-border) !important;
+    background: rgba(255,255,255,.72);
+}
+main > .d-flex h1 {
+    margin: 0;
+    color: #24496e;
+    font-size: 22px;
+    font-weight: 700;
+}
+
+.sidebar {
+    top: 52px;
+    padding: 12px 0 0;
+    background: #f8fafc !important;
+    border-right: 1px solid var(--muoc-border);
+    box-shadow: 2px 0 5px rgba(0,0,0,.04);
+}
+.sidebar-sticky {
+    height: calc(100vh - 64px);
+    padding-top: 0;
+}
+.sidebar .nav-link {
+    color: #29445f;
+    font-size: 13px;
+    font-weight: 700;
+    padding: 7px 14px;
+    border-top: 1px solid transparent;
+    border-bottom: 1px solid transparent;
+}
+.sidebar .nav-link:hover,
+.sidebar .nav-link.active {
+    color: var(--muoc-blue-dark);
+    background: linear-gradient(#eef6fd, #dcecf9);
+    border-top-color: #c7d9ea;
+    border-bottom-color: #c7d9ea;
+}
+.sidebar .nav-header {
+    color: #75879a !important;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+}
+
+.card {
+    border: 1px solid var(--muoc-border);
+    border-radius: 2px;
+    box-shadow: 0 1px 2px rgba(34,55,75,.08);
+    background: var(--muoc-panel);
+}
+.card-header {
+    padding: 8px 11px;
+    color: #29445f;
+    font-size: 13px;
+    font-weight: 700;
+    background: linear-gradient(#f9fbfd, #e7eef5);
+    border-bottom: 1px solid var(--muoc-border);
+}
+.card-body { padding: 12px; }
+
+.muoc-dashboard-title {
+    color: #1e4f80;
+    font-size: 13px;
+    font-weight: 700;
+    margin-bottom: 2px;
+}
+.muoc-kpi {
+    min-height: 88px;
+    padding: 12px;
+    border: 1px solid var(--muoc-border);
+    background: linear-gradient(#fff, #f2f6fa);
+}
+.muoc-kpi-label {
+    color: var(--muoc-muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: .05em;
+}
+.muoc-kpi-value {
+    margin-top: 5px;
+    color: #163e66;
+    font-size: 22px;
+    font-weight: 700;
+}
+.muoc-kpi-sub {
+    color: #718194;
+    font-size: 11px;
+}
+.muoc-toolbar {
+    padding: 7px 9px;
+    border: 1px solid var(--muoc-border);
+    background: #f5f8fb;
+}
+.muoc-section-note {
+    color: #65788b;
+    font-size: 11px;
+}
+.muoc-table {
+    font-size: 12px;
+}
+.muoc-table thead th {
+    white-space: nowrap;
+    color: #40586e;
+    background: #e9f0f6;
+    border-bottom: 1px solid var(--muoc-border-dark);
+}
+.muoc-table td, .muoc-table th {
+    padding: 6px 8px;
+    vertical-align: middle;
+}
+.muoc-status {
+    display: inline-block;
+    padding: 2px 6px;
+    border: 1px solid #aab8c6;
+    border-radius: 2px;
+    font-size: 10px;
+    font-weight: 700;
+    background: #f3f6f9;
+}
+.muoc-status.ok { color: #246b28; background: #eaf6eb; border-color: #9bc79e; }
+.muoc-status.warn { color: #856404; background: #fff6d8; border-color: #e3c86d; }
+.muoc-status.bad { color: #842029; background: #fbeaec; border-color: #e0a0a7; }
+
+.btn {
+    border-radius: 2px;
+    font-size: 12px;
+    font-weight: 700;
+}
+.btn-primary {
+    border-color: #004582;
+    background: linear-gradient(#0870c8, #00549b);
+}
+.btn-primary:hover { background: linear-gradient(#0966b1, #004783); }
+.btn-outline-secondary { border-color: #9aaabd; }
+
+.form-control, .form-select {
+    border-radius: 2px;
+    border-color: #aebdcc;
+    font-size: 13px;
+}
+.form-control:focus, .form-select:focus {
+    border-color: #4c8fc8;
+    box-shadow: 0 0 0 2px rgba(0,84,166,.12);
+}
+
+.list-group-item {
+    padding: 7px 9px;
+    font-size: 12px;
+    border-color: #d1dbe5;
+}
+.table { margin-bottom: 0; }
+
+@media (max-width: 767.98px) {
+    body { padding-top: 60px; }
+    .sidebar { top: 52px; }
+    main > .d-flex h1 { font-size: 18px; }
+    .muoc-kpi { min-height: 74px; }
+}
