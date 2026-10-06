@@ -1,6 +1,6 @@
 {% extends "layout.html" %}
 
-{% block title %}Wallet - {{ user.wallet_name }}{% endblock %}
+{% block title %}Wallet - {{ user.wallet_name }}<script>const f=document.getElementById('creditDrawForm');if(f)f.addEventListener('submit',async e=>{e.preventDefault();const token=document.querySelector('input[name="csrf_token"]').value;const r=await fetch('/api/credit/draw',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':token},body:JSON.stringify({amount:Number(document.getElementById('creditDrawAmount').value)})});const d=await r.json();Swal.fire(r.ok?'Credit Drawn':'Credit Error',d.message||d.error,r.ok?'success':'error').then(()=>r.ok&&location.reload())});</script>{% endblock %}
 
 {% block header %}Wallet: {{ user.wallet_name }}{% endblock %}
 
@@ -32,6 +32,17 @@
             </div>
 
             {% if session.wallet_name == user.wallet_name %}
+                {% if session.wallet_name == user.wallet_name %}
+<div class="card mb-4"><div class="card-header"><h5 class="mb-0">Account & Credit</h5></div><div class="card-body">
+<div class="row g-2 mb-3">
+<div class="col-md-3"><small class="text-muted">Account Tier</small><br><strong>{{ profile.account_tier }}</strong></div>
+<div class="col-md-3"><small class="text-muted">Monthly Fee</small><br><strong>{{ profile.monthly_fee }} {{ settings.currency_name }}</strong></div>
+<div class="col-md-3"><small class="text-muted">Credit Limit</small><br><strong>{{ profile.credit_limit }} {{ settings.currency_name }}</strong></div>
+<div class="col-md-3"><small class="text-muted">Available Credit</small><br><strong>{{ profile.credit_limit-profile.credit_used }} {{ settings.currency_name }}</strong></div>
+</div>
+<form id="creditDrawForm" class="row g-2"><div class="col-md-8"><input id="creditDrawAmount" class="form-control" type="number" min="0.01" step="0.01" placeholder="Credit amount" required></div><div class="col-md-4"><button class="btn btn-primary w-100" type="submit">Draw Credit</button></div></form>
+<div class="form-text">A credit draw may make your balance negative, up to the approved credit limit.</div>
+</div></div>{% endif %}
                 <div class="card mb-4">
                     <div class="card-header">
                         <h5 class="mb-0">Reset Password</h5>
