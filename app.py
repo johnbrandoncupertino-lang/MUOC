@@ -24,7 +24,7 @@ from bank_lib.form_CSRF_validators import LoginForm, RequestWalletForm, FreezeFo
     MintCurrencyForm, BurnCurrencyForm, CreateWalletForm, RulesForm, RequestForm, AdminLogForm, AdminRequestsForm
 from bank_lib.form_validators import TransferForm, ResetPasswordForm, BankTransferForm, RefundForm, SqlQueryForm, \
     DelAccountForm
-from bank_lib.get_data import get_settings, get_total_currency, get_user_by_wallet_name
+from bank_lib.get_data import get_settings, get_total_currency, get_user_by_wallet_name, get_user_account_profile, charge_monthly_tier_fee
 from bank_lib.global_vars import DB_POOL
 from bank_lib.log_module import create_log, rotate_logs
 
@@ -188,8 +188,14 @@ def login():
 
         user = get_user_by_wallet_name(wallet_name)
 
+        if user and user.get('locked_until') and user['locked_until'] > datetime.now(UTC):
+            remaining = int((user['locked_until'] - datetime.now(UTC)).total_seconds())
+            return render_template('login.html', error=f"Wallet temporarily locked. Try again in {max(1, remaining)} seconds.", settings=settings, is_admin=False, is_logged_in=False, loginForm=loginForm, requestWalletForm=requestWalletForm)
+
         if user and check_password_hash(user['password'], password):
+            execute_query("UPDATE users SET failed_login_attempts=0, locked_until=NULL WHERE wallet_name=%s", (wallet_name,), commit=True)
             session['wallet_name'] = wallet_name
+            charge_monthly_tier_fee(wallet_name)
 
             # Update last login time
             execute_query(
