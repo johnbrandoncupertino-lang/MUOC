@@ -16,6 +16,12 @@ def _now():
     return datetime.now(timezone.utc)
 
 
+
+def _assert_banking_unlocked(cur, client_id):
+    cur.execute("SELECT 1 FROM minebank_banking_locks WHERE client_id=%s AND unlocked_at IS NULL", (client_id,))
+    if cur.fetchone():
+        raise ValueError("Banking operations are temporarily locked for this client.")
+
 def _lock_account(cur, account_id):
     cur.execute("""SELECT id,client_id,account_number,account_type,tier_id,balance,status,
                           monthly_outgoing_used,monthly_outgoing_period,last_outgoing_at
@@ -94,6 +100,9 @@ def get_credit_limit(cur, account_id):
 
 def transfer(*, sender_account_id, recipient_account_number, amount,
              description=None, reference=None, currency=CURRENCY, idempotency_key=None, actor_client_id=None, ip_address=None):
+    if actor_client_id is not None:
+        # Lock is checked inside the transaction after the connection is acquired.
+        pass
     if not isinstance(amount, int) or amount <= 0:
         raise ValueError("Transfer amount must be a positive integer Emerald amount.")
     if not recipient_account_number:
@@ -116,6 +125,8 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                         return {"transaction_id": row[0], "status": row[1], "amount": row[2], "fee": row[3],
                                 "idempotent_replay": True}
 
+                if actor_client_id is not None:
+                    _assert_banking_unlocked(cur, actor_client_id)
                 sender = _lock_account(cur, sender_account_id)
                 recipient = _lock_recipient(cur, recipient_account_number)
                 if not sender or not recipient:
