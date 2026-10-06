@@ -456,6 +456,31 @@ def process_due_schedules(limit=100):
                                          (account,client_id,str(exc)[:500]))
                 finally:
                     release_db_connection(conn2)
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT id,account_id,recipient_account_number,amount,schedule_type,next_run_at,end_at,
+                                      (SELECT client_id FROM bank_accounts WHERE id=account_id)
+                               FROM minebank_scheduled_transfers
+                               WHERE status='ACTIVE' AND next_run_at<=CURRENT_TIMESTAMP
+                               ORDER BY next_run_at LIMIT %s FOR UPDATE SKIP LOCKED""",(limit,))
+                schedules=cur.fetchall()
+        for sid,account,recipient,amount,stype,next_run,end_at,client_id in schedules:
+            try:
+                transfer(sender_account_id=account,recipient_account_number=recipient,amount=int(amount),
+                         description="Scheduled transfer",actor_client_id=client_id,ip_address=None)
+                conn3=get_db_connection()
+                try:
+                    with conn3:
+                        with conn3.cursor() as cur3:
+                            if stype=="ONCE" or (end_at and next_run >= end_at):
+                                cur3.execute("UPDATE minebank_scheduled_transfers SET status='COMPLETED' WHERE id=%s",(sid,))
+                            else:
+                                interval="1 week" if stype=="WEEKLY" else "1 month"
+                                cur3.execute("UPDATE minebank_scheduled_transfers SET next_run_at=next_run_at+%s::interval WHERE id=%s AND status='ACTIVE'",(interval,sid))
+                finally: release_db_connection(conn3)
+                processed+=1
+            except Exception:
+                errors+=1
         return {"processed":processed,"errors":errors}
     finally:
         release_db_connection(conn)
