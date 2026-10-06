@@ -711,8 +711,8 @@ def register_bonus_routes(app):
 
     @app.post("/portal/bonus/emergency-lock")
     def minebank_bonus_emergency_lock():
-            strong_auth(session['minebank_client_id'],request.form.get('account_password'),request.form.get('wallet_pin'))
         try:
+            strong_auth(session['minebank_client_id'],request.form.get('account_password'),request.form.get('wallet_pin'))
             emergency_lock(session["minebank_client_id"],request.form.get("reason","Client requested emergency banking lock"))
             return jsonify(ok=True)
         except Exception as e: return jsonify(error=str(e)),400
@@ -727,8 +727,8 @@ def register_bonus_routes(app):
 
     @app.post("/portal/bonus/direct-debit")
     def minebank_bonus_direct_debit():
-            strong_auth(session['minebank_client_id'],request.form.get('account_password'),request.form.get('wallet_pin'))
         try:
+            strong_auth(session['minebank_client_id'],request.form.get('account_password'),request.form.get('wallet_pin'))
             conn=get_db_connection()
             with conn:
                 with conn.cursor() as cur:
@@ -745,8 +745,8 @@ def register_bonus_routes(app):
 
     @app.post("/portal/bonus/subscription")
     def minebank_bonus_subscription():
-            strong_auth(session['minebank_client_id'],request.form.get('account_password'),request.form.get('wallet_pin'))
         try:
+            strong_auth(session['minebank_client_id'],request.form.get('account_password'),request.form.get('wallet_pin'))
             conn=get_db_connection()
             with conn:
                 with conn.cursor() as cur:
