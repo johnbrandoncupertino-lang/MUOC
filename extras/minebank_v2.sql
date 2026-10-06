@@ -40,6 +40,19 @@ CREATE TABLE IF NOT EXISTS account_tiers_v2 (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Backward-compatible migration for deployments that created account_tiers_v2
+-- before the current limit/credit fields were introduced.
+ALTER TABLE account_tiers_v2
+    ADD COLUMN IF NOT EXISTS monthly_outgoing_limit INTEGER,
+    ADD COLUMN IF NOT EXISTS daily_outgoing_limit INTEGER,
+    ADD COLUMN IF NOT EXISTS single_transfer_limit INTEGER,
+    ADD COLUMN IF NOT EXISTS credit_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS default_credit_limit INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS private_or_corporate BOOLEAN NOT NULL DEFAULT FALSE,
+    ADD COLUMN IF NOT EXISTS eligibility_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+    ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE,
+    ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
 CREATE TABLE IF NOT EXISTS bank_accounts (
     id BIGSERIAL PRIMARY KEY,
     client_id BIGINT NOT NULL REFERENCES bank_clients(id),
