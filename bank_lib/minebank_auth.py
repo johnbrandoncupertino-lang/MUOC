@@ -11,6 +11,8 @@ from flask import jsonify, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from .database import get_db_connection
+from .minebank_security import (clear_login_failures, create_session, ensure_security_schema, login_challenge_required,
+                                check_login_challenge, record_login_failure, set_login_challenge, revoke_current_session, security_event)
 
 
 WALLET_PIN_MAX_ATTEMPTS = 3
@@ -34,48 +36,72 @@ def client_from_session(cur):
     return cur.fetchone()
 
 
-def login_client(email, password):
+def login_client(email, password, captcha_answer=None):
+    ensure_security_schema()
     conn = get_db_connection()
     if conn is None:
         raise RuntimeError("Database unavailable")
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT id,email,password_hash,role,status FROM bank_clients "
-                    "WHERE LOWER(email)=LOWER(%s)",
-                    (email.strip(),),
-                )
-                row = cur.fetchone()
-                if not row or row[4] == "CLOSED":
-                    return False, "Invalid credentials."
+                cur.execute("""SELECT id,email,password_hash,role,status,login_failed_attempts,login_blocked_until,login_captcha_required
+                               FROM bank_clients WHERE LOWER(email)=LOWER(%s)""",(email.strip(),))
+                row=cur.fetchone()
+                if not row:
+                    record_login_failure(None,"UNKNOWN_ACCOUNT")
+                    return False,"Invalid credentials."
+                client_id=row[0]
+                now=_now()
+                if row[6] and row[6] <= now:
+                    cur.execute("UPDATE bank_clients SET login_blocked_until=NULL WHERE id=%s",(client_id,))
+                    row=list(row); row[6]=None
+                if row[6] and row[6] > now:
+                    seconds=max(1,int((row[6]-now).total_seconds()))
+                    return False,f"Login temporarily blocked. Try again in {seconds} seconds."
+                if row[7]:
+                    if not check_login_challenge(captcha_answer):
+                        set_login_challenge()
+                        record_login_failure(client_id,"CAPTCHA_REQUIRED")
+                        return False,"Complete the security challenge before continuing."
+                if row[4] == "CLOSED":
+                    record_login_failure(client_id,"DISABLED_ACCOUNT")
+                    return False,"This account is disabled. Please contact the bank."
                 if row[4] == "FROZEN":
-                    return False, "Account is frozen. Please contact the bank."
-                if not check_password_hash(row[2], password):
-                    return False, "Invalid credentials."
-                cur.execute(
-                    "UPDATE bank_clients SET last_login=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
-                    (row[0],),
-                )
-                try:
-                    cur.execute("""INSERT INTO minebank_security_events(client_id,event_type,severity,context,ip_address)
-                                   VALUES(%s,'LOGIN_SUCCESS','INFO',%s::jsonb,%s)""",
-                                (row[0], __import__('json').dumps({"user_agent": request.headers.get("User-Agent","")[:500]}),
-                                 request.headers.get("X-Forwarded-For", request.remote_addr or "")[:64]))
-                except Exception:
-                    pass
+                    record_login_failure(client_id,"FROZEN_ACCOUNT")
+                    return False,"This account is frozen. Please contact the bank."
+                if not check_password_hash(row[2],password):
+                    attempts,minutes=record_login_failure(client_id,"INVALID_PASSWORD")
+                    if attempts>=3:
+                        set_login_challenge()
+                        return False,f"Too many failed attempts. Login is temporarily blocked for {minutes} minutes."
+                    if attempts>=2:
+                        set_login_challenge()
+                        return False,"Invalid credentials. Complete the security challenge on the next attempt."
+                    return False,"Invalid credentials."
+                clear_login_failures(client_id)
+                score,severity,reasons=__import__("bank_lib.minebank_security",fromlist=["suspicious_login_score"]).suspicious_login_score(
+                    client_id=client_id,
+                    ip_address=(request.headers.get("X-Forwarded-For") or request.remote_addr or "")[:64],
+                    user_agent=request.headers.get("User-Agent","")[:500])
+                if score>=60:
+                    security_event(client_id,"SUSPICIOUS_LOGIN","CRITICAL",{"score":score,"reasons":reasons})
+                    return False,"Login blocked for security review. Please contact the bank."
+                if score>=30:
+                    security_event(client_id,"SUSPICIOUS_LOGIN","HIGH",{"score":score,"reasons":reasons})
                 session.clear()
-                session.permanent = True
-                session["minebank_client_id"] = row[0]
-                session["minebank_role"] = row[3]
-                session["minebank_email"] = row[1]
-                return True, None
+                session.permanent=True
+                session["minebank_client_id"]=row[0]
+                session["minebank_role"]=row[3]
+                session["minebank_email"]=row[1]
+                session["csrf"]=secrets.token_urlsafe(32) if False else session.get("csrf")
+                create_session(client_id)
+                return True,None
     finally:
         from .database import release_db_connection
         release_db_connection(conn)
 
-
 def logout_client():
+    revoke_current_session()
     session.pop("minebank_client_id", None)
     session.pop("minebank_role", None)
     session.pop("minebank_email", None)
@@ -212,37 +238,35 @@ def reauthenticate_admin(client_id, password):
 
 
 def create_account(client_id, account_type="PERSONAL", tier_code="PERSONAL"):
-    account_type = account_type.upper()
-    conn = get_db_connection()
+    account_type=account_type.upper()
+    conn=get_db_connection()
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT id FROM account_tiers_v2 WHERE code=%s AND account_type=%s AND active=TRUE",
-                    (tier_code, account_type),
-                )
-                tier = cur.fetchone()
+                cur.execute("SELECT id FROM account_tiers_v2 WHERE code=%s AND account_type=%s AND active=TRUE",(tier_code,account_type))
+                tier=cur.fetchone()
                 if not tier:
                     raise ValueError("Requested account tier is unavailable.")
-                if account_type == "PERSONAL":
-                    cur.execute(
-                        "SELECT id FROM bank_accounts WHERE client_id=%s AND account_type='PERSONAL' AND status<>'CLOSED'",
-                        (client_id,),
-                    )
+                if account_type=="PERSONAL":
+                    cur.execute("SELECT id FROM bank_accounts WHERE client_id=%s AND account_type='PERSONAL' AND status<>'CLOSED'",(client_id,))
                     if cur.fetchone():
                         raise ValueError("Client already has a Personal account.")
+                else:
+                    cur.execute("SELECT COUNT(*) FROM bank_accounts WHERE client_id=%s AND account_type='BUSINESS' AND status<>'CLOSED'",(client_id,))
+                    if int(cur.fetchone()[0])>=5:
+                        raise ValueError("A client may have a maximum of five active Business accounts.")
                 cur.execute("SELECT nextval('muoc_account_number_seq')")
-                number = f"MB-{cur.fetchone()[0]:08d}"
-                cur.execute(
-                    "INSERT INTO bank_accounts(client_id,account_number,account_type,tier_id) "
-                    "VALUES(%s,%s,%s,%s) RETURNING id,account_number",
-                    (client_id, number, account_type, tier[0]),
-                )
-                return cur.fetchone()
+                number=f"MB-{cur.fetchone()[0]:08d}"
+                cur.execute("""INSERT INTO bank_accounts(client_id,account_number,account_type,tier_id)
+                               VALUES(%s,%s,%s,%s) RETURNING id,account_number""",(client_id,number,account_type,tier[0]))
+                account_id,account_number=cur.fetchone()
+                if account_type=="BUSINESS":
+                    cur.execute("""INSERT INTO minebank_business_members(account_id,client_id,role)
+                                   VALUES(%s,%s,'OWNER') ON CONFLICT(account_id,client_id) DO NOTHING""",(account_id,client_id))
+                return account_id,account_number
     finally:
         from .database import release_db_connection
         release_db_connection(conn)
-
 
 def get_client_accounts(client_id):
     conn = get_db_connection()
