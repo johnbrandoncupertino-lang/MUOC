@@ -100,9 +100,6 @@ def get_credit_limit(cur, account_id):
 
 def transfer(*, sender_account_id, recipient_account_number, amount,
              description=None, reference=None, currency=CURRENCY, idempotency_key=None, actor_client_id=None, ip_address=None):
-    if actor_client_id is not None:
-        # Lock is checked inside the transaction after the connection is acquired.
-        pass
     if not isinstance(amount, int) or amount <= 0:
         raise ValueError("Transfer amount must be a positive integer Emerald amount.")
     if not recipient_account_number:
