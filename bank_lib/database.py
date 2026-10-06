@@ -86,6 +86,56 @@ def init_db():
                                                    )
                       """, commit=True)
 
+        # Security, account tier, credit, and billing extensions
+        execute_query("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS account_tier VARCHAR(30) NOT NULL DEFAULT 'Personal',
+            ADD COLUMN IF NOT EXISTS credit_limit DOUBLE PRECISION NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS credit_used DOUBLE PRECISION NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS failed_login_attempts INTEGER NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP WITH TIME ZONE
+        """, commit=True)
+
+        execute_query("""
+            CREATE TABLE IF NOT EXISTS account_tiers
+            (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(30) UNIQUE NOT NULL,
+                monthly_fee DOUBLE PRECISION NOT NULL DEFAULT 0,
+                credit_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+                default_credit_limit DOUBLE PRECISION NOT NULL DEFAULT 0,
+                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+            )
+        """, commit=True)
+
+        execute_query("""
+            INSERT INTO account_tiers (name, monthly_fee, credit_enabled, default_credit_limit)
+            VALUES
+                ('Personal', 0, TRUE, 1000),
+                ('Business', 25, TRUE, 10000),
+                ('Gold', 50, TRUE, 25000)
+            ON CONFLICT (name) DO NOTHING
+        """, commit=True)
+
+        execute_query("""
+            CREATE TABLE IF NOT EXISTS account_charges
+            (
+                id SERIAL PRIMARY KEY,
+                wallet_name VARCHAR(100) NOT NULL,
+                tier_name VARCHAR(30) NOT NULL,
+                amount DOUBLE PRECISION NOT NULL,
+                billing_period VARCHAR(7) NOT NULL,
+                status VARCHAR(20) NOT NULL DEFAULT 'Charged',
+                timestamp TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(wallet_name, billing_period)
+            )
+        """, commit=True)
+
+        execute_query("""
+            CREATE INDEX IF NOT EXISTS idx_account_charges_wallet
+            ON account_charges(wallet_name, timestamp DESC)
+        """, commit=True)
+
         # Logs table
         execute_query("""
                       CREATE TABLE IF NOT EXISTS logs
