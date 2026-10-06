@@ -182,13 +182,6 @@ def get_server_health():
 
 
 # Update admin balance to reflect available currency
-def get_user_by_wallet_name(wallet_name):
-    """Get a wallet record by name."""
-    result = execute_query_dict("SELECT * FROM users WHERE wallet_name = %s", (wallet_name,))
-    return result[0] if result else None
-
-
-# Update admin balance to reflect available currency
 def update_admin_balance():
     """Update admin balance to reflect available currency pool"""
     try:
