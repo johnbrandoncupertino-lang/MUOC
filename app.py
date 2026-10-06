@@ -460,20 +460,50 @@ def minebank_notifications_page():
 @require_login
 def minebank_security_page():
     error=None
+    client=current_client()
     if request.method=="POST":
         try:
-            old=request.form.get("current_password",""); pin=request.form.get("wallet_pin",""); new=request.form.get("new_password","")
-            client=current_client()
+            old=request.form.get("current_password",""); pin=request.form.get("wallet_pin",""); new_password=request.form.get("new_password","")
             if not check_password_hash(client["password_hash"],old): raise ValueError("Current password is incorrect.")
             if not pin.isdigit() or len(pin)!=6: raise ValueError("Wallet PIN must contain exactly 6 digits.")
             set_wallet_pin(client["id"],pin)
-            if new:
-                if len(new)<8: raise ValueError("New password must contain at least 8 characters.")
-                execute_query("UPDATE bank_clients SET password_hash=%s WHERE id=%s",(generate_password_hash(new),client["id"]),commit=True)
+            if new_password:
+                if len(new_password)<8: raise ValueError("New password must contain at least 8 characters.")
+                execute_query("UPDATE bank_clients SET password_hash=%s,password_changed_at=CURRENT_TIMESTAMP WHERE id=%s",(generate_password_hash(new_password),client["id"]),commit=True)
+                terminate_other_sessions(client["id"])
+            security_event(client["id"],"SECURITY_SETTINGS_CHANGED","INFO",{})
             flash("Security settings updated.","success")
+            return redirect(url_for("minebank_security_page"))
         except Exception as exc:
             error=str(exc)
-    return render_template("minebank_portal.html",mode="security",client=current_client(),error=error,portal_active="security")
+    sessions=list_active_sessions(client["id"])
+    events=execute_query_dict("SELECT event_type,severity,ip_address,user_agent,created_at,context FROM minebank_security_events WHERE client_id=%s ORDER BY created_at DESC LIMIT 50",(client["id"],))
+    return render_template("minebank_portal.html",mode="security",client=client,error=error,sessions=sessions,security_events=events,portal_active="security")
+
+@app.route("/portal/security/session/<int:session_id>/terminate",methods=["POST"])
+@require_login
+def terminate_minebank_session(session_id):
+    terminate_session(session["minebank_client_id"],session_id)
+    flash("Session terminated.","success")
+    return redirect(url_for("minebank_security_page"))
+
+@app.route("/portal/security/sessions/terminate-others",methods=["POST"])
+@require_login
+def terminate_minebank_other_sessions():
+    terminate_other_sessions(session["minebank_client_id"])
+    flash("All other sessions have been terminated.","success")
+    return redirect(url_for("minebank_security_page"))
+
+@app.route("/portal/security/emergency-lock",methods=["POST"])
+@require_login
+def minebank_emergency_lock():
+    cid=session["minebank_client_id"]
+    execute_query("UPDATE bank_accounts SET status='FROZEN',freeze_type='EMERGENCY_FREEZE',updated_at=CURRENT_TIMESTAMP WHERE client_id=%s AND status<>'CLOSED'",(cid,),commit=True)
+    execute_query("UPDATE credit_facilities SET status='SUSPENDED' WHERE account_id IN (SELECT id FROM bank_accounts WHERE client_id=%s)",(cid,),commit=True)
+    security_event(cid,"EMERGENCY_ACCOUNT_LOCK","CRITICAL",{})
+    terminate_other_sessions(cid)
+    flash("Emergency security lock activated. Contact Support to restore access.","success")
+    return redirect(url_for("minebank_security_page"))
 
 @app.route("/portal/security/password", methods=["POST"])
 @require_login
