@@ -565,6 +565,7 @@ def about():
 
 # Serve static files
 @app.route('/static/<path:filename>')
+@admin_required
 def serve_static(filename):
     return send_from_directory(app.static_folder, filename)
 
