@@ -91,9 +91,6 @@ def validate_session():
     if last and (current-last).total_seconds() > INACTIVITY_MINUTES*60:
         execute_query("UPDATE minebank_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE id=%s",(s["id"],),commit=True)
         session.clear(); return False
-    if s["password_changed_at"] and s["password_changed_at"] > s["created_at"]:
-        execute_query("UPDATE minebank_sessions SET revoked_at=CURRENT_TIMESTAMP WHERE id=%s",(s["id"],),commit=True)
-        session.clear(); return False
     execute_query("UPDATE minebank_sessions SET last_activity_at=CURRENT_TIMESTAMP WHERE id=%s",(s["id"],),commit=True)
     return True
 
