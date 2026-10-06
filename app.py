@@ -148,6 +148,13 @@ def legacy_login():
 def minebank_login():
     error = None
     if request.method == "POST":
+        # Finish the small database migration before touching account data.
+        # This prevents legacy production schemas from turning the first
+        # successful login into a dashboard HTTP 500.
+        if not ensure_minebank_schema():
+            error = "MineBank database is temporarily unavailable. Please try again in a moment."
+            return render_template("minebank_login_new.html", error=error,
+                                   captcha_question=session.get("login_captcha_question")), 503
         ok, message = login_client(request.form.get("email",""), request.form.get("password",""), request.form.get("captcha_answer"))
         if ok:
             session["csrf"] = secrets.token_urlsafe(32)
