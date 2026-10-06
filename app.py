@@ -563,6 +563,7 @@ def minebank_security_page():
 def minebank_statements_page():
     accounts, selected = _minebank_selected_account()
     transactions = []
+    billing = []
     start = (request.args.get('start') or '').strip()
     end = (request.args.get('end') or '').strip()
     if selected is not None:
@@ -587,12 +588,14 @@ def minebank_statements_page():
                     query += " ORDER BY created_at DESC LIMIT 1000"
                     cur.execute(query, tuple(params))
                     transactions = cur.fetchall()
+                    cur.execute("""SELECT billing_type,amount,billing_period,status,created_at FROM account_billing WHERE account_id=%s ORDER BY billing_period DESC,created_at DESC LIMIT 24""", (selected[0],))
+                    billing = cur.fetchall()
         finally:
             if conn is not None:
                 from bank_lib.database import release_db_connection
                 release_db_connection(conn)
     return render_template('minebank_statements.html', accounts=accounts, selected_account=selected,
-                           transactions=transactions, start=start, end=end,
+                           transactions=transactions, billing=billing, start=start, end=end,
                            settings=get_settings(), portal_active='statements',
                            is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
 
