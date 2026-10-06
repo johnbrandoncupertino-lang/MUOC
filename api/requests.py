@@ -63,6 +63,34 @@ def register_request_api_routes(app):
             print(f"Error requesting wallet creation: {e}")
             return jsonify({"error": f"Failed to submit wallet creation request: {str(e)}"}), 500
 
+    @app.route('/api/request/credit', methods=['POST'])
+    @login_required
+    def api_request_credit():
+        data = request.json or {}
+        try:
+            requested_limit = float(data.get('requested_limit', 0))
+        except (TypeError, ValueError):
+            requested_limit = 0
+        reason = (data.get('reason') or '').strip()
+        wallet_name = session['wallet_name']
+        if requested_limit <= 0 or requested_limit > 100000000:
+            return jsonify({"error": "Requested credit limit must be greater than zero"}), 400
+        if len(reason) < 3 or len(reason) > 500:
+            return jsonify({"error": "Reason must be between 3 and 500 characters"}), 400
+        profile = execute_query_dict("SELECT u.account_tier,t.credit_enabled FROM users u LEFT JOIN account_tiers t ON t.name=u.account_tier WHERE u.wallet_name=%s", (wallet_name,))
+        if not profile or not profile[0]['credit_enabled']:
+            return jsonify({"error": "Your account tier is not eligible for a credit line"}), 403
+        pending = execute_query("SELECT 1 FROM requests WHERE wallet_name=%s AND request_type='CreditLine' AND status='Pending'", (wallet_name,))
+        if pending:
+            return jsonify({"error": "You already have a pending credit request"}), 400
+        ticket = str(uuid.uuid4())
+        execute_query("""
+            INSERT INTO requests (request_type,ticket_uuid,wallet_name,category,status,reason,ip_address)
+            VALUES (%s,%s,%s,%s,%s,%s,%s)
+        """, ("CreditLine", ticket, wallet_name, "Credit", "Pending", f"Requested limit: {requested_limit}. {reason}", get_client_ip()), commit=True)
+        create_log("Credit Request", f"{wallet_name} requested a credit line of {requested_limit}", "Admin")
+        return jsonify({"message": "Credit line request submitted", "request_ticket_uuid": ticket})
+
     @app.route('/api/request/refund', methods=['POST'])
     @login_required
     def api_request_refund():
