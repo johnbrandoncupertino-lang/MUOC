@@ -22,6 +22,7 @@ from bank_lib.minebank_core import (
     reject_transfer, repay_credit, transfer,
 )
 from bank_lib.minebank_requests import create_request, list_requests
+from bank_lib.minebank_security import ensure_security_schema, validate_session, list_active_sessions, terminate_session, terminate_other_sessions, security_event
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 app.secret_key = (secrets.token_hex(32) if not __import__("os").environ.get("SECRET_KEY")
@@ -117,6 +118,12 @@ def csrf_check():
 def prepare_request():
     if request.endpoint == "static":
         return None
+    try:
+        ensure_security_schema()
+    except Exception:
+        pass
+    if session.get('minebank_client_id') and not validate_session():
+        return redirect(url_for('minebank_login', next=request.path))
     failed = csrf_check()
     if failed:
         return failed
@@ -141,12 +148,12 @@ def legacy_login():
 def minebank_login():
     error = None
     if request.method == "POST":
-        ok, message = login_client(request.form.get("email",""), request.form.get("password",""))
+        ok, message = login_client(request.form.get("email",""), request.form.get("password",""), request.form.get("captcha_answer"))
         if ok:
             session["csrf"] = secrets.token_urlsafe(32)
             return redirect(request.args.get("next") or url_for("minebank_dashboard"))
         error = message or "Invalid credentials."
-    return render_template("minebank_login_new.html", error=error)
+    return render_template("minebank_login_new.html", error=error, captcha_question=session.get("login_captcha_question"))
 
 @app.route("/portal/logout")
 def minebank_logout():
