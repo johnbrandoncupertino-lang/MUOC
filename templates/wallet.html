@@ -41,7 +41,7 @@
 <div class="col-md-3"><small class="text-muted">Available Credit</small><br><strong>{{ profile.credit_limit-profile.credit_used }} {{ settings.currency_name }}</strong></div>
 </div>
 <form id="creditDrawForm" class="row g-2"><div class="col-md-8"><input id="creditDrawAmount" class="form-control" type="number" min="0.01" step="0.01" placeholder="Credit amount" required></div><div class="col-md-4"><button class="btn btn-primary w-100" type="submit">Draw Credit</button></div></form>
-<div class="form-text mb-3">A credit draw may make your balance negative, up to the approved credit limit.</div><button type="button" class="btn btn-outline-secondary btn-sm" id="requestCreditBtn">Request a Credit Line Increase</button>
+<div class="form-text mb-3">A credit draw may make your balance negative, up to the approved credit limit.</div><a href="/credit/apply" class="btn btn-outline-secondary btn-sm">Apply for a Credit Line</a>
 </div></div>{% endif %}
                 <div class="card mb-4">
                     <div class="card-header">
@@ -210,7 +210,7 @@
 {% endblock %}
 
 {% block scripts %}
-    <script>const rb=document.getElementById('requestCreditBtn');if(rb)rb.onclick=async()=>{const limit=prompt('Requested credit limit:');if(!limit)return;const reason=prompt('Reason for the request:');if(!reason)return;const token=document.querySelector('input[name="csrf_token"]').value;const r=await fetch('/api/request/credit',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':token},body:JSON.stringify({requested_limit:Number(limit),reason})});const d=await r.json();Swal.fire(r.ok?'Request Submitted':'Request Error',d.message||d.error,r.ok?'success':'error')};</script>
+    
     <script src="{{ url_for('static', filename='js/wallet.js') }}"></script>
     <script>const f=document.getElementById('creditDrawForm');if(f)f.addEventListener('submit',async e=>{e.preventDefault();const token=document.querySelector('input[name="csrf_token"]').value;const r=await fetch('/api/credit/draw',{method:'POST',headers:{'Content-Type':'application/json','X-CSRFToken':token},body:JSON.stringify({amount:Number(document.getElementById('creditDrawAmount').value)})});const d=await r.json();Swal.fire(r.ok?'Credit Drawn':'Credit Error',d.message||d.error,r.ok?'success':'error').then(()=>r.ok&&location.reload())});</script>
 {% endblock %}
