@@ -38,6 +38,70 @@ CREATE TABLE IF NOT EXISTS account_tiers_v2 (
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Account lifecycle, business ownership and security extensions.
+ALTER TABLE bank_accounts ADD COLUMN IF NOT EXISTS freeze_type VARCHAR(40);
+
+CREATE TABLE IF NOT EXISTS minebank_business_profiles (
+    id BIGSERIAL PRIMARY KEY,
+    account_id BIGINT UNIQUE NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+    legal_name VARCHAR(200) NOT NULL,
+    trading_name VARCHAR(200),
+    registration_number VARCHAR(100),
+    address VARCHAR(300),
+    contact_email VARCHAR(320),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS minebank_business_members (
+    id BIGSERIAL PRIMARY KEY,
+    account_id BIGINT NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+    client_id BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
+    role VARCHAR(30) NOT NULL CHECK (role IN ('OWNER','ADMIN','FINANCE_MANAGER','EMPLOYEE','READ_ONLY','PAYROLL_MANAGER')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(account_id,client_id)
+);
+
+CREATE TABLE IF NOT EXISTS minebank_security_events (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT REFERENCES bank_clients(id) ON DELETE SET NULL,
+    event_type VARCHAR(60) NOT NULL,
+    severity VARCHAR(20) NOT NULL DEFAULT 'INFO',
+    context JSONB NOT NULL DEFAULT '{}'::jsonb,
+    ip_address VARCHAR(64),
+    user_agent VARCHAR(500),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS minebank_sessions (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
+    session_token_hash VARCHAR(128) UNIQUE NOT NULL,
+    ip_address VARCHAR(64),
+    user_agent VARCHAR(500),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_activity_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS minebank_risk_events (
+    id BIGSERIAL PRIMARY KEY,
+    account_id BIGINT REFERENCES bank_accounts(id) ON DELETE SET NULL,
+    client_id BIGINT REFERENCES bank_clients(id) ON DELETE SET NULL,
+    risk_score INTEGER NOT NULL,
+    severity VARCHAR(20) NOT NULL,
+    reason VARCHAR(1000),
+    context JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS login_failed_attempts INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS login_blocked_until TIMESTAMPTZ;
+ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS login_captcha_required BOOLEAN NOT NULL DEFAULT FALSE;
+
+ALTER TABLE minebank_scheduled_transfers ADD COLUMN IF NOT EXISTS recurrence_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+
 CREATE TABLE IF NOT EXISTS bank_accounts (
     id BIGSERIAL PRIMARY KEY,
     client_id BIGINT NOT NULL REFERENCES bank_clients(id),
@@ -218,7 +282,7 @@ CREATE TABLE IF NOT EXISTS minebank_scheduled_transfers (
     account_id BIGINT NOT NULL REFERENCES bank_accounts(id),
     recipient_account_number VARCHAR(32) NOT NULL,
     amount BIGINT NOT NULL CHECK (amount > 0),
-    schedule_type VARCHAR(20) NOT NULL CHECK (schedule_type IN ('ONCE','WEEKLY','MONTHLY')),
+    schedule_type VARCHAR(20) NOT NULL CHECK (schedule_type IN ('ONCE','DAILY','WEEKLY','MONTHLY','CUSTOM')),
     next_run_at TIMESTAMPTZ NOT NULL,
     end_at TIMESTAMPTZ,
     description VARCHAR(500),
