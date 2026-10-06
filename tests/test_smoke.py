@@ -47,3 +47,29 @@ def test_runtime_minebank_schema_migration_helper_exists():
     source = (ROOT / "bank_lib" / "database.py").read_text(encoding="utf-8")
     assert "def ensure_minebank_schema()" in source
     assert "init_minebank_v2()" in source
+
+
+def test_minebank_full_wallet_routes_exist():
+    import app
+
+    routes = {rule.rule for rule in app.app.url_map.iter_rules()}
+    expected = {
+        "/portal/statements",
+        "/portal/statements/print",
+        "/portal/statements/csv",
+        "/portal/requests",
+        "/portal/profile",
+        "/portal/notifications",
+        "/portal/plans",
+        "/portal/transactions/<transaction_id>",
+        "/portal/transactions/<transaction_id>/refund",
+    }
+    assert expected.issubset(routes)
+
+
+def test_minebank_request_helper_and_credit_draw_exist():
+    requests_source = (ROOT / "bank_lib" / "minebank_requests.py").read_text(encoding="utf-8")
+    core_source = (ROOT / "bank_lib" / "minebank_core.py").read_text(encoding="utf-8")
+    assert "def create_request(" in requests_source
+    assert "def list_requests(" in requests_source
+    assert "def draw_credit(" in core_source
