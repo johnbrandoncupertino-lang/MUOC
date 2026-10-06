@@ -460,8 +460,146 @@ def process_due_schedules(limit=100):
     finally:
         release_db_connection(conn)
 
+
+def seed_business_owners():
+    conn=get_db_connection()
+    if conn is None: return
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""INSERT INTO minebank_business_members(account_id,client_id,role,permissions)
+                               SELECT id,client_id,'OWNER','{"VIEW":true,"TRANSFER":true,"PAYROLL":true,"MANAGE_USERS":true}'
+                               FROM bank_accounts WHERE account_type='BUSINESS'
+                               ON CONFLICT(account_id,client_id) DO NOTHING""")
+    finally: release_db_connection(conn)
+
+def create_payroll_batch(account_id, actor_id, period_label, items):
+    total=sum(int(i["amount"]) for i in items)
+    if total<=0: raise ValueError("Payroll must contain at least one positive payment.")
+    if not business_permission(actor_id,account_id,"PAYROLL",total):
+        raise PermissionError("You are not authorised to create this payroll.")
+    conn=get_db_connection()
+    if conn is None: raise RuntimeError("Database unavailable")
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""INSERT INTO minebank_payroll_batches(account_id,created_by,period_label,total_amount)
+                               VALUES(%s,%s,%s,%s) RETURNING id""",(account_id,actor_id,period_label,total))
+                bid=cur.fetchone()[0]
+                for i in items:
+                    cur.execute("""INSERT INTO minebank_payroll_items(batch_id,recipient_account_number,amount,description)
+                                   VALUES(%s,%s,%s,%s)""",(bid,i["recipient_account_number"],int(i["amount"]),i.get("description")))
+                audit_event(cur,actor_client_id=actor_id,action="PAYROLL_CREATED",target_type="PAYROLL",
+                            target_id=bid,account_id=account_id,ip_address=_ip(),context={"total":total})
+                return bid
+    finally: release_db_connection(conn)
+
+def approve_payroll(batch_id, operator_id, approve=True):
+    conn=get_db_connection()
+    if conn is None: raise RuntimeError("Database unavailable")
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT account_id,created_by,status,total_amount FROM minebank_payroll_batches WHERE id=%s FOR UPDATE",(batch_id,))
+                row=cur.fetchone()
+                if not row or row[2]!="PENDING": raise ValueError("Payroll batch is not pending.")
+                if approve:
+                    cur.execute("UPDATE minebank_payroll_batches SET status='APPROVED',approved_at=CURRENT_TIMESTAMP WHERE id=%s",(batch_id,))
+                    action="PAYROLL_APPROVED"
+                else:
+                    cur.execute("UPDATE minebank_payroll_batches SET status='REJECTED' WHERE id=%s",(batch_id,))
+                    action="PAYROLL_REJECTED"
+                audit_event(cur,actor_client_id=operator_id,action=action,target_type="PAYROLL",target_id=batch_id,
+                            account_id=row[0],ip_address=_ip(),context={"total":row[3]})
+    finally: release_db_connection(conn)
+
+def execute_payroll(batch_id, operator_id):
+    conn=get_db_connection()
+    if conn is None: raise RuntimeError("Database unavailable")
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT account_id,status FROM minebank_payroll_batches WHERE id=%s FOR UPDATE",(batch_id,))
+                row=cur.fetchone()
+                if not row or row[1]!="APPROVED": raise ValueError("Payroll must be approved first.")
+                cur.execute("SELECT recipient_account_number,amount,description FROM minebank_payroll_items WHERE batch_id=%s AND status='PENDING' ORDER BY id",(batch_id,))
+                items=cur.fetchall()
+        if not business_permission(operator_id,row[0],"PAYROLL",sum(int(x[1]) for x in items)):
+            raise PermissionError("You are not authorised to execute payroll.")
+        txids=[]
+        for recipient,amount,description in items:
+            result=transfer(sender_account_id=row[0],recipient_account_number=recipient,amount=int(amount),
+                            description=description or "Business payroll",actor_client_id=operator_id,ip_address=_ip())
+            txids.append(result["transaction_id"])
+        conn2=get_db_connection()
+        try:
+            with conn2:
+                with conn2.cursor() as cur2:
+                    cur2.execute("UPDATE minebank_payroll_items SET status='PAID' WHERE batch_id=%s AND status='PENDING'",(batch_id,))
+                    cur2.execute("UPDATE minebank_payroll_batches SET status='PAID' WHERE id=%s",(batch_id,))
+                    audit_event(cur2,actor_client_id=operator_id,action="PAYROLL_PAID",target_type="PAYROLL",
+                                target_id=batch_id,account_id=row[0],ip_address=_ip(),context={"transactions":txids})
+        finally: release_db_connection(conn2)
+        return txids
+    finally: release_db_connection(conn)
+
+def execute_direct_debit(debit_id, merchant_actor_id, amount):
+    amount=int(amount)
+    conn=get_db_connection()
+    if conn is None: raise RuntimeError("Database unavailable")
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT payer_account_id,merchant_account_number,maximum_amount,monthly_limit,active
+                               FROM minebank_direct_debits WHERE id=%s FOR UPDATE""",(debit_id,))
+                mandate=cur.fetchone()
+                if not mandate or not mandate[4]: raise ValueError("Direct debit mandate is inactive.")
+                if amount<=0 or amount>mandate[2]: raise ValueError("Amount exceeds the authorised direct debit limit.")
+                cur.execute("SELECT id FROM bank_accounts WHERE account_number=%s",(mandate[1],))
+                merchant=cur.fetchone()
+                if not merchant: raise ValueError("Merchant account not found.")
+                cur.execute("SELECT client_id FROM bank_accounts WHERE id=%s",(mandate[0],))
+                payer=cur.fetchone()
+                if not payer: raise ValueError("Payer account not found.")
+        result=transfer(sender_account_id=mandate[0],recipient_account_number=mandate[1],amount=amount,
+                        description="Direct debit",actor_client_id=payer[0],ip_address=_ip())
+        return result
+    finally: release_db_connection(conn)
+
+def trusted_device(client_id, label, token_hash, user_agent="", ip_address=""):
+    conn=get_db_connection()
+    if conn is None: raise RuntimeError("Database unavailable")
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""INSERT INTO minebank_trusted_devices(client_id,device_token_hash,label,user_agent,ip_address)
+                               VALUES(%s,%s,%s,%s,%s) RETURNING id""",(client_id,token_hash,label,user_agent,ip_address))
+                did=cur.fetchone()[0]
+                cur.execute("""INSERT INTO minebank_security_events(client_id,event_type,context,ip_address)
+                               VALUES(%s,'TRUSTED_DEVICE_ADDED',%s::jsonb,%s)""",
+                            (client_id,json.dumps({"device_id":did,"label":label}),ip_address))
+                return did
+    finally: release_db_connection(conn)
+
+def create_private_thread(client_id, subject, body):
+    conn=get_db_connection()
+    if conn is None: raise RuntimeError("Database unavailable")
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT 1 FROM bank_accounts ba JOIN account_tiers_v2 t ON t.id=ba.tier_id
+                               WHERE ba.client_id=%s AND t.code IN ('PERSONAL_PRIVATE','CORPORATE') AND ba.status='ACTIVE'""",(client_id,))
+                if not cur.fetchone(): raise PermissionError("Private banking conversation is not available for this tier.")
+                cur.execute("INSERT INTO minebank_private_threads(client_id,subject) VALUES(%s,%s) RETURNING id",(client_id,subject))
+                tid=cur.fetchone()[0]
+                cur.execute("""INSERT INTO minebank_private_messages(thread_id,sender_client_id,sender_role,body)
+                               VALUES(%s,%s,'CLIENT',%s)""",(tid,client_id,body))
+                return tid
+    finally: release_db_connection(conn)
+
 def register_bonus_routes(app):
     ensure_bonus_schema()
+    seed_business_owners()
 
     def staff_required(fn):
         @wraps(fn)
@@ -612,6 +750,54 @@ def register_bonus_routes(app):
             release_db_connection(conn)
             return jsonify(ok=True,id=aid)
         except Exception as e: return jsonify(error=str(e)),400
+
+    @app.post("/portal/bonus/payroll")
+    def minebank_bonus_payroll():
+        try:
+            raw=json.loads(request.form["items"])
+            bid=create_payroll_batch(int(request.form["account_id"]),session["minebank_client_id"],
+                                     request.form.get("period_label","Current period"),raw)
+            return jsonify(ok=True,batch_id=bid)
+        except Exception as e: return jsonify(error=str(e)),400
+
+    @app.post("/admin/minebank/bonus/payroll/<int:batch_id>/review")
+    @staff_required
+    def minebank_bonus_payroll_review(batch_id):
+        try:
+            approve_payroll(batch_id,session["minebank_client_id"],request.form.get("decision")=="approve")
+            return jsonify(ok=True)
+        except Exception as e: return jsonify(error=str(e)),400
+
+    @app.post("/admin/minebank/bonus/payroll/<int:batch_id>/pay")
+    @staff_required
+    def minebank_bonus_payroll_pay(batch_id):
+        try: return jsonify(ok=True,transaction_ids=execute_payroll(batch_id,session["minebank_client_id"]))
+        except Exception as e: return jsonify(error=str(e)),400
+
+    @app.post("/portal/bonus/direct-debit/<int:debit_id>/execute")
+    @staff_required
+    def minebank_bonus_direct_debit_execute(debit_id):
+        try: return jsonify(execute_direct_debit(debit_id,session["minebank_client_id"],int(request.form["amount"])))
+        except Exception as e: return jsonify(error=str(e)),400
+
+    @app.post("/portal/bonus/private/support")
+    def minebank_bonus_private_support():
+        try:
+            return jsonify(ok=True,thread_id=create_private_thread(session["minebank_client_id"],
+                                                                  request.form["subject"],request.form["body"]))
+        except Exception as e: return jsonify(error=str(e)),400
+
+    @app.get("/portal/bonus/security-events")
+    def minebank_bonus_security_events():
+        conn=get_db_connection()
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute("""SELECT event_type,severity,context,ip_address,created_at
+                                   FROM minebank_security_events WHERE client_id=%s ORDER BY created_at DESC LIMIT 100""",
+                                (session["minebank_client_id"],))
+                    return jsonify(events=_rowdict(cur))
+        finally: release_db_connection(conn)
 
     @app.get("/admin/minebank/bonus/loans")
     @staff_required
