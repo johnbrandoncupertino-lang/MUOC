@@ -14,7 +14,7 @@
     <link href="{{ url_for('static', filename='css/legacy-bank.css') }}" rel="stylesheet">
     {% block head %}{% endblock %}
 </head>
-<body>
+<body{% if is_logged_in %} data-wallet-name="{{ session.wallet_name }}"{% endif %}>
 <nav class="navbar navbar-expand-md navbar-dark fixed-top">
     <div class="container-fluid">
         <a class="navbar-brand" href="/">{% if settings %}{{ settings.bank_name }}{% else %}MUOC{% endif %}</a>
