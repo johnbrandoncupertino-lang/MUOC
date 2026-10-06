@@ -218,19 +218,22 @@ def approve_transfer(transaction_id, actor_user_id, ip_address=None):
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT id,recipient_account_id,amount,status FROM ledger_transactions
+                cur.execute("""SELECT id,sender_account_id,recipient_account_id,amount,status FROM ledger_transactions
                                WHERE transaction_id=%s FOR UPDATE""", (transaction_id,))
                 tx = cur.fetchone()
-                if not tx or tx[3] != "PENDING_APPROVAL":
+                if not tx or tx[4] != "PENDING_APPROVAL":
                     raise ValueError("Pending transfer not found.")
-                recipient = _lock_account(cur, tx[1])
+                sender = _lock_account(cur, tx[1])
+                recipient = _lock_account(cur, tx[2])
+                if sender and sender[1] == actor_user_id:
+                    raise ValueError("The person who initiated a transfer cannot approve their own transfer.")
                 if not recipient or recipient[6] not in ("ACTIVE","LIMITED"):
                     raise ValueError("Recipient account cannot receive the transfer.")
                 cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
-                            (tx[2],tx[1]))
+                            (tx[3],tx[2]))
                 cur.execute("""UPDATE ledger_transactions SET status='COMPLETED',approved_by=%s,
                                approved_at=CURRENT_TIMESTAMP WHERE id=%s""", (actor_user_id,tx[0]))
-                audit_event(cur,actor_client_id=actor_user_id,action="TRANSFER_APPROVED",target_type="TRANSACTION",target_id=transaction_id,account_id=tx[1],transaction_id=transaction_id,ip_address=ip_address)
+                audit_event(cur,actor_client_id=actor_user_id,action="TRANSFER_APPROVED",target_type="TRANSACTION",target_id=transaction_id,account_id=tx[2],transaction_id=transaction_id,ip_address=ip_address)
                 return transaction_id
     finally:
         release_db_connection(conn)
@@ -255,6 +258,34 @@ def reject_transfer(transaction_id, actor_user_id, reason=None, ip_address=None)
                                approved_at=CURRENT_TIMESTAMP,description=COALESCE(description,'') || %s
                                WHERE id=%s""", (actor_user_id, f" [Rejected: {reason or 'No reason supplied'}]",tx[0]))
                 audit_event(cur,actor_client_id=actor_user_id,action="TRANSFER_REJECTED",target_type="TRANSACTION",target_id=transaction_id,account_id=tx[1],transaction_id=transaction_id,ip_address=ip_address,context={"reason":reason or ""})
+                return transaction_id
+    finally:
+        release_db_connection(conn)
+
+
+def cancel_transfer(transaction_id, actor_client_id, ip_address=None):
+    conn=get_db_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT id,sender_account_id,amount,fee,status FROM ledger_transactions
+                               WHERE transaction_id=%s FOR UPDATE""",(transaction_id,))
+                tx=cur.fetchone()
+                if not tx or tx[4]!="PENDING_APPROVAL":
+                    raise ValueError("Only pending transfers can be cancelled.")
+                sender=_lock_account(cur,tx[1])
+                if not sender or sender[1]!=actor_client_id:
+                    raise ValueError("You cannot cancel this transfer.")
+                cur.execute("""UPDATE bank_accounts SET balance=balance+%s,
+                               monthly_outgoing_used=GREATEST(0,monthly_outgoing_used-%s),
+                               updated_at=CURRENT_TIMESTAMP WHERE id=%s""",
+                            (tx[2]+tx[3],tx[2],tx[1]))
+                cur.execute("""UPDATE ledger_transactions SET status='CANCELLED',
+                               description=COALESCE(description,'') || ' [Cancelled by customer]'
+                               WHERE id=%s""",(tx[0],))
+                audit_event(cur,actor_client_id=actor_client_id,action="TRANSFER_CANCELLED",
+                            target_type="TRANSACTION",target_id=transaction_id,account_id=tx[1],
+                            transaction_id=transaction_id,ip_address=ip_address)
                 return transaction_id
     finally:
         release_db_connection(conn)
