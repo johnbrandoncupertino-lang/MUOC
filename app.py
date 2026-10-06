@@ -593,6 +593,41 @@ def minebank_profile_page():
                            is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
 
 
+@app.route('/portal/plans', methods=['GET', 'POST'])
+@require_minebank_login
+def minebank_plans_page():
+    accounts, selected = _minebank_selected_account()
+    error = None
+    success = None
+    tiers = []
+    if selected is not None:
+        tiers = execute_query_dict(
+            """SELECT code, display_name, monthly_fee, max_balance, monthly_outgoing_limit,
+                      credit_enabled, default_credit_limit, private_or_corporate
+               FROM account_tiers_v2
+               WHERE active=TRUE AND account_type=%s
+               ORDER BY id""",
+            (selected[2],),
+        )
+    if request.method == 'POST' and selected is not None:
+        tier_code = (request.form.get('tier_code') or '').strip().upper()
+        requested_credit = request.form.get('requested_credit_limit', type=int)
+        try:
+            request_id = request_tier_change(session['minebank_client_id'], selected[0],
+                                             tier_code, requested_credit)
+            success = {'request_id': request_id, 'status': 'PENDING'}
+            create_notification(session['minebank_client_id'], 'TIER_REQUEST',
+                                'Plan change requested',
+                                f'Your request to change account plan to {tier_code} is pending bank review.',
+                                selected[0])
+        except ValueError as exc:
+            error = str(exc)
+    return render_template('minebank_plans.html', accounts=accounts, selected_account=selected,
+                           tiers=tiers, error=error, success=success,
+                           settings=get_settings(), portal_active='plans',
+                           is_logged_in=True, is_admin=session.get('minebank_role') == 'ADMIN')
+
+
 @app.route('/portal/notifications')
 @require_minebank_login
 def minebank_notifications_page():
