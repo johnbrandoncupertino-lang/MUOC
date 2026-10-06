@@ -652,6 +652,7 @@ def minebank_setup():
                     "VALUES(%s,%s,'ADMIN',%s,'ACTIVE') RETURNING id",
                     (email,generate_password_hash(password),generate_password_hash(pin)),commit=True)
                 admin_id = rows[0][0]
+                create_account(admin_id, "BUSINESS", "BUSINESS")
                 session.clear()
                 session.permanent = True
                 session["minebank_client_id"] = admin_id
