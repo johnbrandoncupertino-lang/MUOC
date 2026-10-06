@@ -31,7 +31,7 @@
             </div>
             <div class="col-12 col-md-6 col-xl-3">
                 <div class="muoc-kpi">
-                    <div class="muoc-kpi-label">Requests aperte</div>
+                    <div class="muoc-kpi-label">Open Requests</div>
                     <div id="dashRequests" class="muoc-kpi-value">—</div>
                     <div class="muoc-kpi-sub">Requests in Progress</div>
                 </div>
@@ -50,6 +50,7 @@
             <a href="/wallet/{{ session.wallet_name }}" class="btn btn-primary btn-sm">Open Wallet</a>
             <a href="/user/logs" class="btn btn-outline-secondary btn-sm">View Movements</a>
             <a href="/user/requests" class="btn btn-outline-secondary btn-sm">View Requests</a>
+            <a href="/reports" class="btn btn-outline-secondary btn-sm">Reports</a>
             {% if settings.allow_self_review %}
                 <a href="/requests" class="btn btn-outline-secondary btn-sm">New Request</a>
             {% endif %}
@@ -69,10 +70,10 @@
                     <div class="table-responsive">
                         <table class="table table-sm muoc-table mb-0">
                             <thead>
-                            <tr><th>Data</th><th>Operazione</th><th>Dettaglio</th></tr>
+                            <tr><th>Date</th><th>Operation</th><th>Details</th></tr>
                             </thead>
                             <tbody id="dashLogs">
-                            <tr><td colspan="3" class="text-center text-muted py-3">Caricamento...</td></tr>
+                            <tr><td colspan="3" class="text-center text-muted py-3">Loading...</td></tr>
                             </tbody>
                         </table>
                     </div>
@@ -80,10 +81,10 @@
             </div>
             <div class="col-xl-4">
                 <div class="card mb-3">
-                    <div class="card-header">Requests recenti</div>
+                    <div class="card-header">Recent Requests</div>
                     <div class="card-body p-0">
                         <div id="dashRequestList" class="list-group list-group-flush">
-                            <div class="p-3 text-muted small">Caricamento...</div>
+                            <div class="p-3 text-muted small">Loading...</div>
                         </div>
                     </div>
                 </div>
