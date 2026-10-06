@@ -349,30 +349,35 @@ def minebank_transfer_page():
                 )
                 if not password_row or not check_password_hash(password_row[0]['password_hash'], account_password):
                     error = 'Account password verification failed.'
+                elif not preview:
+                    error = 'The transfer review has expired. Please start again.'
                 else:
                     ok, pin_error = verify_wallet_pin(session['minebank_client_id'], pin)
                     if not ok:
                         error = pin_error
-                elif not preview:
-                    error = 'The transfer review has expired. Please start again.'
-                else:
-                    try:
-                        if selected[3] == 'BUSINESS' and not business_permission(
-                            session['minebank_client_id'], selected[0], 'TRANSFER', int(preview['amount'])
-                        ):
-                            raise PermissionError('You are not authorised to transfer from this Business account.')
-                        result = minebank_transfer(
-                            sender_account_id=selected[0],
-                            recipient_account_number=preview['recipient_account_number'],
-                            amount=int(preview['amount']),
-                            description=preview.get('description') or None,
-                            reference=preview.get('reference') or None,
-                            actor_client_id=session['minebank_client_id'],
-                            ip_address=request.remote_addr,
-                        )
-                        session.pop('minebank_transfer_preview', None)
-                        preview = None
-                        return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
+                    else:
+                        try:
+                            if selected[3] == 'BUSINESS' and not business_permission(
+                                session['minebank_client_id'], selected[0], 'TRANSFER', int(preview['amount'])
+                            ):
+                                raise PermissionError('You are not authorised to transfer from this Business account.')
+                            result = minebank_transfer(
+                                sender_account_id=selected[0],
+                                recipient_account_number=preview['recipient_account_number'],
+                                amount=int(preview['amount']),
+                                description=preview.get('description') or None,
+                                reference=preview.get('reference') or None,
+                                actor_client_id=session['minebank_client_id'],
+                                ip_address=request.remote_addr,
+                            )
+                            session.pop('minebank_transfer_preview', None)
+                            preview = None
+                            return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
+                                success=result, settings=get_settings(), portal_active='transfer', is_logged_in=True,
+                                is_admin=session.get('minebank_role') == 'ADMIN')
+                        except (ValueError, TypeError, PermissionError) as exc:
+                            error = str(exc)
+    return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
                             success=result, settings=get_settings(), portal_active='transfer', is_logged_in=True,
                             is_admin=session.get('minebank_role') == 'ADMIN')
                     except (ValueError, TypeError, PermissionError) as exc:
