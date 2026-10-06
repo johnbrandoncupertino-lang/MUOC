@@ -151,6 +151,9 @@ def minebank_login():
         ok, message = login_client(request.form.get("email",""), request.form.get("password",""), request.form.get("captcha_answer"))
         if ok:
             session["csrf"] = secrets.token_urlsafe(32)
+            if session.pop("minebank_password_expired",False):
+                flash("Your password has expired. Please change it before continuing.","error")
+                return redirect(url_for("minebank_security_page"))
             return redirect(request.args.get("next") or url_for("minebank_dashboard"))
         error = message or "Invalid credentials."
     return render_template("minebank_login_new.html", error=error, captcha_question=session.get("login_captcha_question"))
@@ -503,6 +506,7 @@ def minebank_security_page():
             if new_password:
                 if len(new_password)<8: raise ValueError("New password must contain at least 8 characters.")
                 execute_query("UPDATE bank_clients SET password_hash=%s,password_changed_at=CURRENT_TIMESTAMP WHERE id=%s",(generate_password_hash(new_password),client["id"]),commit=True)
+                session.pop("minebank_password_expired",None)
                 terminate_other_sessions(client["id"])
             security_event(client["id"],"SECURITY_SETTINGS_CHANGED","INFO",{})
             flash("Security settings updated.","success")
