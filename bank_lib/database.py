@@ -244,6 +244,22 @@ def ensure_minebank_schema():
     if DB_POOL is None:
         return False
     try:
+        # The rebuilt MineBank portal uses this helper during first-run setup,
+        # before the legacy database initializer has ever been called. Create
+        # the small settings table here so /setup can safely bootstrap a new DB.
+        execute_query("""
+            CREATE TABLE IF NOT EXISTS settings (
+                id SERIAL PRIMARY KEY,
+                bank_name VARCHAR(100) NOT NULL,
+                currency_name VARCHAR(50) NOT NULL,
+                admin_password VARCHAR(200) NOT NULL,
+                allow_leaderboard BOOLEAN DEFAULT TRUE,
+                allow_public_logs BOOLEAN DEFAULT TRUE,
+                allow_debts BOOLEAN DEFAULT FALSE,
+                allow_self_review BOOLEAN DEFAULT FALSE,
+                maximum_currency DOUBLE PRECISION DEFAULT 1000000.0
+            )
+        """, commit=True)
         from .minebank_schema import init_minebank_v2
         init_minebank_v2()
         return True
