@@ -128,6 +128,12 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 recipient = _lock_recipient(cur, recipient_account_number)
                 if not sender or not recipient:
                     raise ValueError("Sender or recipient account not found.")
+                if actor_client_id is not None and sender[1] != actor_client_id:
+                    cur.execute("""SELECT role FROM minebank_business_members
+                                   WHERE account_id=%s AND client_id=%s""",(sender[0],actor_client_id))
+                    member=cur.fetchone()
+                    if not member or member[0] not in ("OWNER","ADMIN","FINANCE_MANAGER","EMPLOYEE"):
+                        raise ValueError("You do not have payment permission on this Business account.")
                 if sender[0] == recipient[0]:
                     raise ValueError("Self-transfers are not allowed.")
                 if sender[6] != "ACTIVE":
