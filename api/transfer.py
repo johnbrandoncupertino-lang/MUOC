@@ -43,12 +43,22 @@ def register_transfer_api_routes(app):
             return jsonify({"error": "Exceeds maximum currency limit"}), 400
 
         try:
-            # Update balance
-            execute_query(
-                "UPDATE users SET current_currency = current_currency + %s WHERE wallet_name = %s",
-                (amount, wallet_name),
-                commit=True
-            )
+            # Update balance and automatically repay outstanding credit when funds are deposited.
+            if amount > 0:
+                execute_query(
+                    """UPDATE users
+                       SET current_currency = current_currency + %s,
+                           credit_used = GREATEST(credit_used - %s, 0)
+                       WHERE wallet_name = %s""",
+                    (amount, amount, wallet_name),
+                    commit=True
+                )
+            else:
+                execute_query(
+                    "UPDATE users SET current_currency = current_currency + %s WHERE wallet_name = %s",
+                    (amount, wallet_name),
+                    commit=True
+                )
 
             # Update admin balance
             update_admin_balance()
