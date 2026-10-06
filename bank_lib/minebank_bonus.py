@@ -675,9 +675,11 @@ def register_bonus_routes(app):
 
     @app.post("/portal/bonus/loan")
     def minebank_bonus_loan():
-        strong_auth(cid,request.form.get('account_password'),request.form.get('wallet_pin'))
         cid=session.get("minebank_client_id")
+        if not cid:
+            return jsonify(error="Login required."),401
         try:
+            strong_auth(cid,request.form.get('account_password'),request.form.get('wallet_pin'))
             lid,score=request_loan(cid,int(request.form["account_id"]),int(request.form["amount"]),
                                    int(request.form.get("interest_bps",700)),int(request.form.get("term_months",12)),
                                    request.form.get("purpose",""),int(request.form.get("collateral_required",0) or 0),
@@ -799,8 +801,10 @@ def register_bonus_routes(app):
 
     @app.post("/portal/bonus/payroll")
     def minebank_bonus_payroll():
-            strong_auth(session['minebank_client_id'],request.form.get('account_password'),request.form.get('wallet_pin'))
+        if not session.get("minebank_client_id"):
+            return jsonify(error="Login required."),401
         try:
+            strong_auth(session['minebank_client_id'],request.form.get('account_password'),request.form.get('wallet_pin'))
             raw=json.loads(request.form["items"])
             bid=create_payroll_batch(int(request.form["account_id"]),session["minebank_client_id"],
                                      request.form.get("period_label","Current period"),raw)
