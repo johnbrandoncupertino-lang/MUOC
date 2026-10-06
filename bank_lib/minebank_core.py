@@ -16,6 +16,12 @@ def _now():
     return datetime.now(timezone.utc)
 
 
+
+def _assert_banking_unlocked(cur, client_id):
+    cur.execute("SELECT 1 FROM minebank_banking_locks WHERE client_id=%s AND unlocked_at IS NULL", (client_id,))
+    if cur.fetchone():
+        raise ValueError("Banking operations are temporarily locked for this client.")
+
 def _lock_account(cur, account_id):
     cur.execute("""SELECT id,client_id,account_number,account_type,tier_id,balance,status,
                           monthly_outgoing_used,monthly_outgoing_period,last_outgoing_at
@@ -116,6 +122,8 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                         return {"transaction_id": row[0], "status": row[1], "amount": row[2], "fee": row[3],
                                 "idempotent_replay": True}
 
+                if actor_client_id is not None:
+                    _assert_banking_unlocked(cur, actor_client_id)
                 sender = _lock_account(cur, sender_account_id)
                 recipient = _lock_recipient(cur, recipient_account_number)
                 if not sender or not recipient:
@@ -141,7 +149,35 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 if int(sender[5]) - total < -credit_limit:
                     raise ValueError("Insufficient available balance/credit.")
 
-                status = "PENDING_APPROVAL" if amount >= PENDING_APPROVAL_THRESHOLD else "COMPLETED"
+                risk_score = 0
+                risk_reasons = []
+                try:
+                    cur.execute("""SELECT COUNT(*) FROM ledger_transactions
+                                   WHERE sender_account_id=%s AND created_at>CURRENT_TIMESTAMP-INTERVAL '10 minutes'""",
+                                (sender[0],))
+                    if int(cur.fetchone()[0]) >= 10:
+                        risk_score += 35
+                        risk_reasons.append("High transaction velocity")
+                    if amount >= 50000:
+                        risk_score += 25
+                        risk_reasons.append("Large transaction amount")
+                    elif amount >= 10000:
+                        risk_score += 10
+                        risk_reasons.append("Elevated transaction amount")
+                    cur.execute("""SELECT COUNT(*) FROM ledger_transactions
+                                   WHERE sender_account_id=%s AND recipient_account_id=%s""",(sender[0],recipient[0]))
+                    if int(cur.fetchone()[0]) == 0:
+                        risk_score += 20
+                        risk_reasons.append("New recipient")
+                    if risk_score:
+                        cur.execute("""INSERT INTO minebank_risk_events(account_id,client_id,risk_score,severity,reason,context)
+                                       VALUES(%s,%s,%s,%s,%s,%s::jsonb)""",
+                                    (sender[0],sender[1],risk_score,
+                                     "HIGH" if risk_score>=60 else ("MEDIUM" if risk_score>=30 else "LOW"),
+                                     "; ".join(risk_reasons),__import__('json').dumps({"amount":amount})))
+                except Exception:
+                    pass
+                status = "PENDING_APPROVAL" if amount >= PENDING_APPROVAL_THRESHOLD or risk_score >= 60 else "COMPLETED"
                 txid = next_transaction_id(cur)
                 cur.execute("""UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
                                last_outgoing_at=CURRENT_TIMESTAMP,monthly_outgoing_period=%s,
@@ -222,6 +258,7 @@ def deposit(account_id, amount, actor_user_id=None, description=None):
         with conn:
             with conn.cursor() as cur:
                 account=_lock_account(cur,account_id)
+                if account: _assert_banking_unlocked(cur, account[1])
                 if not account or account[6] not in ("ACTIVE","LIMITED"):
                     raise ValueError("Account cannot receive deposits.")
                 cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s",(account[4],))
@@ -245,6 +282,7 @@ def withdraw(account_id, amount, actor_user_id=None, description=None):
         with conn:
             with conn.cursor() as cur:
                 account=_lock_account(cur,account_id)
+                if account: _assert_banking_unlocked(cur, account[1])
                 if not account or account[6]!="ACTIVE":
                     raise ValueError("Account is not active.")
                 credit=get_credit_limit(cur,account_id)
@@ -268,6 +306,7 @@ def repay_credit(account_id, amount, source_account_id):
         with conn:
             with conn.cursor() as cur:
                 debt_account=_lock_account(cur,account_id)
+                if debt_account: _assert_banking_unlocked(cur, debt_account[1])
                 source=_lock_account(cur,source_account_id)
                 if not debt_account or not source:
                     raise ValueError("Account not found.")
@@ -303,6 +342,7 @@ def draw_credit(account_id, amount, actor_client_id=None, ip_address=None):
         with conn:
             with conn.cursor() as cur:
                 account = _lock_account(cur, account_id)
+                if account: _assert_banking_unlocked(cur, account[1])
                 if not account or account[6] != "ACTIVE":
                     raise ValueError("Account is not active.")
                 if actor_client_id is not None and account[1] != actor_client_id:
@@ -341,6 +381,7 @@ def activate_credit(account_id, requested_limit):
         with conn:
             with conn.cursor() as cur:
                 account=_lock_account(cur,account_id)
+                if account: _assert_banking_unlocked(cur, account[1])
                 if not account or account[6]!="ACTIVE":
                     raise ValueError("Account is not active.")
                 cur.execute("SELECT credit_enabled,default_credit_limit,private_or_corporate FROM account_tiers_v2 WHERE id=%s",

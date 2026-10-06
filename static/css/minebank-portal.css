@@ -27,3 +27,7 @@
   .mb-toolbar .btn{width:100%}
   .mb-table{font-size:.86rem}
 }
+
+.mb-bonus-panel{margin-bottom:14px}.mb-bonus-panel .mb-panel-title{border-top-color:#7d8b98}
+.mb-notice{display:flex;gap:14px;padding:10px 12px;border-bottom:1px solid #d9dee5;align-items:flex-start}
+.mb-notice:last-child{border-bottom:0}.mb-notice strong{min-width:180px}.mb-notice span{color:#4b5563}

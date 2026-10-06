@@ -42,6 +42,7 @@ from bank_lib.minebank_features import (save_recipient, delete_recipient, list_r
     list_transfer_templates, delete_transfer_template, create_scheduled_transfer, list_scheduled_transfers,
     set_scheduled_transfer_status, get_notification_preferences, save_notification_preferences,
     list_notifications, mark_notification_read, queue_email, analytics_for_account, preview_transfer)
+from bank_lib.minebank_bonus import ensure_bonus_schema, register_bonus_routes, business_permission
 
 # Set up logging once in your app setup code (if not already done)
 logging.basicConfig(
@@ -92,6 +93,8 @@ csrf = CSRFProtect(app)
 if DB_POOL is not None and is_db_initialized():
     if not ensure_minebank_schema():
         logging.error("MineBank v2 schema migration could not be applied during startup")
+    if not ensure_bonus_schema():
+        logging.error("MineBank bonus schema migration could not be applied during startup")
 
 # Register API routes
 register_request_api_routes(app)
@@ -99,6 +102,7 @@ register_get_api_routes(app)
 register_setup_api_routes(app)
 register_transfer_api_routes(app)
 register_admin_api_routes(app)
+register_bonus_routes(app)
 
 
 # Error handlers
@@ -254,7 +258,7 @@ def minebank_dashboard():
     analytics = None
     if selected is not None:
         notifications = list_notifications(client_id, 5)
-        analytics = analytics_for_account(selected[0]) if selected[3] in ('BUSINESS','BUSINESS_PRO') or selected[3] == 'CORPORATE' else None
+        analytics = analytics_for_account(selected[0]) if selected[3] in ('BUSINESS','BUSINESS_PRO','PERSONAL_PRIVATE') or selected[3] == 'CORPORATE' else None
         recent_transactions = execute_query_dict(
             """SELECT transaction_id, transaction_type, amount, fee, currency, status,
                       description, created_at, sender_account_id, recipient_account_id
@@ -334,32 +338,49 @@ def minebank_transfer_page():
                     preview.update(description=(request.form.get('description') or '').strip(),
                                    reference=(request.form.get('reference') or '').strip())
                     session['minebank_transfer_preview'] = preview
-                except (ValueError, TypeError) as exc:
+                except (ValueError, TypeError, PermissionError) as exc:
                     error = str(exc)
             elif stage == 'confirm':
                 pin = request.form.get('wallet_pin') or ''
-                ok, pin_error = verify_wallet_pin(session['minebank_client_id'], pin)
-                if not ok:
-                    error = pin_error
+                account_password = request.form.get('account_password') or ''
+                password_row = execute_query_dict(
+                    "SELECT password_hash FROM bank_clients WHERE id=%s",
+                    (session['minebank_client_id'],)
+                )
+                if not password_row or not check_password_hash(password_row[0]['password_hash'], account_password):
+                    error = 'Account password verification failed.'
                 elif not preview:
                     error = 'The transfer review has expired. Please start again.'
                 else:
-                    try:
-                        result = minebank_transfer(
-                            sender_account_id=selected[0],
-                            recipient_account_number=preview['recipient_account_number'],
-                            amount=int(preview['amount']),
-                            description=preview.get('description') or None,
-                            reference=preview.get('reference') or None,
-                            actor_client_id=session['minebank_client_id'],
-                            ip_address=request.remote_addr,
-                        )
-                        session.pop('minebank_transfer_preview', None)
-                        preview = None
-                        return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
+                    ok, pin_error = verify_wallet_pin(session['minebank_client_id'], pin)
+                    if not ok:
+                        error = pin_error
+                    else:
+                        try:
+                            if selected[3] == 'BUSINESS' and not business_permission(
+                                session['minebank_client_id'], selected[0], 'TRANSFER', int(preview['amount'])
+                            ):
+                                raise PermissionError('You are not authorised to transfer from this Business account.')
+                            result = minebank_transfer(
+                                sender_account_id=selected[0],
+                                recipient_account_number=preview['recipient_account_number'],
+                                amount=int(preview['amount']),
+                                description=preview.get('description') or None,
+                                reference=preview.get('reference') or None,
+                                actor_client_id=session['minebank_client_id'],
+                                ip_address=request.remote_addr,
+                            )
+                            session.pop('minebank_transfer_preview', None)
+                            preview = None
+                            return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
+                                success=result, settings=get_settings(), portal_active='transfer', is_logged_in=True,
+                                is_admin=session.get('minebank_role') == 'ADMIN')
+                        except (ValueError, TypeError, PermissionError) as exc:
+                            error = str(exc)
+    return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
                             success=result, settings=get_settings(), portal_active='transfer', is_logged_in=True,
                             is_admin=session.get('minebank_role') == 'ADMIN')
-                    except (ValueError, TypeError) as exc:
+                    except (ValueError, TypeError, PermissionError) as exc:
                         error = str(exc)
     return render_template('minebank_transfer.html', accounts=accounts, selected_account=selected,
                            preview=preview, error=error, settings=get_settings(), portal_active='transfer',
@@ -382,7 +403,7 @@ def minebank_recipients_page():
                 delete_recipient(session['minebank_client_id'], int(request.form.get('recipient_id')))
             else:
                 raise ValueError('Unknown recipient operation.')
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, PermissionError) as exc:
             error = str(exc)
     return render_template('minebank_recipients.html', accounts=accounts, selected_account=selected,
                            recipients=list_recipients(session['minebank_client_id']), error=error,
@@ -407,7 +428,7 @@ def minebank_transfer_templates_page():
                 delete_transfer_template(session['minebank_client_id'], int(request.form.get('template_id')))
             else:
                 raise ValueError('Unknown transfer template operation.')
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, PermissionError) as exc:
             error=str(exc)
     return render_template('minebank_templates.html', accounts=accounts, selected_account=selected,
                            templates=list_transfer_templates(session['minebank_client_id']), error=error,
@@ -519,7 +540,7 @@ def minebank_credit_page():
                 success = repay_credit(selected[0], amount, source_account)
             else:
                 raise ValueError('Unknown credit operation.')
-        except (ValueError, TypeError) as exc:
+        except (ValueError, TypeError, PermissionError) as exc:
             error = str(exc)
     facility = None
     if selected is not None:
@@ -898,6 +919,11 @@ def minebank_transfer_api():
         return jsonify({"error": "Invalid sender account."}), 403
     try:
         amount = int(data.get('amount'))
+        account_row = next((r for r in get_client_accounts(session['minebank_client_id']) if r[0] == account_id), None)
+        if account_row and account_row[3] == 'BUSINESS' and not business_permission(
+            session['minebank_client_id'], account_id, 'TRANSFER', amount
+        ):
+            return jsonify({"error":"You are not authorised to transfer from this Business account."}),403
         result = minebank_transfer(
             sender_account_id=account_id,
             recipient_account_number=str(data.get('recipient_account_number') or '').strip(),
@@ -906,7 +932,7 @@ def minebank_transfer_api():
             reference=data.get('reference'),
         )
         return jsonify(result), 201
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, PermissionError) as exc:
         return jsonify({"error": str(exc)}), 400
 
 
@@ -972,7 +998,7 @@ def minebank_review_request(request_id):
                             f'Your MineBank request #{request_id} was rejected.',
                             item['account_id'])
         return jsonify({'request_id': request_id, 'status': 'REJECTED'})
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, PermissionError) as exc:
         return jsonify({'error': str(exc)}), 400
 
 
@@ -1028,7 +1054,7 @@ def minebank_create_account_api():
         tier_code = str(data.get('tier_code') or ('PERSONAL' if account_type == 'PERSONAL' else 'BUSINESS')).upper()
         account = create_account(client_id, account_type, tier_code)
         return jsonify({"id": account[0], "account_number": account[1]}), 201
-    except (ValueError, TypeError) as exc:
+    except (ValueError, TypeError, PermissionError) as exc:
         return jsonify({"error": str(exc)}), 400
 
 

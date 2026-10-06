@@ -1,0 +1,19 @@
+name: MineBank scheduled financial jobs
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+jobs:
+  process-schedules:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Process recurring MineBank payments
+        env:
+          MUOC_CRON_URL: \${{ secrets.MUOC_CRON_URL }}
+          MUOC_CRON_TOKEN: \${{ secrets.MUOC_CRON_TOKEN }}
+        run: |
+          test -n "$MUOC_CRON_URL"
+          test -n "$MUOC_CRON_TOKEN"
+          curl --fail --silent --show-error \
+            -X POST "$MUOC_CRON_URL" \
+            -H "Authorization: Bearer $MUOC_CRON_TOKEN"
