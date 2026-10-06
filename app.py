@@ -490,24 +490,60 @@ def review_transfer(transaction_id):
     except Exception as exc:
         return jsonify(error=str(exc)),400
 
+@app.route("/setup", methods=["GET","POST"])
+@app.route("/admin/setup", methods=["GET","POST"])
+def minebank_setup():
+    """First-run setup: create the bank and its first administrator."""
+    try:
+        ensure_minebank_schema()
+        initialized = bool(execute_query("SELECT id FROM settings LIMIT 1"))
+    except Exception as exc:
+        return render_template("minebank_setup.html", error=f"Database is not ready: {exc}", initialized=False), 500
+    if initialized:
+        return render_template("minebank_setup.html", initialized=True), 409
+    error = None
+    if request.method == "POST":
+        bank_name = str(request.form.get("bank_name","MineBank")).strip() or "MineBank"
+        currency = str(request.form.get("currency_name","Emerald")).strip() or "Emerald"
+        email = str(request.form.get("admin_email","")).strip().lower()
+        password = str(request.form.get("admin_password",""))
+        confirm = str(request.form.get("admin_password_confirmation",""))
+        pin = str(request.form.get("wallet_pin",""))
+        if "@" not in email:
+            error = "Enter a valid administrator email address."
+        elif len(password) < 8:
+            error = "Administrator password must contain at least 8 characters."
+        elif password != confirm:
+            error = "Administrator passwords do not match."
+        elif not pin.isdigit() or len(pin) != 6:
+            error = "Administrator Wallet PIN must contain exactly 6 digits."
+        else:
+            try:
+                if execute_query("SELECT id FROM settings LIMIT 1"):
+                    return render_template("minebank_setup.html", initialized=True), 409
+                execute_query(
+                    "INSERT INTO settings(bank_name,currency_name,admin_password) VALUES(%s,%s,%s)",
+                    (bank_name,currency,generate_password_hash(password)),commit=True)
+                rows = execute_query(
+                    "INSERT INTO bank_clients(email,password_hash,role,wallet_pin_hash,status) "
+                    "VALUES(%s,%s,'ADMIN',%s,'ACTIVE') RETURNING id",
+                    (email,generate_password_hash(password),generate_password_hash(pin)),commit=True)
+                admin_id = rows[0][0]
+                session.clear()
+                session.permanent = True
+                session["minebank_client_id"] = admin_id
+                session["minebank_role"] = "ADMIN"
+                session["minebank_email"] = email
+                session["csrf"] = secrets.token_urlsafe(32)
+                flash("MineBank is ready. Administrator account created.", "success")
+                return redirect(url_for("admin_minebank_requests"))
+            except Exception as exc:
+                error = str(exc)
+    return render_template("minebank_setup.html", error=error, initialized=False)
+
 @app.route("/api/setup",methods=["POST"])
 def api_setup():
-    ensure_minebank_schema()
-    data=request.get_json(silent=True) or request.form
-    bank_name=str(data.get("bank_name","MineBank")).strip() or "MineBank"
-    currency=str(data.get("currency_name","Emerald")).strip() or "Emerald"
-    password=str(data.get("admin_password",""))
-    email=str(data.get("admin_email") or __import__("os").environ.get("ADMIN_EMAIL") or "admin@muoc.local").strip().lower()
-    if len(password)<8: return jsonify(error="Admin password must contain at least 8 characters."),400
-    if execute_query("SELECT id FROM settings LIMIT 1"): return jsonify(error="Bank already initialized"),400
-    execute_query("INSERT INTO settings(bank_name,currency_name,admin_password) VALUES(%s,%s,%s)",
-                   (bank_name,currency,generate_password_hash(password)),commit=True)
-    rows=execute_query(
-        "INSERT INTO bank_clients(email,password_hash,role) VALUES(%s,%s,'ADMIN') "
-        "ON CONFLICT(email) DO UPDATE SET password_hash=EXCLUDED.password_hash,role='ADMIN' RETURNING id",
-        (email,generate_password_hash(password)),commit=True
-    )
-    return jsonify(message="Bank system initialized successfully",admin_client_id=rows[0][0])
+    return jsonify(error="Use the first-run setup page at /setup."), 410
 
 @app.route("/api/transfer/bank",methods=["POST"])
 @require_role("ADMIN")
