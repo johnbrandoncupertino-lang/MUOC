@@ -60,17 +60,17 @@ def next_transaction_id(cur):
 
 def _reset_month_if_needed(cur, account):
     period = _now().strftime("%Y-%m")
-    if account[9] != period:
+    if account[8] != period:
         cur.execute(
             "UPDATE bank_accounts SET monthly_outgoing_used=0, monthly_outgoing_period=%s WHERE id=%s",
             (period, account[0]),
         )
         return 0, period
-    return account[8], period
+    return account[7], period
 
 
 def transfer(*, sender_account_id, recipient_account_number, amount,
-             wallet_pin_hash=None, description=None, reference=None):
+             wallet_pin_hash=None, description=None, reference=None, currency="Emerald"):
     """Create an instant or approval-pending transfer.
 
     PIN verification belongs in the authentication layer; this service receives
@@ -100,7 +100,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
 
                 used, period = _reset_month_if_needed(cur, sender)
                 cur.execute(
-                    "SELECT monthly_outgoing_limit FROM account_tiers WHERE id=%s",
+                    "SELECT monthly_outgoing_limit FROM account_tiers_v2 WHERE id=%s",
                     (sender[4],),
                 )
                 tier = cur.fetchone()
@@ -136,7 +136,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
 
                 ledger_id = create_ledger_transaction(
                     cur, transaction_id=txid, transaction_type="TRANSFER",
-                    amount=amount, fee=fee, currency="Emerald",
+                    amount=amount, fee=fee, currency=currency,
                     sender_account_id=sender[0], recipient_account_id=recipient[0],
                     status=status, description=description, reference_id=reference,
                 )
