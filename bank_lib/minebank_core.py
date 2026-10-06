@@ -274,6 +274,33 @@ def approve_business_transfer(transaction_id, approver_client_id, ip_address=Non
     finally:
         release_db_connection(conn)
 
+def reject_business_transfer(transaction_id, approver_client_id, reason=None, ip_address=None):
+    conn=get_db_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT b.id,b.account_id,b.requested_by,l.id,l.sender_account_id,l.amount,l.fee,l.status
+                               FROM minebank_business_payment_approvals b JOIN ledger_transactions l ON l.transaction_id=b.transaction_id
+                               WHERE b.transaction_id=%s AND b.status='PENDING' FOR UPDATE""",(transaction_id,))
+                row=cur.fetchone()
+                if not row: raise ValueError("Business approval not found.")
+                cur.execute("SELECT role FROM minebank_business_members WHERE account_id=%s AND client_id=%s",(row[1],approver_client_id))
+                member=cur.fetchone()
+                if not member or member[0] not in ("OWNER","ADMIN","FINANCE_MANAGER"):
+                    raise ValueError("Only an Owner, Business Admin or Finance Manager can reject this payment.")
+                if row[2]==approver_client_id:
+                    raise ValueError("The payment creator cannot reject their own payment.")
+                cur.execute("""UPDATE bank_accounts SET balance=balance+%s,
+                               monthly_outgoing_used=GREATEST(0,monthly_outgoing_used-%s),updated_at=CURRENT_TIMESTAMP WHERE id=%s""",
+                            (row[5]+row[6],row[5],row[4]))
+                cur.execute("UPDATE minebank_business_payment_approvals SET status='REJECTED',approved_by=%s,reviewed_at=CURRENT_TIMESTAMP WHERE id=%s",(approver_client_id,row[0]))
+                cur.execute("UPDATE ledger_transactions SET status='REJECTED',description=COALESCE(description,'') || %s WHERE id=%s",
+                            (f" [Business rejected: {reason or 'No reason supplied'}]",row[3]))
+                audit_event(cur,actor_client_id=approver_client_id,action="BUSINESS_TRANSFER_REJECTED",target_type="TRANSACTION",target_id=transaction_id,account_id=row[1],transaction_id=transaction_id,ip_address=ip_address,context={"reason":reason or ""})
+                return transaction_id
+    finally:
+        release_db_connection(conn)
+
 def approve_transfer(transaction_id, actor_user_id, ip_address=None):
     conn = get_db_connection()
     try:
