@@ -8,7 +8,6 @@ import psutil
 from flask import g, request
 
 from .database import execute_query_dict, execute_query, check_db_connection
-from .global_vars import DB_POOL
 
 
 # Get total currency in circulation
@@ -133,9 +132,9 @@ def get_server_health():
                     '3', '8') else "critical"
             },
             {
-                "name": "Database Connection Pool",
-                "value": f"Min: {DB_POOL.minconn}, Max: {DB_POOL.maxconn}" if DB_POOL else "Not available",
-                "status": "good" if DB_POOL else "critical"
+                "name": "Database Connections",
+                "value": "Short-lived serverless connections",
+                "status": "good" if db_connected else "critical"
             },
             {
                 "name": "Memory Usage",
