@@ -44,7 +44,7 @@ CREATE TABLE settings
     allow_leaderboard boolean          DEFAULT true,
     allow_public_logs boolean          DEFAULT true,
     bank_name         character varying  NOT NULL,
-    currency_name     character varying  NOT NULL,
+    currency_name     character varying  NOT NULL
 );
 
 -- DDL for table: users
