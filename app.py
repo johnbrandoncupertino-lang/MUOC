@@ -254,6 +254,32 @@ def minebank_account_page():
     return render_template("minebank_portal.html", mode="account", account=selected_account(),
                            accounts=get_accounts(session["minebank_client_id"]), portal_active="account")
 
+@app.route("/portal/accounts", methods=["GET","POST"])
+@require_login
+def minebank_accounts_page():
+    error=None
+    if request.method=="POST":
+        try:
+            tier=request.form.get("tier_code","BUSINESS")
+            legal=request.form.get("legal_name","").strip()[:200]
+            trading=request.form.get("trading_name","").strip()[:200]
+            if not legal:
+                raise ValueError("Business legal name is required.")
+            if not tier.startswith("BUSINESS"):
+                raise ValueError("Only Business tiers can be opened from this page.")
+            account_id,number=create_account(session["minebank_client_id"],"BUSINESS",tier)
+            execute_query("""INSERT INTO minebank_business_profiles(account_id,legal_name,trading_name,registration_number,address,contact_email)
+                             VALUES(%s,%s,%s,%s,%s,%s)""",
+                          (account_id,legal,trading,request.form.get("registration_number","")[:100],
+                           request.form.get("address","")[:300],session.get("minebank_email","")),commit=True)
+            flash(f"Business account {number} created.","success")
+            return redirect(url_for("minebank_accounts_page"))
+        except Exception as exc:
+            error=str(exc)
+    business_tiers=execute_query_dict("SELECT code,display_name,monthly_fee,monthly_outgoing_limit,credit_enabled,default_credit_limit FROM account_tiers_v2 WHERE account_type='BUSINESS' AND active=TRUE ORDER BY id")
+    return render_template("minebank_portal.html",mode="account",account=selected_account(),accounts=get_accounts(session["minebank_client_id"]),
+                           business_tiers=business_tiers,account_error=error,portal_active="account")
+
 @app.route("/portal/transfer", methods=["GET","POST"])
 @require_login
 def minebank_transfer_page():
