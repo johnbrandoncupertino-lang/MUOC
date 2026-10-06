@@ -342,9 +342,17 @@ def minebank_transfer_page():
                     error = str(exc)
             elif stage == 'confirm':
                 pin = request.form.get('wallet_pin') or ''
-                ok, pin_error = verify_wallet_pin(session['minebank_client_id'], pin)
-                if not ok:
-                    error = pin_error
+                account_password = request.form.get('account_password') or ''
+                password_row = execute_query_dict(
+                    "SELECT password_hash FROM bank_clients WHERE id=%s",
+                    (session['minebank_client_id'],)
+                )
+                if not password_row or not check_password_hash(password_row[0]['password_hash'], account_password):
+                    error = 'Account password verification failed.'
+                else:
+                    ok, pin_error = verify_wallet_pin(session['minebank_client_id'], pin)
+                    if not ok:
+                        error = pin_error
                 elif not preview:
                     error = 'The transfer review has expired. Please start again.'
                 else:
