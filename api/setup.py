@@ -49,6 +49,16 @@ def register_setup_api_routes(app):
                 commit=True
             )
 
+            # Seed the canonical MineBank admin identity. The email is configurable so
+            # the deployment never has to rely on a hard-coded personal address.
+            admin_email = os.environ.get("ADMIN_EMAIL", "admin@muoc.local").strip().lower()
+            execute_query(
+                "INSERT INTO bank_clients (email, password_hash, role) VALUES (%s, %s, 'ADMIN') "
+                "ON CONFLICT (email) DO NOTHING",
+                (admin_email, generate_password_hash(admin_password)),
+                commit=True
+            )
+
             update_admin_balance()
 
             create_log("Setup", "Bank system initialized", "Admin")
