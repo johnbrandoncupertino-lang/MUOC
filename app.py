@@ -42,6 +42,7 @@ from bank_lib.minebank_features import (save_recipient, delete_recipient, list_r
     list_transfer_templates, delete_transfer_template, create_scheduled_transfer, list_scheduled_transfers,
     set_scheduled_transfer_status, get_notification_preferences, save_notification_preferences,
     list_notifications, mark_notification_read, queue_email, analytics_for_account, preview_transfer)
+from bank_lib.minebank_bonus import ensure_bonus_schema, register_bonus_routes
 
 # Set up logging once in your app setup code (if not already done)
 logging.basicConfig(
@@ -92,6 +93,8 @@ csrf = CSRFProtect(app)
 if DB_POOL is not None and is_db_initialized():
     if not ensure_minebank_schema():
         logging.error("MineBank v2 schema migration could not be applied during startup")
+    if not ensure_bonus_schema():
+        logging.error("MineBank bonus schema migration could not be applied during startup")
 
 # Register API routes
 register_request_api_routes(app)
@@ -99,6 +102,7 @@ register_get_api_routes(app)
 register_setup_api_routes(app)
 register_transfer_api_routes(app)
 register_admin_api_routes(app)
+register_bonus_routes(app)
 
 
 # Error handlers
@@ -254,7 +258,7 @@ def minebank_dashboard():
     analytics = None
     if selected is not None:
         notifications = list_notifications(client_id, 5)
-        analytics = analytics_for_account(selected[0]) if selected[3] in ('BUSINESS','BUSINESS_PRO') or selected[3] == 'CORPORATE' else None
+        analytics = analytics_for_account(selected[0]) if selected[3] in ('BUSINESS','BUSINESS_PRO','PERSONAL_PRIVATE') or selected[3] == 'CORPORATE' else None
         recent_transactions = execute_query_dict(
             """SELECT transaction_id, transaction_type, amount, fee, currency, status,
                       description, created_at, sender_account_id, recipient_account_id
