@@ -3,7 +3,8 @@ import os
 import secrets
 from datetime import datetime, UTC, timedelta
 
-import requests as req
+import json
+from urllib.request import Request as URLRequest, urlopen
 from flask import Flask, render_template, redirect, url_for, send_from_directory, request, session
 from flask import jsonify
 from flask_talisman import Talisman
@@ -148,17 +149,23 @@ def setup_page():
         admin_password = request.form.get('admin_password')
 
         # Make a POST request to the /api/setup endpoint
-        response = req.post(
+        payload = json.dumps({
+            'bank_name': bank_name,
+            'currency_name': currency_name,
+            'admin_password': admin_password
+        }).encode('utf-8')
+        setup_request = URLRequest(
             url_for('api_setup', _external=True),
-            json={
-                'bank_name': bank_name,
-                'currency_name': currency_name,
-                'admin_password': admin_password
-            }, )
+            data=payload,
+            headers={'Content-Type': 'application/json'},
+            method='POST'
+        )
+        with urlopen(setup_request, timeout=10) as response:
+            response_body = json.loads(response.read().decode('utf-8'))
 
         # Check if the API call failed
-        if response.status_code != 200:
-            error_message = response.json().get('error', 'Unknown error occurred')
+        if response.status != 200:
+            error_message = response_body.get('error', 'Unknown error occurred')
             return render_template('setup.html', error=error_message,
                                    settings=settings,
                                    is_admin='admin' in session and session['admin'],
