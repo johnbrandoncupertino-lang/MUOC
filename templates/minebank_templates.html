@@ -1,0 +1,16 @@
+{% extends "minebank_layout.html" %}
+{% block title %}MineBank — Transfer Templates{% endblock %}
+{% block content %}
+<div class="mb-page-head"><div><div class="mb-eyebrow">PAYMENTS</div><h1>Transfer Templates</h1><p>Save frequent payment instructions without storing your Wallet PIN.</p></div></div>
+<div class="row g-3"><div class="col-lg-5"><section class="mb-panel"><div class="mb-panel-title">New template</div>
+<form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="save">
+<label class="mb-label">Name</label><input class="form-control mb-input mb-2" name="name" required>
+<label class="mb-label">Recipient</label><input class="form-control mb-input mb-2" name="recipient_account_number" placeholder="MB-00000001" required>
+<label class="mb-label">Amount <span>(optional)</span></label><input class="form-control mb-input mb-2" type="number" min="1" name="amount">
+<label class="mb-label">Description</label><input class="form-control mb-input mb-2" name="description">
+<label class="mb-label">Reference</label><input class="form-control mb-input mb-3" name="reference">
+<button class="btn btn-primary" type="submit">Save Template</button></form></section></div>
+<div class="col-lg-7"><section class="mb-panel"><div class="mb-panel-title">Saved templates</div>
+{% for t in templates %}<div class="mb-account-row"><div><strong>{{ t.name }}</strong><small>{{ t.recipient_account_number }}{% if t.amount %} · {{ t.amount }} Emerald{% endif %}</small></div><form method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="delete"><input type="hidden" name="template_id" value="{{ t.id }}"><button class="btn btn-sm btn-outline-danger">Remove</button></form></div>{% else %}<p class="mb-empty">No transfer templates yet.</p>{% endfor %}
+</section></div></div>
+{% endblock %}
