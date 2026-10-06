@@ -1,7 +1,7 @@
 import psycopg2
 import psycopg2.extras
 
-from .global_vars import DB_POOL
+from . import global_vars
 
 
 # Database helper functions
@@ -10,10 +10,11 @@ from .global_vars import DB_POOL
 # Get a connection from the pool
 def get_db_connection():
     """Get a connection from the pool"""
-    if DB_POOL is None:
+    pool = global_vars.get_pool()
+    if pool is None:
         return None
     try:
-        return DB_POOL.getconn()
+        return pool.getconn()
     except Exception as e:
         print(f"Error getting database connection: {e}")
         return None
@@ -22,14 +23,16 @@ def get_db_connection():
 # Release a connection back to the pool
 def release_db_connection(conn):
     """Release a connection back to the pool"""
-    if DB_POOL is not None:
-        DB_POOL.putconn(conn)
+    pool = global_vars.get_pool()
+    if pool is not None:
+        pool.putconn(conn)
 
 
 # Initialize database tables
 def init_db():
     """Create database tables if they don't exist"""
-    if DB_POOL is None:
+    pool = global_vars.get_pool()
+    if pool is None:
         return False
 
     try:
@@ -257,7 +260,8 @@ def ensure_minebank_schema():
     initialized before MineBank v2 was introduced. Applying the idempotent
     schema on application startup makes those deployments self-migrating.
     """
-    if DB_POOL is None:
+    pool = global_vars.get_pool()
+    if pool is None:
         return False
     try:
         # The rebuilt MineBank portal uses this helper during first-run setup,
@@ -287,7 +291,8 @@ def ensure_minebank_schema():
 # Check database connection
 def check_db_connection():
     """Check if database connection is working"""
-    if DB_POOL is None:
+    pool = global_vars.get_pool()
+    if pool is None:
         return False
 
     conn = None
@@ -357,7 +362,8 @@ def execute_query_dict(query, params=None, fetch=True, commit=False):
 # Check if the database is initialized
 def is_db_initialized():
     """Check if the database has been initialized with settings"""
-    if DB_POOL is None:
+    pool = global_vars.get_pool()
+    if pool is None:
         return False
 
     try:
