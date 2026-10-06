@@ -57,8 +57,8 @@ def create_ledger_transaction(cur, *, transaction_id, transaction_type, amount, 
     cur.execute(
         """INSERT INTO ledger_transactions
            (transaction_id,transaction_type,amount,fee,currency,sender_account_id,
-            recipient_account_id,status,description,reference_id)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            recipient_account_id,status,description,reference_id,transfer_kind)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
         (transaction_id,transaction_type,amount,fee,currency,sender_account_id,
          recipient_account_id,status,description,reference_id),
     )
@@ -99,7 +99,7 @@ def get_credit_limit(cur, account_id):
 
 
 def transfer(*, sender_account_id, recipient_account_number, amount,
-             description=None, reference=None, currency=CURRENCY, idempotency_key=None, actor_client_id=None, ip_address=None):
+             description=None, reference=None, currency=CURRENCY, idempotency_key=None, actor_client_id=None, ip_address=None, transfer_kind=None):
     if not isinstance(amount, int) or amount <= 0:
         raise ValueError("Transfer amount must be a positive integer Emerald amount.")
     if not recipient_account_number:
@@ -136,10 +136,18 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                     raise ValueError("Recipient account cannot receive transfers.")
 
                 used, period = _reset_month_if_needed(cur, sender)
-                cur.execute("SELECT monthly_outgoing_limit FROM account_tiers_v2 WHERE id=%s", (sender[4],))
-                monthly_limit = cur.fetchone()[0]
+                cur.execute("SELECT monthly_outgoing_limit,daily_outgoing_limit,single_transfer_limit FROM account_tiers_v2 WHERE id=%s", (sender[4],))
+                monthly_limit,daily_limit,single_limit = cur.fetchone()
+                if single_limit is not None and amount > int(single_limit):
+                    raise ValueError("Single-transfer limit exceeded.")
                 if monthly_limit is not None and used + amount > int(monthly_limit):
                     raise ValueError("Monthly outgoing transfer limit exceeded.")
+                cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions
+                               WHERE sender_account_id=%s AND status IN ('COMPLETED','PENDING_APPROVAL')
+                                 AND created_at>=CURRENT_TIMESTAMP-INTERVAL '1 day'""",(sender[0],))
+                daily_used=int(cur.fetchone()[0] or 0)
+                if daily_limit is not None and daily_used + amount > int(daily_limit):
+                    raise ValueError("Daily outgoing transfer limit exceeded.")
                 if sender[9] and (_now() - sender[9]).total_seconds() < 30:
                     raise ValueError("Outgoing transfers require a 30-second cooldown.")
 
@@ -178,6 +186,8 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 except Exception:
                     pass
                 status = "PENDING_APPROVAL" if amount >= PENDING_APPROVAL_THRESHOLD or risk_score >= 60 else "COMPLETED"
+                if transfer_kind is None:
+                    transfer_kind = "OWN_TRANSFER" if sender[1] == recipient[1] else f"{sender[3]}_TO_{recipient[3]}"
                 txid = next_transaction_id(cur)
                 cur.execute("""UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
                                last_outgoing_at=CURRENT_TIMESTAMP,monthly_outgoing_period=%s,
