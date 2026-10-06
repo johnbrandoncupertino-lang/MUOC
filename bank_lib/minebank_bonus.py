@@ -373,6 +373,10 @@ def emergency_lock(client_id, reason="Client requested emergency banking lock"):
                 create_notification(client_id,"SECURITY","Emergency banking lock activated. Banking operations are suspended.")
     finally: release_db_connection(conn)
 
+def assert_banking_unlocked(client_id):
+    if banking_locked(client_id):
+        raise ValueError("Banking operations are temporarily locked for this client.")
+
 def banking_locked(client_id):
     conn=get_db_connection()
     if conn is None: return True
@@ -577,6 +581,15 @@ def register_bonus_routes(app):
     @app.post("/admin/minebank/bonus/process-schedules")
     @staff_required
     def minebank_bonus_process():
+        return jsonify(process_due_schedules())
+
+    @app.post("/api/internal/minebank/process-schedules")
+    def minebank_bonus_cron_process():
+        import os
+        expected=os.environ.get("MUOC_CRON_TOKEN")
+        supplied=request.headers.get("Authorization","")
+        if not expected or supplied != "Bearer "+expected:
+            return jsonify(error="Unauthorized."),401
         return jsonify(process_due_schedules())
 
     @app.post("/admin/minebank/bonus/announcement")
