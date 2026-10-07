@@ -53,8 +53,8 @@ def database():
         """
         INSERT INTO bank_clients(email,password_hash,role,status,wallet_pin_hash)
         VALUES
-            ('alice@minebank.test', %s, 'CLIENT', 'ENABLED', %s),
-            ('bob@minebank.test', %s, 'CLIENT', 'ENABLED', %s)
+            ('alice@minebank.test', %s, 'CLIENT', 'ACTIVE', %s),
+            ('bob@minebank.test', %s, 'CLIENT', 'ACTIVE', %s)
         """,
         (
             generate_password_hash("alice-password"),
