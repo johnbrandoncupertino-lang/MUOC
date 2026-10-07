@@ -271,8 +271,11 @@ def minebank_register():
 @app.route("/portal/dashboard")
 @require_login
 def minebank_dashboard():
+    accounts = get_accounts(session["minebank_client_id"])
     account = selected_account()
     transactions = recent_transactions(account)
+    total_balance = sum(int(a.get("balance") or 0) for a in accounts)
+    balance_breakdown = accounts
     messages = execute_query_dict(
         "SELECT title,message,created_at FROM bank_notifications WHERE client_id=%s ORDER BY created_at DESC LIMIT 5",
         (session["minebank_client_id"],)
@@ -286,6 +289,7 @@ def minebank_dashboard():
         GROUP BY d::date ORDER BY d::date
     """,(account["id"],account["id"])) if account else []
     return render_template("minebank_portal.html", mode="dashboard", account=account,
+                           accounts=accounts, total_balance=total_balance, balance_breakdown=balance_breakdown,
                            transactions=transactions, messages=messages, chart_rows=chart_rows,
                            portal_active="dashboard")
 
@@ -1513,6 +1517,8 @@ def admin_minebank_requests():
 @app.route("/api/v2/requests/<int:request_id>/review",methods=["POST"])
 @require_role("ADMIN","OPERATOR")
 def review_request(request_id):
+    if not ensure_loan_schema():
+        return "MineBank request processing is temporarily unavailable. Please try again in a moment.", 503
     data=request.get_json(silent=True) or request.form
     approve=str(data.get("approve","")).lower() in {"1","true","yes","approve","approved"}
     if not approve and not str(data.get("reason","")).strip():
