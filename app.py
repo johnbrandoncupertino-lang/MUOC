@@ -658,72 +658,48 @@ def minebank_transaction_detail(transaction_id):
     return render_template("minebank_portal.html", mode="transaction", account=account,
                            transaction=tx,default_categories=default_categories,portal_active="transactions")
 
-def _pdf_response(title, rows, filename, sections=None):
-    """Render a clean, multi-page MineBank document with wrapped cells and page numbers."""
+def _pdf_response(title, rows, filename, sections=None, customer=None, account=None, document_reference=None):
+    """Canonical MineBank customer PDF: branded, identity-first, detailed, signed."""
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.lib.enums import TA_LEFT
     from reportlab.lib.units import mm
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib import colors
-
-    buffer = io.BytesIO()
-    doc = SimpleDocTemplate(
-        buffer, pagesize=A4, rightMargin=15*mm, leftMargin=15*mm,
-        topMargin=18*mm, bottomMargin=18*mm, title=title, author="MineBank"
-    )
-    styles = getSampleStyleSheet()
-    body = ParagraphStyle("MineBody", parent=styles["BodyText"], fontName="Helvetica",
-                          fontSize=8.5, leading=11, spaceAfter=0)
-    label = ParagraphStyle("MineLabel", parent=body, fontName="Helvetica-Bold", fontSize=8.2)
-    small = ParagraphStyle("MineSmall", parent=body, fontSize=7.5, leading=9)
-    story = [
-        Paragraph("MineBank", styles["Title"]),
-        Paragraph(title, styles["Heading2"]),
-        Paragraph("The New Bank · Official banking document", small),
-        Spacer(1, 9)
-    ]
-
-    def p(value, style=body):
-        return Paragraph(str(value if value not in (None, "") else "—").replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\n","<br/>"), style)
-
-    def add_table(table_rows, widths):
-        data=[[p(k,label),p(v)] for k,v in table_rows]
-        table=Table(data,colWidths=widths,repeatRows=0,hAlign="LEFT")
-        table.setStyle(TableStyle([
-            ("GRID",(0,0),(-1,-1),0.35,colors.HexColor("#aebbc5")),
-            ("BACKGROUND",(0,0),(0,-1),colors.HexColor("#edf2f5")),
-            ("VALIGN",(0,0),(-1,-1),"TOP"),
-            ("LEFTPADDING",(0,0),(-1,-1),6),("RIGHTPADDING",(0,0),(-1,-1),6),
-            ("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)
-        ]))
-        story.append(table)
-        story.append(Spacer(1,8))
-
+    buffer=io.BytesIO()
+    doc=SimpleDocTemplate(buffer,pagesize=A4,rightMargin=15*mm,leftMargin=15*mm,topMargin=34*mm,bottomMargin=22*mm,title=title,author="MineBank")
+    styles=getSampleStyleSheet()
+    body=ParagraphStyle("MineBody",parent=styles["BodyText"],fontName="Helvetica",fontSize=8.5,leading=11,textColor=colors.HexColor("#16324a"))
+    label=ParagraphStyle("MineLabel",parent=body,fontName="Helvetica-Bold",fontSize=8.2,textColor=colors.HexColor("#315c7e"))
+    small=ParagraphStyle("MineSmall",parent=body,fontSize=7.5,leading=9,textColor=colors.HexColor("#60778b"))
+    heading=ParagraphStyle("MineTitle",parent=styles["Heading1"],fontName="Helvetica-Bold",fontSize=19,textColor=colors.HexColor("#173f65"))
+    section=ParagraphStyle("MineSection",parent=styles["Heading3"],fontName="Helvetica-Bold",fontSize=10,textColor=colors.HexColor("#07549a"),spaceBefore=5,spaceAfter=6)
+    def esc(v): return str(v if v not in (None,"") else "—").replace("&","&amp;").replace("<","&lt;").replace(">","&gt;").replace("\n","<br/>")
+    def p(v,style=body): return Paragraph(esc(v),style)
+    def table(data,widths,header=False):
+        t=Table(data,colWidths=widths,repeatRows=1 if header else 0,hAlign="LEFT")
+        bg=colors.HexColor("#dceaf4") if header else colors.HexColor("#edf2f5")
+        t.setStyle(TableStyle([("GRID",(0,0),(-1,-1),.35,colors.HexColor("#aebbc5")),("BACKGROUND",(0,0),(-1,0),bg),("VALIGN",(0,0),(-1,-1),"TOP"),("LEFTPADDING",(0,0),(-1,-1),6),("RIGHTPADDING",(0,0),(-1,-1),6),("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)]))
+        story.append(t); story.append(Spacer(1,7))
+    customer=customer or {}; account=account or {}
+    story=[Paragraph(title,heading),Paragraph("The New Bank · Official customer document",small),Spacer(1,8)]
+    identity=[("Customer name",customer.get("full_name") or customer.get("name")),("Customer email",customer.get("email")),("Customer ID",customer.get("id") or customer.get("client_id")),("Account number",account.get("account_number")),("Account type",account.get("account_type")),("Account tier",account.get("tier_name") or account.get("tier_code")),("Account status",account.get("status")),("Document reference",document_reference or filename.replace(".pdf",""))]
+    story.append(Paragraph("Customer & Account",section)); table([[p(k,label),p(v)] for k,v in identity],[45*mm,125*mm])
     if sections:
-        for heading, section_rows in sections:
-            story.append(Paragraph(heading, styles["Heading3"]))
-            if section_rows:
-                add_table(section_rows,[45*mm,125*mm])
-            else:
-                story.append(Paragraph("No records for this section.",body))
+        for h,rs in sections:
+            story.append(Paragraph(h,section))
+            if rs: table([[p(k,label),p(v)] for k,v in rs],[45*mm,125*mm])
+            else: story.append(Paragraph("No records for this section.",body))
     else:
-        add_table(rows,[45*mm,125*mm])
-
-    story.append(Spacer(1,6))
-    story.append(Paragraph("Generated by MineBank Online. Retain this document for your records.",small))
-
-    def footer(canvas, doc):
-        canvas.saveState()
-        canvas.setFont("Helvetica",7)
-        canvas.setFillColor(colors.HexColor("#647482"))
-        canvas.drawString(15*mm,9*mm,"MineBank · The New Bank")
-        canvas.drawRightString(A4[0]-15*mm,9*mm,f"Page {doc.page}")
-        canvas.restoreState()
-    doc.build(story,onFirstPage=footer,onLaterPages=footer)
-    buffer.seek(0)
-    return Response(buffer.getvalue(),mimetype="application/pdf",
-                    headers={"Content-Disposition":f'inline; filename="{filename}"'})
+        story.append(Paragraph("Document details",section)); table([[p(k,label),p(v)] for k,v in rows],[45*mm,125*mm])
+    story += [Spacer(1,10),Paragraph("Signature",section),Paragraph("______________________________________________",body),Spacer(1,3),Paragraph("Sign here if asked to do so",small),Spacer(1,9),Paragraph("Generated by MineBank Online. Retain this document for your records.",small)]
+    def hf(canvas,doc):
+        canvas.saveState(); canvas.setFillColor(colors.HexColor("#07549a")); canvas.setFont("Helvetica-Bold",15); canvas.drawString(15*mm,A4[1]-13*mm,"◆ MineBank")
+        canvas.setFont("Helvetica",7); canvas.setFillColor(colors.HexColor("#60778b")); canvas.drawString(15*mm,A4[1]-18*mm,"The New Bank")
+        canvas.setStrokeColor(colors.HexColor("#8aa9bf")); canvas.line(15*mm,A4[1]-21*mm,A4[0]-15*mm,A4[1]-21*mm)
+        canvas.setStrokeColor(colors.HexColor("#d2dce4")); canvas.line(15*mm,15*mm,A4[0]-15*mm,15*mm)
+        canvas.setFillColor(colors.HexColor("#647482")); canvas.setFont("Helvetica",7); canvas.drawString(15*mm,9*mm,"MineBank · The New Bank"); canvas.drawRightString(A4[0]-15*mm,9*mm,f"Page {doc.page}"); canvas.restoreState()
+    doc.build(story,onFirstPage=hf,onLaterPages=hf); buffer.seek(0)
+    return Response(buffer.getvalue(),mimetype="application/pdf",headers={"Content-Disposition":f'inline; filename="{filename}"'})
 
 @app.route("/portal/transactions/<transaction_id>/receipt")
 @require_login
@@ -739,6 +715,11 @@ def minebank_transaction_receipt(transaction_id):
                             (transaction_id,session["minebank_client_id"],session["minebank_client_id"]))
     if not rows: return "Transaction not found",404
     tx=rows[0]
+    customer_rows=execute_query_dict("SELECT id,email,COALESCE(full_name,email) AS full_name FROM bank_clients WHERE id=%s",(session["minebank_client_id"],))
+    preferred_account=tx["sender_account_id"] or tx["recipient_account_id"]
+    account_rows=execute_query_dict("SELECT a.*,t.display_name AS tier_name FROM bank_accounts a LEFT JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE a.id=%s AND a.client_id=%s",(preferred_account,session["minebank_client_id"]))
+    customer=customer_rows[0] if customer_rows else {}
+    account=account_rows[0] if account_rows else {}
     return _pdf_response("Transaction Receipt",[
         ("Transaction ID",tx["transaction_id"]),("Date",tx["created_at"]),("Status",tx["status"]),
         ("Type",tx["transaction_type"]),("Sender",tx["sender_email"] or tx["sender_number"] or "Bank"),
@@ -747,7 +728,7 @@ def minebank_transaction_receipt(transaction_id):
         ("Fee",f'{tx["fee"]} Emerald'),("Total debited",f'{int(tx["amount"] or 0)+int(tx["fee"] or 0)} Emerald' if tx["sender_account_id"] else "—"),
         ("Description",tx["description"]),("Causal",tx["causal"]),("Reference",tx["reference_id"]),
         ("Funding source",tx["transfer_kind"] or "Balance")
-    ],f"minebank-receipt-{transaction_id}.pdf")
+    ],f"minebank-receipt-{transaction_id}.pdf",customer=customer,account=account,document_reference=transaction_id)
 
 @app.route("/portal/transactions/<transaction_id>/category",methods=["POST"])
 @require_login
