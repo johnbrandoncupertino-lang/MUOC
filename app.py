@@ -21,7 +21,7 @@ from bank_lib.minebank_core import (
     approve_transfer, chargeback, deposit, draw_credit,
     reject_transfer, repay_credit, transfer, cancel_transfer,
 )
-from bank_lib.minebank_requests import create_request, list_requests
+from bank_lib.minebank_requests import create_request, list_requests, create_notification
 from bank_lib.minebank_security import ensure_security_schema, validate_session, list_active_sessions, terminate_session, terminate_other_sessions, security_event
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -49,6 +49,7 @@ def inject_bank_context():
         "minebank_client": client,
         "minebank_accounts": accounts,
         "minebank_pending_requests": pending_count(client["id"]) if client else 0,
+        "minebank_request_updates": request_update_count(client["id"]) if client else 0,
     }
 
 def current_client():
@@ -74,13 +75,21 @@ def get_accounts(client_id):
         """SELECT a.id,a.account_number,a.account_type,a.balance,a.status,
                   a.monthly_outgoing_used,a.monthly_outgoing_period,a.last_outgoing_at,a.freeze_type,
                   t.code,t.display_name,t.monthly_fee,t.max_balance,t.monthly_outgoing_limit,
-                  t.daily_outgoing_limit,t.single_transfer_limit,t.credit_enabled,t.default_credit_limit
+                  t.daily_outgoing_limit,t.single_transfer_limit,t.credit_enabled,t.default_credit_limit,
+                  cf.credit_limit AS facility_credit_limit,cf.status AS credit_status,
+                  GREATEST(0, COALESCE(cf.credit_limit,0) + LEAST(a.balance,0)) AS available_credit
            FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
+           LEFT JOIN credit_facilities cf ON cf.account_id=a.id AND cf.status='ACTIVE'
            WHERE a.status<>'CLOSED' AND (a.client_id=%s OR EXISTS (SELECT 1 FROM minebank_business_members bm WHERE bm.account_id=a.id AND bm.client_id=%s))
            ORDER BY a.account_type,a.id""", (client_id,client_id,)
     )
     __import__("flask").g._minebank_accounts = (client_id, accounts)
     return accounts
+
+def request_update_count(client_id):
+    rows = execute_query("SELECT COUNT(*) FROM bank_notifications WHERE client_id=%s AND notification_type='REQUEST_UPDATE' AND read_at IS NULL",
+                         (client_id,))
+    return int(rows[0][0]) if rows else 0
 
 def pending_count(client_id):
     cache = getattr(__import__("flask").g, "_minebank_pending_requests", None)
@@ -633,6 +642,9 @@ def minebank_cron():
 @app.route("/portal/requests")
 @require_login
 def minebank_requests_page():
+    execute_query("""UPDATE bank_notifications SET read_at=CURRENT_TIMESTAMP
+                     WHERE client_id=%s AND notification_type='REQUEST_UPDATE' AND read_at IS NULL""",
+                  (session["minebank_client_id"],),commit=True)
     return render_template("minebank_portal.html",mode="requests",
                            requests=list_requests(session["minebank_client_id"]),portal_active="requests")
 
