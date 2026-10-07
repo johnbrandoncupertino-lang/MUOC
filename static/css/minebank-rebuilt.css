@@ -349,3 +349,6 @@ table .pending{color:#8a671c;font-weight:bold}
   .info-item{border-right:0;border-bottom:1px solid #c7d3dc}
   .info-item:last-child{border-bottom:0}
 }
+
+/* Canonical MineBank brand mark. */
+.minebank-mark{display:inline-block;margin-right:7px;font-size:.82em;line-height:1;transform:translateY(-1px);color:#fff;text-shadow:0 1px #002f5c}.public-logo .minebank-mark{color:#123e65;text-shadow:none;font-size:.82em}
