@@ -722,7 +722,9 @@ def accrue_daily_credit_interest(account_id=None):
                         cur.execute("UPDATE credit_facilities SET last_interest_at=CURRENT_TIMESTAMP WHERE account_id=%s",(aid,))
                         continue
                     start=last_interest or activated
-                    days=max(1,(_now()-start).days)
+                    days=(_now()-start).days
+                    if days<=0:
+                        continue
                     rate=int(annual_bps or cashline_annual_bps(atype))
                     interest=(debt*rate*days+3650000-1)//3650000
                     if interest<=0:
