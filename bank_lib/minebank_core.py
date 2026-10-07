@@ -691,33 +691,90 @@ def cashline_annual_bps(account_type):
     return CASHLINE_ANNUAL_PERSONAL_BPS if account_type == "PERSONAL" else CASHLINE_ANNUAL_BUSINESS_BPS
 
 
+def accrue_daily_credit_interest(account_id=None):
+    """Accrue CashLine interest using the annual rate on a daily basis."""
+    conn=get_db_connection()
+    results=[]
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                where="" if account_id is None else " AND cf.account_id=%s"
+                params=() if account_id is None else (account_id,)
+                cur.execute(f"""SELECT a.id,a.client_id,a.balance,a.account_type,
+                                       cf.last_interest_at,cf.activated_at,cf.interest_annual_bps
+                                FROM bank_accounts a JOIN credit_facilities cf ON cf.account_id=a.id
+                                WHERE cf.status='ACTIVE'{where} FOR UPDATE OF a,cf""",params)
+                for aid,cid,balance,atype,last_interest,activated,annual_bps in cur.fetchall():
+                    debt=max(0,-int(balance))
+                    if debt<=0:
+                        cur.execute("UPDATE credit_facilities SET last_interest_at=CURRENT_TIMESTAMP WHERE account_id=%s",(aid,))
+                        continue
+                    start=last_interest or activated
+                    days=max(1,(_now()-start).days)
+                    rate=int(annual_bps or cashline_annual_bps(atype))
+                    interest=(debt*rate*days+3650000-1)//3650000
+                    if interest<=0:
+                        continue
+                    cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(interest,aid))
+                    txid=next_transaction_id(cur)
+                    create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_INTEREST",
+                                              amount=interest,recipient_account_id=aid,
+                                              description=f"CashLine interest ({days} day(s))")
+                    cur.execute("UPDATE credit_facilities SET last_interest_at=CURRENT_TIMESTAMP WHERE account_id=%s",(aid,))
+                    results.append({"account_id":aid,"interest":interest,"days":days,"transaction_id":txid})
+        return results
+    finally:
+        release_db_connection(conn)
+
+
 def accrue_monthly_credit_interest(account_id):
+    return (accrue_daily_credit_interest(account_id) or [{"interest":0}])[-1]
+
+
+def generate_cashline_statement(account_id, period_start=None, period_end=None):
+    """Generate a monthly CashLine statement with a minimum payment."""
     conn=get_db_connection()
     try:
         with conn:
             with conn.cursor() as cur:
-                account=_lock_account(cur,account_id)
-                if not account:
-                    raise ValueError("Account not found.")
-                debt=max(0,-int(account[5]))
-                if debt<=0:
-                    return {"interest":0,"status":"NO_DEBT"}
-                cur.execute("SELECT interest_monthly_bps,last_interest_at FROM credit_facilities WHERE account_id=%s AND status='ACTIVE' FOR UPDATE",
-                            (account_id,))
-                facility=cur.fetchone()
-                if not facility:
-                    raise ValueError("Active credit facility not found.")
-                if facility[1] is not None and facility[1].strftime("%Y-%m") == _now().strftime("%Y-%m"):
-                    return {"interest":0,"status":"ALREADY_ACCRUED"}
-                bps=int(facility[0] or STANDARD_CREDIT_INTEREST_MONTHLY_BPS)
-                interest=(debt*bps+9999)//10000
-                cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
-                            (interest,account_id))
-                txid=next_transaction_id(cur)
-                lid=create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_INTEREST",amount=interest,
-                                              recipient_account_id=account_id,description="Monthly credit interest")
-                cur.execute("UPDATE credit_facilities SET last_interest_at=CURRENT_TIMESTAMP WHERE account_id=%s",(account_id,))
-                return {"transaction_id":txid,"ledger_id":lid,"interest":interest,"status":"COMPLETED"}
+                cur.execute("""SELECT a.balance,cf.minimum_due_percent_bps,cf.minimum_due_floor,cf.status
+                               FROM bank_accounts a JOIN credit_facilities cf ON cf.account_id=a.id
+                               WHERE a.id=%s FOR UPDATE""",(account_id,))
+                row=cur.fetchone()
+                if not row or row[3] not in ("ACTIVE","SUSPENDED"):
+                    return None
+                end=period_end or _now().date()
+                start=period_start or end.replace(day=1)
+                cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions
+                               WHERE recipient_account_id=%s AND transaction_type='CREDIT_INTEREST'
+                                 AND created_at::date BETWEEN %s AND %s""",(account_id,start,end))
+                interest=int(cur.fetchone()[0] or 0)
+                cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions
+                               WHERE recipient_account_id=%s AND transaction_type='CREDIT_FEE'
+                                 AND created_at::date BETWEEN %s AND %s""",(account_id,start,end))
+                fee=int(cur.fetchone()[0] or 0)
+                principal=max(0,-int(row[0]))
+                total=principal+interest+fee
+                minimum=max(int(row[2] or 40),(principal*int(row[1] or 500)+9999)//10000+interest+fee)
+                due=end+__import__("datetime").timedelta(days=15)
+                cur.execute("""INSERT INTO credit_statements
+                               (account_id,period_start,period_end,principal_amount,interest_amount,credit_fee,total_due,minimum_due,due_at)
+                               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                               ON CONFLICT(account_id,period_start,period_end) DO UPDATE SET
+                               principal_amount=EXCLUDED.principal_amount,interest_amount=EXCLUDED.interest_amount,
+                               credit_fee=EXCLUDED.credit_fee,total_due=EXCLUDED.total_due,minimum_due=EXCLUDED.minimum_due,
+                               due_at=EXCLUDED.due_at
+                               RETURNING id""",(account_id,start,end,principal,interest,fee,total,minimum,due))
+                sid=cur.fetchone()[0]
+                cur.execute("DELETE FROM credit_statement_items WHERE statement_id=%s",(sid,))
+                for typ,amt,desc in (("PRINCIPAL",principal,"CashLine capital used"),
+                                     ("INTEREST",interest,"CashLine daily interest"),
+                                     ("CREDIT_FEE",fee,"CashLine monthly fee")):
+                    if amt:
+                        cur.execute("INSERT INTO credit_statement_items(statement_id,item_type,amount,description) VALUES(%s,%s,%s,%s)",
+                                    (sid,typ,amt,desc))
+                return {"statement_id":sid,"principal":principal,"interest":interest,"fee":fee,
+                        "total_due":total,"minimum_due":minimum,"due_at":due}
     finally:
         release_db_connection(conn)
 
