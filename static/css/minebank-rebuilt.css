@@ -430,3 +430,6 @@ table .pending{color:#8a671c;font-weight:bold}
 .cashline-battery:after{content:"";position:absolute;right:-7px;top:9px;width:5px;height:12px;border:1px solid #7e97aa;border-left:0;background:#c8d4dc;border-radius:0 2px 2px 0}
 .cashline-battery-level{height:100%;background:linear-gradient(#78b8ea,#2f79b9);box-shadow:inset 0 1px rgba(255,255,255,.55);transition:width .45s ease}
 .cashline-battery-scale{display:flex;justify-content:space-between;margin-top:4px;color:#718596;font-size:10px}
+
+/* MineBank amount selectors */
+.amount-selector{margin:10px 0 18px}.amount-range{width:100%;accent-color:#07549a;cursor:pointer}.amount-range-labels{display:flex;justify-content:space-between;align-items:center;margin-top:7px;font-size:12px;color:#60778b}.amount-range-labels strong{font-size:18px;color:#173f65}.amount-number-label{display:block;margin-top:14px}.amount-selector input[type=number]{margin-top:5px}
