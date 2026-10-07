@@ -684,6 +684,9 @@ def minebank_scheduled_page():
                 raise ValueError("Complete the scheduled payment fields.")
             interval_days=max(1,int(request.form.get("interval_days","1") or 1))
             recurrence=json.dumps({"interval_days":interval_days})
+            recipient=execute_query_dict("SELECT id FROM bank_accounts WHERE account_number=%s AND status<>'CLOSED'",(number,))
+            if not recipient:
+                raise ValueError("Recipient account not found.")
             if int(account["balance"]) < 2:
                 raise ValueError("2 Emerald are required to set up a scheduled payment.")
             execute_query("UPDATE bank_accounts SET balance=balance-2,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(account["id"],),commit=True)
