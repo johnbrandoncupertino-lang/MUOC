@@ -519,6 +519,13 @@ ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS minimum_due_percent_bps I
 ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS minimum_due_floor INTEGER NOT NULL DEFAULT 40;
 ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS transfer_kind VARCHAR(40);
 
+-- Repair synthetic legacy CashLine rows created by earlier versions.
+UPDATE ledger_transactions
+SET sender_account_id=recipient_account_id
+WHERE transfer_kind='CASHLINE'
+  AND description='Migrated legacy CashLine balance'
+  AND sender_account_id IS NULL;
+
 -- Preserve legacy negative account balances as CashLine debt before the new
 -- separate-circuit model. Existing CREDIT_DRAW rows are reclassified first so
 -- historical interest/fees are not double-counted.
