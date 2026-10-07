@@ -2,6 +2,7 @@
 
 All monetary values are integer Emeralds. Mutations are ledger-first and run
 inside database transactions. Web/API layers perform identity and PIN checks.
+CashLine is a separate revolving payment circuit; it never makes the ordinary balance negative.
 """
 from datetime import datetime, timezone
 
