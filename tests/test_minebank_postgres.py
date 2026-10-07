@@ -206,3 +206,15 @@ def test_cashline_limits_and_daily_interest(accounts):
 
     with pytest.raises(ValueError, match="between 300 and 1800"):
         activate_credit(alice_id, 2000)
+
+
+def test_web_smoke_routes_import_and_render():
+    # Catches deployment-time import errors and dead public/login routes without
+    # changing the portal's visual templates or requiring an authenticated user.
+    from app import app
+
+    app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
+    client = app.test_client()
+    for path in ("/", "/about", "/login", "/portal/login", "/portal/register"):
+        response = client.get(path, follow_redirects=False)
+        assert response.status_code < 500, (path, response.status_code, response.get_data(as_text=True)[:500])
