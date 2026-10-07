@@ -52,7 +52,12 @@ def inject_bank_context():
         "minebank_accounts": accounts,
         "minebank_pending_requests": pending_count(client["id"]) if client else 0,
         "minebank_request_updates": request_update_count(client["id"]) if client else 0,
+        "minebank_unread_messages": unread_message_count(client["id"]) if client else 0,
     }
+
+def unread_message_count(client_id):
+    rows = execute_query("SELECT COUNT(*) FROM bank_notifications WHERE client_id=%s AND read_at IS NULL", (client_id,))
+    return int(rows[0][0]) if rows else 0
 
 def current_client():
     cached = getattr(__import__("flask").g, "_minebank_client", None)
@@ -62,7 +67,7 @@ def current_client():
     if not cid:
         return None
     rows = execute_query_dict(
-        "SELECT id,email,role,status,date_of_birth,phone,address,city,postal_code,country,occupation,password_hash,password_changed_at,last_login,"
+        "SELECT id,email,role,status,date_of_birth,first_name,last_name,phone,address,city,postal_code,country,occupation,password_hash,password_changed_at,last_login,"
         "wallet_pin_hash,wallet_pin_failed_attempts,wallet_pin_locked_until,admin_reauth_at FROM bank_clients WHERE id=%s", (cid,)
     )
     client = rows[0] if rows else None
@@ -300,6 +305,19 @@ def minebank_accounts_page():
     error=None
     if request.method=="POST":
         try:
+            action=request.form.get("action","open_business")
+            if action=="tier_change":
+                account_id=int(request.form.get("account_id","0") or 0)
+                tier_code=request.form.get("tier_code","").strip().upper()
+                owned=execute_query_dict("SELECT id,account_type FROM bank_accounts WHERE id=%s AND client_id=%s AND status<>'CLOSED'",(account_id,session["minebank_client_id"]))
+                if not owned:
+                    raise ValueError("Account not found.")
+                tier=execute_query_dict("SELECT code FROM account_tiers_v2 WHERE code=%s AND account_type=%s AND active=TRUE",(tier_code,owned[0]["account_type"]))
+                if not tier:
+                    raise ValueError("That tier is not available for this account.")
+                create_request(session["minebank_client_id"],"TIER_CHANGE",account_id,{"tier_code":tier_code})
+                flash("Account tier change submitted for bank review.","success")
+                return redirect(url_for("minebank_accounts_page",account_id=account_id))
             tier=request.form.get("tier_code","BUSINESS")
             legal=request.form.get("legal_name","").strip()[:200]
             trading=request.form.get("trading_name","").strip()[:200]
@@ -315,9 +333,11 @@ def minebank_accounts_page():
             return redirect(url_for("minebank_accounts_page"))
         except Exception as exc:
             error=str(exc)
+    account=selected_account()
+    plan_tiers=execute_query_dict("SELECT code,display_name,monthly_fee,opening_fee,monthly_outgoing_limit,credit_enabled,default_credit_limit FROM account_tiers_v2 WHERE account_type=%s AND active=TRUE ORDER BY id",(account["account_type"] if account else "PERSONAL",))
     business_tiers=execute_query_dict("SELECT code,display_name,monthly_fee,opening_fee,monthly_outgoing_limit,credit_enabled,default_credit_limit FROM account_tiers_v2 WHERE account_type='BUSINESS' AND active=TRUE ORDER BY id")
-    return render_template("minebank_portal.html",mode="account",account=selected_account(),accounts=get_accounts(session["minebank_client_id"]),
-                           business_tiers=business_tiers,account_error=error,portal_active="account")
+    return render_template("minebank_portal.html",mode="account",account=account,accounts=get_accounts(session["minebank_client_id"]),
+                           plan_tiers=plan_tiers,business_tiers=business_tiers,account_error=error,portal_active="account")
 
 @app.route("/portal/business/<int:account_id>/members",methods=["GET","POST"])
 @require_login
@@ -625,12 +645,11 @@ def minebank_statements_csv():
 @app.route("/portal/plans", methods=["GET","POST"])
 @require_login
 def minebank_plans_page():
-    account=selected_account(); tiers=execute_query_dict("SELECT * FROM account_tiers_v2 WHERE active=TRUE ORDER BY monthly_fee,id")
+    account=selected_account()
     if request.method=="POST":
         create_request(session["minebank_client_id"],"TIER_CHANGE",account["id"],{"tier_code":request.form.get("tier_code")})
-        flash("Plan change request submitted for bank review.","success")
-        return redirect(url_for("minebank_plans_page"))
-    return render_template("minebank_portal.html",mode="plans",account=account,tiers=tiers,portal_active="plans")
+        flash("Account tier change submitted for bank review.","success")
+    return redirect(url_for("minebank_accounts_page",account_id=account["id"] if account else None))
 
 @app.route("/portal/credit", methods=["GET","POST"])
 @require_login
@@ -855,9 +874,11 @@ def pay_payment_request(request_id):
 def minebank_profile_page():
     if request.method=="POST":
         execute_query("""UPDATE bank_clients
-                         SET date_of_birth=%s,phone=%s,address=%s,city=%s,postal_code=%s,country=%s,occupation=%s,updated_at=CURRENT_TIMESTAMP
+                         SET date_of_birth=%s,first_name=%s,last_name=%s,phone=%s,address=%s,city=%s,postal_code=%s,country=%s,occupation=%s,updated_at=CURRENT_TIMESTAMP
                          WHERE id=%s""",
                       (request.form.get("date_of_birth") or None,
+                       request.form.get("first_name","").strip()[:100],
+                       request.form.get("last_name","").strip()[:100],
                        request.form.get("phone","").strip()[:40],
                        request.form.get("address","").strip()[:300],
                        request.form.get("city","").strip()[:120],
