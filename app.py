@@ -62,7 +62,7 @@ def current_client():
     if not cid:
         return None
     rows = execute_query_dict(
-        "SELECT id,email,role,status,date_of_birth,password_hash,password_changed_at,last_login,"
+        "SELECT id,email,role,status,date_of_birth,phone,address,city,postal_code,country,occupation,password_hash,password_changed_at,last_login,"
         "wallet_pin_hash,wallet_pin_failed_attempts,wallet_pin_locked_until,admin_reauth_at FROM bank_clients WHERE id=%s", (cid,)
     )
     client = rows[0] if rows else None
