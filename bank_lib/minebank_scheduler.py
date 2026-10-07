@@ -21,7 +21,7 @@ def process_due_scheduled_transfers(limit=50):
                             description=row["description"],reference=row["reference"],
                             actor_client_id=row["client_id"],
                             idempotency_key=f"SCHEDULE-{sid}-{int(run_at.timestamp())}",
-                            transfer_kind="SCHEDULED")
+                            transfer_kind="SCHEDULED",extra_fee=1)
             if result["status"]=="COMPLETED":
                 if row["schedule_type"]=="ONCE":
                     execute_query("UPDATE minebank_scheduled_transfers SET status='COMPLETED',last_error=NULL WHERE id=%s",(sid,),commit=True)
