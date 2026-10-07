@@ -706,7 +706,7 @@ def minebank_scheduled_page():
 
 @app.route("/api/cron/minebank",methods=["POST"])
 def minebank_cron():
-    expected=__import__("os").environ.get("MUOC_CRON_TOKEN")
+    expected=__import__("os").environ.get("MUOC_CRON_TOKEN") or __import__("os").environ.get("CRON_SECRET")
     supplied=request.headers.get("Authorization","")
     if not expected or supplied != "Bearer "+expected:
         return jsonify(error="Unauthorized"),401
