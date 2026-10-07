@@ -57,10 +57,10 @@ def database():
             ('bob@minebank.test', %s, 'CLIENT', 'ACTIVE', %s)
         """,
         (
-            generate_password_hash("alice-password"),
-            generate_password_hash("123456"),
-            generate_password_hash("bob-password"),
-            generate_password_hash("654321"),
+            generate_password_hash("alice-password", method="pbkdf2:sha256:10000"),
+            generate_password_hash("123456", method="pbkdf2:sha256:10000"),
+            generate_password_hash("bob-password", method="pbkdf2:sha256:10000"),
+            generate_password_hash("654321", method="pbkdf2:sha256:10000"),
         ),
         fetch=False,
         commit=True,
