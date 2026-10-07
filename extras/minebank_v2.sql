@@ -171,6 +171,18 @@ CREATE INDEX IF NOT EXISTS ledger_sender_idx ON ledger_transactions(sender_accou
 CREATE INDEX IF NOT EXISTS ledger_recipient_idx ON ledger_transactions(recipient_account_id, created_at DESC);
 
 
+CREATE TABLE IF NOT EXISTS minebank_banking_locks (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
+    reason VARCHAR(200),
+    locked_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    unlocked_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS minebank_banking_locks_client_idx
+    ON minebank_banking_locks(client_id, unlocked_at);
+
 CREATE TABLE IF NOT EXISTS bank_notifications (
     id BIGSERIAL PRIMARY KEY,
     client_id BIGINT NOT NULL REFERENCES bank_clients(id),
