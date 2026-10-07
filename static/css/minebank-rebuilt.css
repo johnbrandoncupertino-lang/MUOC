@@ -352,3 +352,24 @@ table .pending{color:#8a671c;font-weight:bold}
 
 /* Canonical MineBank brand mark. */
 .minebank-mark{display:inline-block;margin-right:7px;font-size:.82em;line-height:1;transform:translateY(-1px);color:#fff;text-shadow:0 1px #002f5c}.public-logo .minebank-mark{color:#123e65;text-shadow:none;font-size:.82em}
+
+/* Bounded data surfaces: long registers stay inside their panels. */
+.scroll-panel{
+  max-height:420px;
+  overflow:auto;
+  padding:2px 4px 2px 2px;
+  scrollbar-width:thin;
+}
+.scroll-panel table{min-width:620px}
+.notifications-scroll{max-height:560px;padding:2px 5px 2px 2px}
+.notifications-scroll .message-panel{margin-bottom:10px;padding:17px 18px}
+.notifications-scroll .message-panel:last-child{margin-bottom:0}
+.security-scroll{max-height:300px}
+.security-scroll table{min-width:700px}
+.table-scroll{max-height:520px;overflow:auto;border:1px solid #b8c7d2;background:#edf3f7;padding:2px}
+.table-scroll table{min-width:760px}
+.panel > .table-scroll{margin:-2px 0 0}
+.panel > .table-scroll + form{margin-top:10px}
+.notice{padding:11px 14px;line-height:1.45}
+.message-panel p{margin:10px 0;line-height:1.5}
+.message-panel small{display:block;margin-top:6px;color:#718596}
