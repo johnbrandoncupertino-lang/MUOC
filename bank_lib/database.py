@@ -149,6 +149,29 @@ def ensure_minebank_schema():
         return False
 
 
+_MESSAGE_SCHEMA_READY = False
+
+def ensure_message_schema():
+    """Ensure customer-message campaign storage exists on older production databases."""
+    global _MESSAGE_SCHEMA_READY
+    if _MESSAGE_SCHEMA_READY:
+        return True
+    try:
+        execute_query("""CREATE TABLE IF NOT EXISTS minebank_message_campaigns (
+            id BIGSERIAL PRIMARY KEY,
+            created_by BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
+            subject VARCHAR(200) NOT NULL,
+            body TEXT NOT NULL,
+            recipient_filter JSONB NOT NULL DEFAULT '{}'::jsonb,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""", fetch=False, commit=True)
+        _MESSAGE_SCHEMA_READY = True
+        return True
+    except Exception as exc:
+        print(f"MineBank message schema warning: {type(exc).__name__}: {exc}")
+        return False
+
+
 _TRANSACTION_SCHEMA_READY = False
 
 def ensure_transaction_schema():
