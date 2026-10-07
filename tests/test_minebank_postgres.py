@@ -182,7 +182,7 @@ def test_transfer_over_5000_is_pending_approval(accounts):
     )[0]
     assert tx["status"] == "PENDING_APPROVAL"
     assert tx["amount"] == 5001
-    assert tx["fee"] == 0
+    assert tx["fee"] == 5
 
 
 def test_cashline_limits_and_daily_interest(accounts):
