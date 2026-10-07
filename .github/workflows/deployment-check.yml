@@ -31,7 +31,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt pytest
       - name: Compile Python sources
-        run: python -m compileall -q .
+        run: python -W error -m compileall -q .
       - name: Run MineBank PostgreSQL integration tests
         env:
           DATABASE_URL: postgresql://postgres:test@localhost:5432/muoc_test
