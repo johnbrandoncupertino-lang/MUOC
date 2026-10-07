@@ -12,7 +12,7 @@ from functools import wraps
 from flask import Flask, Response, flash, jsonify, redirect, render_template, render_template_string, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from bank_lib.database import execute_query, execute_query_dict, ensure_minebank_schema, ensure_transaction_schema
+from bank_lib.database import execute_query, execute_query_dict, ensure_minebank_schema, ensure_transaction_schema, ensure_message_schema
 from bank_lib.minebank_auth import (
     create_account, get_client_accounts, login_client, logout_client,
     set_wallet_pin, verify_wallet_pin,
@@ -1420,6 +1420,8 @@ def admin_minebank_transactions():
 @app.route("/admin/minebank/messages", methods=["GET","POST"])
 @require_role("ADMIN","OPERATOR")
 def admin_minebank_messages():
+    if not ensure_message_schema():
+        return "MineBank messaging is temporarily unavailable. Please try again in a moment.", 503
     error=None
     if request.method=="POST":
         try:
