@@ -19,7 +19,8 @@ from bank_lib.minebank_auth import (
 )
 from bank_lib.minebank_core import (
     approve_transfer, chargeback, deposit, draw_credit,
-    reject_transfer, repay_credit, transfer, cancel_transfer,
+    reject_transfer, reject_business_transfer, approve_business_transfer,
+    repay_credit, transfer, cancel_transfer,
     accrue_daily_credit_interest, generate_cashline_statement,
 )
 from bank_lib.minebank_requests import create_request, list_requests, create_notification
@@ -707,7 +708,7 @@ def minebank_scheduled_page():
                                      WHERE client_id=%s ORDER BY next_run_at""",(session["minebank_client_id"],))
     return render_template("minebank_portal.html",mode="scheduled",account=account,schedules=schedules,portal_active="scheduled")
 
-@app.route("/api/cron/minebank",methods=["POST"])
+@app.route("/api/cron/minebank",methods=["GET","POST"])
 def minebank_cron():
     expected=__import__("os").environ.get("MUOC_CRON_TOKEN") or __import__("os").environ.get("CRON_SECRET")
     supplied=request.headers.get("Authorization","")
@@ -715,6 +716,8 @@ def minebank_cron():
         return jsonify(error="Unauthorized"),401
     from bank_lib.minebank_scheduler import process_due_scheduled_transfers
     try:
+        if not ensure_minebank_schema():
+            return jsonify(error="MineBank database is unavailable"),503
         interest=accrue_daily_credit_interest()
         billing=[]
         statements=[]
