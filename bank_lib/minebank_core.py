@@ -440,7 +440,7 @@ def reject_business_transfer(transaction_id, approver_client_id, reason=None, ip
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT b.id,b.account_id,b.requested_by,l.id,l.sender_account_id,l.amount,l.fee,l.status
+                cur.execute("""SELECT b.id,b.account_id,b.requested_by,l.id,l.sender_account_id,l.amount,l.fee,l.status,l.transfer_kind
                                FROM minebank_business_payment_approvals b JOIN ledger_transactions l ON l.transaction_id=b.transaction_id
                                WHERE b.transaction_id=%s AND b.status='PENDING' FOR UPDATE""",(transaction_id,))
                 row=cur.fetchone()
@@ -451,9 +451,12 @@ def reject_business_transfer(transaction_id, approver_client_id, reason=None, ip
                     raise ValueError("Only an Owner, Business Admin or Finance Manager can reject this payment.")
                 if row[2]==approver_client_id:
                     raise ValueError("The payment creator cannot reject their own payment.")
-                cur.execute("""UPDATE bank_accounts SET balance=balance+%s,
+                if row[8]=="CASHLINE":
+                    cur.execute("UPDATE bank_accounts SET monthly_outgoing_used=GREATEST(0,monthly_outgoing_used-%s),updated_at=CURRENT_TIMESTAMP WHERE id=%s",(row[5],row[4]))
+                else:
+                    cur.execute("""UPDATE bank_accounts SET balance=balance+%s,
                                monthly_outgoing_used=GREATEST(0,monthly_outgoing_used-%s),updated_at=CURRENT_TIMESTAMP WHERE id=%s""",
-                            (row[5]+row[6],row[5],row[4]))
+                                (row[5]+row[6],row[5],row[4]))
                 cur.execute("UPDATE minebank_business_payment_approvals SET status='REJECTED',approved_by=%s,reviewed_at=CURRENT_TIMESTAMP WHERE id=%s",(approver_client_id,row[0]))
                 cur.execute("UPDATE ledger_transactions SET status='REJECTED',description=COALESCE(description,'') || %s WHERE id=%s",
                             (f" [Business rejected: {reason or 'No reason supplied'}]",row[3]))
@@ -532,10 +535,13 @@ def cancel_transfer(transaction_id, actor_client_id, ip_address=None):
                 sender=_lock_account(cur,tx[1])
                 if not sender or sender[1]!=actor_client_id:
                     raise ValueError("You cannot cancel this transfer.")
-                cur.execute("""UPDATE bank_accounts SET balance=balance+%s,
+                if tx[5]=="CASHLINE":
+                    cur.execute("UPDATE bank_accounts SET monthly_outgoing_used=GREATEST(0,monthly_outgoing_used-%s),updated_at=CURRENT_TIMESTAMP WHERE id=%s",(tx[2],tx[1]))
+                else:
+                    cur.execute("""UPDATE bank_accounts SET balance=balance+%s,
                                monthly_outgoing_used=GREATEST(0,monthly_outgoing_used-%s),
                                updated_at=CURRENT_TIMESTAMP WHERE id=%s""",
-                            (tx[2]+tx[3],tx[2],tx[1]))
+                                (tx[2]+tx[3],tx[2],tx[1]))
                 cur.execute("""UPDATE ledger_transactions SET status='CANCELLED',
                                description=COALESCE(description,'') || ' [Cancelled by customer]'
                                WHERE id=%s""",(tx[0],))
@@ -564,6 +570,7 @@ def deposit(account_id, amount, actor_user_id=None, description=None):
                     raise ValueError("Account balance limit exceeded.")
                 txid=next_transaction_id(cur)
                 cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(amount,account_id))
+                _cashline_repayment_suggestion(cur,account_id,amount)
                 lid=create_ledger_transaction(cur,transaction_id=txid,transaction_type="DEPOSIT",amount=amount,
                                               recipient_account_id=account_id,description=description)
                 return {"transaction_id":txid,"ledger_id":lid,"status":"COMPLETED","amount":amount,"fee":0}
@@ -875,7 +882,7 @@ def process_monthly_billing():
                     cur.execute("SELECT balance FROM bank_accounts WHERE id=%s FOR UPDATE",(account_id,))
                     current_balance=0
                     debt=cashline_outstanding(cur,account_id)
-                    if credit_status=="ACTIVE" and debt>0
+                    if credit_status=="ACTIVE" and debt>0:
                         if not overdue:
                             cur.execute("UPDATE credit_facilities SET overdue_since=CURRENT_TIMESTAMP WHERE account_id=%s",(account_id,))
                             cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
