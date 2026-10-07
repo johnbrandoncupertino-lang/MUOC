@@ -1060,7 +1060,11 @@ def minebank_credit_page():
             elif action=="request_confirm":
                 preview=session.get("cashline_request_preview")
                 if not preview:
-                    raise ValueError("CashLine review expired. Please start again.")
+                    amount=int(request.form.get("requested_limit","0"))
+                    maximum=int(account.get("default_credit_limit") or 0)
+                    if amount < 300 or (maximum and amount > maximum):
+                        raise ValueError(f"CashLine request must be between 300 and {maximum} Emerald.")
+                    preview={"requested_limit":amount,"reason":request.form.get("reason","")[:500]}
                 ok,msg=verify_wallet_pin(session["minebank_client_id"],request.form.get("wallet_pin",""))
                 if not ok:
                     raise ValueError(msg)
