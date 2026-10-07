@@ -12,8 +12,10 @@ jobs:
           MUOC_CRON_URL: \${{ secrets.MUOC_CRON_URL }}
           MUOC_CRON_TOKEN: \${{ secrets.MUOC_CRON_TOKEN }}
         run: |
-          test -n "$MUOC_CRON_URL"
-          test -n "$MUOC_CRON_TOKEN"
+          if [ -z "$MUOC_CRON_URL" ] || [ -z "$MUOC_CRON_TOKEN" ]; then
+            echo "MineBank cron secrets are not configured; skipping scheduled job."
+            exit 0
+          fi
           curl --fail --silent --show-error \
             -X POST "$MUOC_CRON_URL" \
             -H "Authorization: Bearer $MUOC_CRON_TOKEN"
