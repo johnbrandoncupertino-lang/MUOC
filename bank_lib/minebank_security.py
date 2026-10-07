@@ -6,12 +6,47 @@ from .database import execute_query, execute_query_dict
 
 PASSWORD_MAX_AGE_DAYS = 180
 INACTIVITY_MINUTES = 10
+_SECURITY_SCHEMA_READY = False
 ABSOLUTE_SESSION_HOURS = 24
 
 def now():
     return datetime.now(timezone.utc)
 
 def ensure_security_schema():
+    global _SECURITY_SCHEMA_READY
+    if _SECURITY_SCHEMA_READY:
+        return
+
+    # Avoid replaying many CREATE/ALTER statements on every login.
+    # This catalog probe is read-only and fast on PostgreSQL/Neon.
+    try:
+        rows = execute_query("""
+            SELECT
+                to_regclass('public.minebank_security_events') IS NOT NULL
+                AND to_regclass('public.minebank_sessions') IS NOT NULL
+                AND to_regclass('public.minebank_risk_events') IS NOT NULL
+                AND EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='bank_clients'
+                      AND column_name='login_failed_attempts'
+                )
+                AND EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='bank_clients'
+                      AND column_name='login_blocked_until'
+                )
+                AND EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_schema='public' AND table_name='bank_clients'
+                      AND column_name='login_captcha_required'
+                )
+        """)
+        if rows and rows[0][0]:
+            _SECURITY_SCHEMA_READY = True
+            return
+    except Exception as exc:
+        print(f"MineBank security schema probe warning: {type(exc).__name__}: {exc}")
+
     execute_query("""CREATE TABLE IF NOT EXISTS minebank_security_events (
         id BIGSERIAL PRIMARY KEY,
         client_id BIGINT REFERENCES bank_clients(id) ON DELETE SET NULL,
