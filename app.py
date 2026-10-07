@@ -1487,7 +1487,7 @@ def api_transfer():
 
 @app.route("/about")
 def about():
-    return render_template("minebank_public.html")
+    return render_template("minebank_institutional.html")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0",port=int(__import__("os").environ.get("PORT","5000")))
