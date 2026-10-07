@@ -552,6 +552,18 @@ def repay_credit(account_id, amount, source_account_id):
                 lid=create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_REPAYMENT",
                                               amount=amount,sender_account_id=source_account_id,
                                               recipient_account_id=account_id)
+                remaining=amount
+                cur.execute("""SELECT id,total_due,amount_paid FROM credit_statements
+                               WHERE account_id=%s AND status IN ('OPEN','PARTIALLY_PAID','OVERDUE')
+                               ORDER BY due_at,id FOR UPDATE""",(account_id,))
+                for sid,total_due,paid in cur.fetchall():
+                    if remaining<=0: break
+                    applied=min(remaining,max(0,int(total_due)-int(paid)))
+                    if applied<=0: continue
+                    new_paid=int(paid)+applied
+                    status="PAID" if new_paid>=int(total_due) else "PARTIALLY_PAID"
+                    cur.execute("UPDATE credit_statements SET amount_paid=%s,status=%s WHERE id=%s",(new_paid,status,sid))
+                    remaining-=applied
                 return {"transaction_id":txid,"ledger_id":lid,"status":"COMPLETED","amount":amount}
     finally:
         release_db_connection(conn)
