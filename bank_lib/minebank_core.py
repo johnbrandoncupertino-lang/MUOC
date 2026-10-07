@@ -617,7 +617,7 @@ def activate_credit(account_id, requested_limit):
             with conn.cursor() as cur:
                 account=_lock_account(cur,account_id)
                 if account: _assert_banking_unlocked(cur, account[1])
-                if not account or account[6]!="ENABLED":
+                if not account or account[6] not in ("ACTIVE","LIMITED"):
                     raise ValueError("Account is not active.")
                 cur.execute("SELECT credit_enabled,default_credit_limit,private_or_corporate FROM account_tiers_v2 WHERE id=%s",
                             (account[4],))
@@ -634,8 +634,8 @@ def activate_credit(account_id, requested_limit):
                     cur.execute("UPDATE credit_facilities SET credit_limit=%s,activation_fee_monthly=%s,interest_annual_bps=%s,interest_monthly_bps=%s,status='ACTIVE' WHERE account_id=%s",
                                 (requested_limit,fee,cashline_annual_bps(account[3]),cashline_annual_bps(account[3]),account_id))
                 else:
-                    cur.execute("""INSERT INTO credit_facilities(account_id,credit_limit,interest_monthly_bps,
-                                   activation_fee_monthly,status) VALUES(%s,%s,%s,%s,'ACTIVE')""",
+                    cur.execute("""INSERT INTO credit_facilities(account_id,credit_limit,interest_monthly_bps,interest_annual_bps,
+                                   activation_fee_monthly,status) VALUES(%s,%s,%s,%s,%s,'ACTIVE')""",
                                 (account_id,requested_limit,cashline_annual_bps(account[3]),cashline_annual_bps(account[3]),fee))
                 return {"account_id":account_id,"credit_limit":requested_limit,"monthly_activation_fee":fee,
                         "interest_annual_bps":cashline_annual_bps(account[3]),"status":"ACTIVE"}
