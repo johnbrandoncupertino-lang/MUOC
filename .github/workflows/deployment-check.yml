@@ -7,30 +7,7 @@ on:
     branches: ["main"]
 
 jobs:
-  python-syntax:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-      - name: Install dependencies
-        run: pip install -r requirements.txt pytest
-      - name: Compile Python sources
-        run: python -m compileall -q .
-      - name: Run MineBank PostgreSQL integration tests
-        env:
-          DATABASE_URL: postgresql://postgres:test@localhost:5432/muoc_test
-          SECRET_KEY: ci-test-secret
-        run: pytest -q tests/test_minebank_postgres.py
-      - name: Validate required application files
-        run: |
-          test -f app.py
-          test -f requirements.txt
-          test -d templates
-          test -d static
-
-  postgres-integration:
+  deployment-check:
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -53,8 +30,16 @@ jobs:
           python-version: "3.11"
       - name: Install dependencies
         run: pip install -r requirements.txt pytest
-      - name: Run PostgreSQL integration suite
+      - name: Compile Python sources
+        run: python -m compileall -q .
+      - name: Run MineBank PostgreSQL integration tests
         env:
           DATABASE_URL: postgresql://postgres:test@localhost:5432/muoc_test
           SECRET_KEY: ci-test-secret
         run: pytest -q tests/test_minebank_postgres.py
+      - name: Validate required application files
+        run: |
+          test -f app.py
+          test -f requirements.txt
+          test -d templates
+          test -d static
