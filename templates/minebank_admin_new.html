@@ -12,6 +12,8 @@
 <a class="button" href="{{ url_for('admin_minebank_clients') }}">Client &amp; Account Control</a>
 <a class="button" href="{{ url_for('admin_minebank_settings') }}">Bank Configuration</a>
 <a class="button" href="{{ url_for('admin_minebank_requests') }}">Authorisations</a>
+<a class="button" href="{{ url_for('admin_minebank_transactions') }}">Global Transactions</a>
+<a class="button" href="{{ url_for('admin_minebank_messages') }}">Customer Messages</a>
 </section>
 <section class="panel"><div class="panel-title">Bank policy</div>
 <p>Debt / credit: <b>{{ 'Enabled' if setting.allow_debts else 'Disabled' }}</b></p>
