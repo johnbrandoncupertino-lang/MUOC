@@ -954,14 +954,30 @@ def pay_payment_request(request_id):
 @require_login
 def minebank_profile_page():
     if request.method=="POST":
-        execute_query("UPDATE bank_clients SET date_of_birth=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
-                      (request.form.get("date_of_birth") or None,session["minebank_client_id"]),commit=True)
+        execute_query("""UPDATE bank_clients
+                         SET date_of_birth=%s,phone=%s,address=%s,city=%s,postal_code=%s,country=%s,occupation=%s,updated_at=CURRENT_TIMESTAMP
+                         WHERE id=%s""",
+                      (request.form.get("date_of_birth") or None,
+                       request.form.get("phone","").strip()[:40],
+                       request.form.get("address","").strip()[:300],
+                       request.form.get("city","").strip()[:120],
+                       request.form.get("postal_code","").strip()[:20],
+                       request.form.get("country","").strip()[:80],
+                       request.form.get("occupation","").strip()[:120],
+                       session["minebank_client_id"]),commit=True)
         flash("Profile updated.","success")
     return render_template("minebank_portal.html",mode="profile",client=current_client(),portal_active="profile")
 
-@app.route("/portal/notifications")
+@app.route("/portal/notifications", methods=["GET","POST"])
 @require_login
 def minebank_notifications_page():
+    if request.method=="POST":
+        if request.form.get("action")=="read_all":
+            execute_query("UPDATE bank_notifications SET read_at=CURRENT_TIMESTAMP WHERE client_id=%s AND read_at IS NULL",
+                          (session["minebank_client_id"],),commit=True)
+        elif request.form.get("notification_id"):
+            execute_query("UPDATE bank_notifications SET read_at=CURRENT_TIMESTAMP WHERE id=%s AND client_id=%s",
+                          (request.form["notification_id"],session["minebank_client_id"]),commit=True)
     messages=execute_query_dict("SELECT * FROM bank_notifications WHERE client_id=%s ORDER BY created_at DESC LIMIT 100",(session["minebank_client_id"],))
     return render_template("minebank_portal.html",mode="notifications",messages=messages,portal_active="notifications")
 
