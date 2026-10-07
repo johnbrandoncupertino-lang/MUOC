@@ -1042,16 +1042,24 @@ def admin_minebank_requests():
 def review_request(request_id):
     data=request.get_json(silent=True) or request.form
     approve=str(data.get("approve","")).lower() in {"1","true","yes","approve","approved"}
+    if not approve and not str(data.get("reason","")).strip():
+        return jsonify(error="A rejection reason is required."),400
     row=execute_query_dict("SELECT * FROM bank_requests_v2 WHERE id=%s AND status='PENDING'",(request_id,))
     if not row: return jsonify(error="Request not found or already reviewed."),404
     r=row[0]
     try:
         if approve and r["request_type"]=="CREDIT_LINE":
-            limit=int((r["payload"] or {}).get("requested_limit",0))
+            requested=int((r["payload"] or {}).get("requested_limit",0))
+            limit=int(data.get("approved_limit") or requested)
+            if limit<=0 or limit>requested:
+                raise ValueError("Approved credit limit must be greater than zero and no higher than the requested amount.")
             execute_query("""INSERT INTO credit_facilities(account_id,credit_limit,interest_monthly_bps,activation_fee_monthly,status)
                              VALUES(%s,%s,700,CASE WHEN %s>5000 THEN 40 ELSE 10 END,'ACTIVE')
-                             ON CONFLICT(account_id) DO UPDATE SET credit_limit=EXCLUDED.credit_limit,status='ACTIVE'""",
+                             ON CONFLICT(account_id) DO UPDATE SET credit_limit=EXCLUDED.credit_limit,
+                               activation_fee_monthly=EXCLUDED.activation_fee_monthly,status='ACTIVE'""",
                           (r["account_id"],limit,limit),commit=True)
+        elif approve and r["request_type"]=="CREDIT_CANCEL":
+            execute_query("UPDATE credit_facilities SET status='CLOSED' WHERE account_id=%s AND status='ACTIVE'",(r["account_id"],),commit=True)
         elif approve and r["request_type"]=="TIER_CHANGE":
             code=(r["payload"] or {}).get("tier_code")
             tier=execute_query_dict("SELECT id FROM account_tiers_v2 WHERE code=%s AND active=TRUE",(code,))
@@ -1059,10 +1067,28 @@ def review_request(request_id):
             execute_query("UPDATE bank_accounts SET tier_id=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(tier[0]["id"],r["account_id"]),commit=True)
         elif approve and r["request_type"]=="REFUND":
             p=r["payload"] or {}
-            chargeback(p["transaction_id"],session["minebank_client_id"],p.get("reason"))
+            tx=execute_query_dict("SELECT status FROM ledger_transactions WHERE transaction_id=%s",(p.get("transaction_id"),))
+            if not tx:
+                raise ValueError("Transaction no longer exists.")
+            if tx[0]["status"]=="COMPLETED":
+                chargeback(p["transaction_id"],session["minebank_client_id"],p.get("reason"))
+            elif tx[0]["status"]=="PENDING_APPROVAL":
+                cancel_transfer(p["transaction_id"],r["client_id"],request.remote_addr)
+            else:
+                raise ValueError("This transaction is no longer eligible for refund/chargeback.")
         status="APPROVED" if approve else "REJECTED"
+        review_reason=str(data.get("reason","")).strip()[:500]
         execute_query("UPDATE bank_requests_v2 SET status=%s,reviewed_by=%s,reviewed_at=CURRENT_TIMESTAMP WHERE id=%s",
                       (status,session["minebank_client_id"],request_id),commit=True)
+        create_notification(r["client_id"],"REQUEST_UPDATE",
+                            f"Request {status.lower()}",
+                            (f"Your {r['request_type']} request was approved."
+                             if approve else f"Your {r['request_type']} request was rejected: {review_reason}"),
+                            r["account_id"])
+        if approve and r["request_type"]=="CREDIT_LINE":
+            create_notification(r["client_id"],"REQUEST_UPDATE","Credit line approved",
+                                f"Your credit request was approved for {limit} Emerald.",
+                                r["account_id"])
         flash(f"Request {status.lower()}.", "success")
         return redirect(url_for("admin_minebank_requests"))
     except Exception as exc:
