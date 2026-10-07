@@ -68,6 +68,10 @@ def inject_bank_context():
         "minebank_pending_requests": pending_count(client["id"]) if client else 0,
         "minebank_request_updates": request_update_count(client["id"]) if client else 0,
         "minebank_unread_messages": unread_message_count(client["id"]) if client else 0,
+        "minebank_frozen_account": (
+            next((a for a in accounts if a.get("status") == "FROZEN"), None)
+            if client else None
+        ),
     }
 
 def unread_message_count(client_id):
@@ -284,14 +288,14 @@ def minebank_dashboard():
                            transactions=transactions, messages=messages, chart_rows=chart_rows,
                            portal_active="dashboard")
 
-def selected_account():
+def selected_account(account_id=None):
     accounts = get_accounts(session["minebank_client_id"])
     if not accounts and session.get("minebank_role") == "ADMIN":
         create_account(session["minebank_client_id"], "BUSINESS", "BUSINESS")
         accounts = get_accounts(session["minebank_client_id"])
     if not accounts:
         return None
-    wanted = session.get("minebank_account_id") or request.args.get("account_id")
+    wanted = account_id or session.get("minebank_account_id") or request.args.get("account_id")
     for account in accounts:
         if wanted and int(account["id"]) == int(wanted):
             session["minebank_account_id"] = int(account["id"])
@@ -317,9 +321,46 @@ def minebank_account_page():
     return redirect(url_for("minebank_accounts_page"))
 
 def evaluate_tier_eligibility(client, account, tier):
-    """Return (eligible, explanation) using the tier's configured eligibility rules."""
+    """Evaluate MineBank's configured Personal rules and fixed Business rules."""
     config = tier.get("eligibility_config") or {}
+    code = str(tier.get("code") or "").upper()
     reasons = []
+
+    if account and account.get("account_type") == "BUSINESS":
+        # Business accounts are always opened at Standard. Upgrades are
+        # determined by balance and financial standing, never by age.
+        if code == "BUSINESS":
+            return True, "Standard Business account."
+        balance = int(account.get("balance") or 0)
+        debt_rows = execute_query(
+            """SELECT COALESCE(SUM(CASE
+                WHEN l.transaction_type='TRANSFER' AND l.transfer_kind='CASHLINE'
+                     AND l.status IN ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL') THEN l.amount+l.fee
+                WHEN l.transaction_type IN ('CREDIT_INTEREST','CREDIT_FEE') AND l.status='COMPLETED' THEN l.amount
+                WHEN l.transaction_type='CREDIT_REPAYMENT' AND l.status='COMPLETED'
+                     AND l.recipient_account_id=%s THEN -l.amount
+                ELSE 0 END),0)
+               FROM ledger_transactions l
+               WHERE l.sender_account_id=%s OR l.recipient_account_id=%s""",
+            (account["id"], account["id"], account["id"])
+        )
+        debt = max(0, int(debt_rows[0][0] or 0)) if debt_rows else 0
+
+        if code == "BUSINESS_PRO":
+            if balance < 1000:
+                reasons.append("Minimum balance: 1,000 Emerald.")
+            if debt > max(250, balance // 4):
+                reasons.append("Good financial standing required: outstanding debt is too high.")
+        elif code == "CORPORATE":
+            if balance < 10000:
+                reasons.append("Minimum balance: 10,000 Emerald.")
+            if debt > max(1000, balance // 4):
+                reasons.append("Good financial standing required: outstanding debt is too high.")
+            reasons.append("Corporate accounts require Admin approval.")
+        else:
+            reasons.append("This Business tier is not currently available.")
+        return (False, "Not eligible: " + " ".join(reasons)) if reasons else (True, "You qualify for this plan.")
+
     minimum_age = int(config.get("minimum_age") or 0)
     if minimum_age:
         dob = client.get("date_of_birth")
@@ -371,7 +412,9 @@ def minebank_accounts_page():
                 create_request(session["minebank_client_id"],"TIER_CHANGE",account_id,{"tier_code":tier_code})
                 flash("Account tier change submitted for bank review.","success")
                 return redirect(url_for("minebank_accounts_page",account_id=account_id))
-            tier=request.form.get("tier_code","BUSINESS")
+            # Business accounts are opened at Standard only. Upgrades are
+            # requested from the account after the eligibility checks pass.
+            tier="BUSINESS"
             legal=request.form.get("legal_name","").strip()[:200]
             trading=request.form.get("trading_name","").strip()[:200]
             if not legal:
@@ -456,7 +499,12 @@ def approve_business_payment(account_id,transaction_id):
 @app.route("/portal/transfer", methods=["GET","POST"])
 @require_login
 def minebank_transfer_page():
-    account = selected_account()
+    account = selected_account(request.args.get("account_id") or request.form.get("account_id"))
+    if not account:
+        return redirect(url_for("minebank_accounts_page"))
+    if account.get("status") in {"FROZEN", "CLOSED"}:
+        flash("This account is suspended and cannot be used for transfers.", "error")
+        return redirect(url_for("minebank_accounts_page", account_id=account["id"]))
     preview = session.get("transfer_preview")
     error = None
     if request.method == "POST":
@@ -507,8 +555,8 @@ def minebank_transfer_page():
                     return redirect(url_for("minebank_transactions_page"))
                 except Exception as exc:
                     error = str(exc)
-    return render_template("minebank_portal.html", mode="transfer", account=account, preview=preview,
-                           error=error, portal_active="transfer")
+    return render_template("minebank_portal.html", mode="transfer", account=account, accounts=get_accounts(session["minebank_client_id"]),
+                           preview=preview, error=error, portal_active="transfer")
 
 @app.route("/portal/transactions")
 @require_login
