@@ -8,3 +8,5 @@ psutil~=6.1.1
 WTForms~=3.2.1
 waitress~=3.0.2
 flask-wtf~=1.2.1
+
+reportlab~=4.2.5
