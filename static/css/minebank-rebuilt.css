@@ -373,3 +373,17 @@ table .pending{color:#8a671c;font-weight:bold}
 .notice{padding:11px 14px;line-height:1.45}
 .message-panel p{margin:10px 0;line-height:1.5}
 .message-panel small{display:block;margin-top:6px;color:#718596}
+
+/* Subtle secure-login motion; respects reduced-motion preferences. */
+.login-body{position:relative;overflow:hidden}
+.login-card{animation:minebankLoginIn .55s ease-out both}
+.login-orb{position:fixed;width:180px;height:180px;border:1px solid rgba(86,119,143,.16);border-radius:50%;pointer-events:none}
+.orb-one{top:8%;left:7%;animation:minebankFloat 8s ease-in-out infinite}
+.orb-two{right:8%;bottom:10%;width:120px;height:120px;animation:minebankFloat 10s ease-in-out infinite reverse}
+.login-status{font-size:12px;color:#6f8493;margin:-5px 0 18px;text-align:center}
+.login-status span{display:inline-block;width:7px;height:7px;border-radius:50%;background:#5b8d72;box-shadow:0 0 0 0 rgba(91,141,114,.35);animation:minebankPulse 2.2s infinite}
+.login-card input:focus{transform:translateY(-1px);transition:transform .16s ease,box-shadow .16s ease}
+@keyframes minebankLoginIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
+@keyframes minebankFloat{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(0,-12px,0)}}
+@keyframes minebankPulse{0%,100%{box-shadow:0 0 0 0 rgba(91,141,114,.35)}50%{box-shadow:0 0 0 5px rgba(91,141,114,0)}}
+@media (prefers-reduced-motion:reduce){.login-card,.login-orb,.login-status span{animation:none!important}.login-card input:focus{transform:none}}
