@@ -163,7 +163,7 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
             if sender[9] and (_now() - sender[9]).total_seconds() < 30:
                 raise ValueError("Outgoing transfers require a 30-second cooldown.")
 
-            fee = _fee_for_transfer(cur, sender, recipient[0], amount) + max(0,int(extra_fee))
+            fee = _fee_for_transfer(cur, sender, recipient[0], amount) + max(0, int(extra_fee))
             total = amount + fee
             credit_limit = get_credit_limit(cur, sender[0])
             if int(sender[5]) - total < -credit_limit:
@@ -263,7 +263,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 if sender[9] and (_now() - sender[9]).total_seconds() < 30:
                     raise ValueError("Outgoing transfers require a 30-second cooldown.")
 
-                fee = _fee_for_transfer(cur, sender, amount)
+                fee = _fee_for_transfer(cur, sender, recipient[0], amount) + max(0, int(extra_fee))
                 total = amount + fee
                 credit_limit = get_credit_limit(cur, sender[0])
                 if int(sender[5]) - total < -credit_limit:
