@@ -172,6 +172,46 @@ def ensure_message_schema():
         return False
 
 
+
+_LOAN_SCHEMA_READY = False
+
+def ensure_loan_schema():
+    """Ensure the Loans product tables exist on older MineBank databases."""
+    global _LOAN_SCHEMA_READY
+    if _LOAN_SCHEMA_READY:
+        return True
+    try:
+        execute_query("""CREATE TABLE IF NOT EXISTS minebank_loans (
+            id BIGSERIAL PRIMARY KEY,
+            loan_number VARCHAR(40) UNIQUE NOT NULL,
+            client_id BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
+            account_id BIGINT NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+            destination_account_id BIGINT NOT NULL REFERENCES bank_accounts(id) ON DELETE RESTRICT,
+            principal BIGINT NOT NULL CHECK (principal >= 10000 AND principal <= 50000000),
+            term_days INTEGER NOT NULL CHECK (term_days IN (12,24,48,96,192)),
+            annual_interest_bps INTEGER NOT NULL,
+            total_interest BIGINT NOT NULL DEFAULT 0,
+            total_cost BIGINT NOT NULL DEFAULT 0,
+            request_fee BIGINT NOT NULL,
+            installment_amount BIGINT NOT NULL,
+            installments_paid INTEGER NOT NULL DEFAULT 0,
+            next_due_date DATE,
+            status VARCHAR(24) NOT NULL DEFAULT 'PENDING',
+            approval_mode VARCHAR(24) NOT NULL DEFAULT 'BANK_REVIEW',
+            requested_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            approved_at TIMESTAMPTZ,
+            completed_at TIMESTAMPTZ,
+            approved_by BIGINT REFERENCES bank_clients(id),
+            notes VARCHAR(1000)
+        )""", fetch=False, commit=True)
+        execute_query("CREATE INDEX IF NOT EXISTS minebank_loans_client_idx ON minebank_loans(client_id,status,requested_at DESC)", fetch=False, commit=True)
+        execute_query("CREATE INDEX IF NOT EXISTS minebank_loans_account_idx ON minebank_loans(account_id,status)", fetch=False, commit=True)
+        _LOAN_SCHEMA_READY = True
+        return True
+    except Exception as exc:
+        print(f"MineBank loan schema warning: {type(exc).__name__}: {exc}")
+        return False
+
 _TRANSACTION_SCHEMA_READY = False
 
 def ensure_transaction_schema():
