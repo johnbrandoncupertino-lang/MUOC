@@ -716,8 +716,6 @@ def minebank_cron():
         billing=[]
         statements=[]
         if datetime.now(timezone.utc).day == 1:
-            from bank_lib.minebank_core import process_monthly_billing
-            billing=process_monthly_billing()
             from datetime import timedelta
             today=datetime.now(timezone.utc).date()
             first=today.replace(day=1)
@@ -725,6 +723,8 @@ def minebank_cron():
             prev_start=prev_end.replace(day=1)
             facilities=execute_query_dict("SELECT account_id FROM credit_facilities WHERE status IN ('ACTIVE','SUSPENDED')")
             statements=[generate_cashline_statement(int(x["account_id"]),prev_start,prev_end) for x in facilities]
+            from bank_lib.minebank_core import process_monthly_billing
+            billing=process_monthly_billing()
         return jsonify(interest=interest,billing=billing,statements=statements,scheduled=process_due_scheduled_transfers())
     except Exception as exc:
         return jsonify(error=str(exc)),500
