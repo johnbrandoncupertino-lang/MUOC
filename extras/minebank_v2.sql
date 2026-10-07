@@ -518,3 +518,29 @@ ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS interest_annual_bps INTEG
 ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS minimum_due_percent_bps INTEGER NOT NULL DEFAULT 500;
 ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS minimum_due_floor INTEGER NOT NULL DEFAULT 40;
 ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS transfer_kind VARCHAR(40);
+
+-- Preserve legacy negative account balances as CashLine debt before the new
+-- separate-circuit model is used. This is idempotent by description.
+INSERT INTO ledger_transactions
+(transaction_id,transaction_type,amount,fee,currency,recipient_account_id,status,description,transfer_kind)
+SELECT 'MUOC-' || EXTRACT(YEAR FROM CURRENT_TIMESTAMP)::INT || '-' || LPAD(nextval('muoc_transaction_seq')::TEXT,6,'0'),
+       'TRANSFER', -a.balance, 0, 'Emerald', a.id, 'COMPLETED',
+       'Migrated legacy CashLine balance', 'CASHLINE'
+FROM bank_accounts a
+JOIN credit_facilities cf ON cf.account_id=a.id
+WHERE a.balance < 0
+  AND cf.status IN ('ACTIVE','SUSPENDED')
+  AND NOT EXISTS (
+      SELECT 1 FROM ledger_transactions l
+      WHERE l.recipient_account_id=a.id
+        AND l.transfer_kind='CASHLINE'
+        AND l.description='Migrated legacy CashLine balance'
+  );
+
+UPDATE bank_accounts a
+SET balance=0, updated_at=CURRENT_TIMESTAMP
+WHERE a.balance < 0
+  AND EXISTS (
+      SELECT 1 FROM credit_facilities cf
+      WHERE cf.account_id=a.id AND cf.status IN ('ACTIVE','SUSPENDED')
+  );
