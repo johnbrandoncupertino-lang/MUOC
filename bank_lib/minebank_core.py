@@ -57,7 +57,7 @@ def next_transaction_id(cur):
 def create_ledger_transaction(cur, *, transaction_id, transaction_type, amount, fee=0,
                               currency=CURRENCY, sender_account_id=None,
                               recipient_account_id=None, status="COMPLETED",
-                              description=None, reference_id=None, metadata=None, transfer_kind=None):
+                              description=None, reference_id=None, metadata=None, transfer_kind=None, extra_fee=0):
     cur.execute(
         """INSERT INTO ledger_transactions
            (transaction_id,transaction_type,amount,fee,currency,sender_account_id,
@@ -163,7 +163,7 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
             if sender[9] and (_now() - sender[9]).total_seconds() < 30:
                 raise ValueError("Outgoing transfers require a 30-second cooldown.")
 
-            fee = _fee_for_transfer(cur, sender, recipient[0], amount)
+            fee = _fee_for_transfer(cur, sender, recipient[0], amount) + max(0,int(extra_fee))
             total = amount + fee
             credit_limit = get_credit_limit(cur, sender[0])
             if int(sender[5]) - total < -credit_limit:
