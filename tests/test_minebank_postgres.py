@@ -1,5 +1,10 @@
 import os
+import sys
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 import pytest
 from werkzeug.security import generate_password_hash
