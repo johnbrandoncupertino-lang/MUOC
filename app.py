@@ -198,7 +198,7 @@ def prepare_request():
 
 @app.route("/")
 def home():
-    return render_template("minebank_institutional.html")
+    return render_template("minebank_public.html")
 
 @app.route("/login")
 def legacy_login():
@@ -1487,7 +1487,7 @@ def api_transfer():
 
 @app.route("/about")
 def about():
-    return render_template("minebank_institutional.html")
+    return render_template("minebank_public.html")
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0",port=int(__import__("os").environ.get("PORT","5000")))
