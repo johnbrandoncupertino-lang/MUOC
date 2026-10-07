@@ -549,14 +549,33 @@ def minebank_transactions_page():
         where.append("l.amount>=%s"); params.append(int(min_amount))
     if max_amount:
         where.append("l.amount<=%s"); params.append(int(max_amount))
+    # Keep category aggregation out of GROUP BY so this page remains compatible
+    # with production ledgers where transaction_id is not declared UNIQUE.
     sql=("SELECT l.transaction_id,l.transaction_type,l.amount,l.fee,l.status,l.description,l.causal,l.reference_id,l.created_at,"
          "l.sender_account_id,l.recipient_account_id,"
-         "COALESCE(string_agg(tc.category, ', ' ORDER BY tc.category),'') AS categories "
-         "FROM ledger_transactions l LEFT JOIN minebank_transaction_categories tc "
-         "ON tc.transaction_id=l.transaction_id AND tc.account_id=%s WHERE "+" AND ".join(where)+
-         " GROUP BY l.transaction_id ORDER BY l.created_at DESC LIMIT 500")
-    transactions=execute_query_dict(sql,tuple([account["id"]]+params))
-    categories=execute_query_dict("SELECT DISTINCT category FROM minebank_transaction_categories WHERE account_id=%s ORDER BY category",(account["id"],))
+         "COALESCE((SELECT string_agg(tc.category, ', ' ORDER BY tc.category) "
+         "FROM minebank_transaction_categories tc "
+         "WHERE tc.transaction_id=l.transaction_id AND tc.account_id=%s),'') AS categories "
+         "FROM ledger_transactions l WHERE "+" AND ".join(where)+
+         " ORDER BY l.created_at DESC LIMIT 500")
+    query_params=tuple([account["id"]]+params)
+    try:
+        transactions=execute_query_dict(sql,query_params)
+        categories=execute_query_dict(
+            "SELECT DISTINCT category FROM minebank_transaction_categories WHERE account_id=%s ORDER BY category",
+            (account["id"],)
+        )
+    except Exception as exc:
+        # A legacy database may have the ledger columns but not the optional
+        # category table. The banking register must still remain usable.
+        print(f"MineBank transaction category compatibility warning: {type(exc).__name__}: {exc}")
+        fallback=("SELECT transaction_id,transaction_type,amount,fee,status,description,"
+                  "causal,reference_id,created_at,sender_account_id,recipient_account_id "
+                  "FROM ledger_transactions l WHERE "+" AND ".join(where)+
+                  " ORDER BY created_at DESC LIMIT 500")
+        fallback_params=tuple(params)
+        transactions=execute_query_dict(fallback,fallback_params)
+        categories=[]
     default_categories=["Groceries","Housing","Transport","Bills","Salary","Shopping","Entertainment","Travel","Health","Education","Fees","Transfers","CashLine","Other"]
     return render_template("minebank_portal.html",mode="transactions",account=account,transactions=transactions,
                            categories=categories,default_categories=default_categories,portal_active="transactions")
@@ -677,9 +696,12 @@ def minebank_refund(transaction_id):
 @app.route("/portal/statements")
 @require_login
 def minebank_statements_page():
-    account=selected_account()
-    return render_template("minebank_portal.html",mode="statements",account=account,
-                           transactions=recent_transactions(account,500),portal_active="statements")
+    # Statements and Transactions are one canonical register. Reuse the same
+    # schema compatibility and query path instead of maintaining a second,
+    # divergent implementation.
+    if not ensure_transaction_schema():
+        return "MineBank database is temporarily unavailable. Please try again in a moment.", 503
+    return minebank_transactions_page()
 
 @app.route("/portal/statements/print")
 @require_login
