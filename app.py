@@ -1298,6 +1298,85 @@ def review_transfer(transaction_id):
         flash(f"Could not review transfer: {exc}", "error")
         return redirect(url_for("admin_minebank_requests"))
 
+@app.route("/admin/minebank/transactions", methods=["GET"])
+@require_role("ADMIN","OPERATOR")
+def admin_minebank_transactions():
+    q=request.args.get("q","").strip()
+    status=request.args.get("status","").strip().upper()
+    params=[]
+    where=[]
+    if q:
+        where.append("(l.transaction_id ILIKE %s OR COALESCE(l.description,'') ILIKE %s OR COALESCE(l.causal,'') ILIKE %s OR COALESCE(s.account_number,'') ILIKE %s OR COALESCE(r.account_number,'') ILIKE %s)")
+        like=f"%{q}%"; params.extend([like,like,like,like,like])
+    if status:
+        where.append("l.status=%s"); params.append(status)
+    condition=("WHERE "+" AND ".join(where)) if where else ""
+    transactions=execute_query_dict(
+        """SELECT l.*,s.account_number sender_number,r.account_number recipient_number,
+                  sc.email sender_email,rc.email recipient_email,
+                  COALESCE(string_agg(DISTINCT a.action,' | '),'') audit_actions
+           FROM ledger_transactions l
+           LEFT JOIN bank_accounts s ON s.id=l.sender_account_id
+           LEFT JOIN bank_accounts r ON r.id=l.recipient_account_id
+           LEFT JOIN bank_clients sc ON sc.id=s.client_id
+           LEFT JOIN bank_clients rc ON rc.id=r.client_id
+           LEFT JOIN audit_events a ON a.transaction_id=l.transaction_id
+           """+condition+""" GROUP BY l.id,s.account_number,r.account_number,sc.email,rc.email
+           ORDER BY l.created_at DESC LIMIT 500""",tuple(params))
+    audits=execute_query_dict("""SELECT a.*,c.email actor_email FROM audit_events a
+                                 LEFT JOIN bank_clients c ON c.id=a.actor_client_id
+                                 ORDER BY a.created_at DESC LIMIT 300""")
+    risks=execute_query_dict("""SELECT r.*,a.account_number,c.email FROM minebank_risk_events r
+                                LEFT JOIN bank_accounts a ON a.id=r.account_id
+                                LEFT JOIN bank_clients c ON c.id=r.client_id
+                                ORDER BY r.created_at DESC LIMIT 300""")
+    security=execute_query_dict("""SELECT s.*,c.email FROM minebank_security_events s
+                                   LEFT JOIN bank_clients c ON c.id=s.client_id
+                                   ORDER BY s.created_at DESC LIMIT 300""")
+    return render_template("minebank_admin_new.html",mode="transactions",transactions=transactions,audits=audits,risks=risks,security=security)
+
+@app.route("/admin/minebank/messages", methods=["GET","POST"])
+@require_role("ADMIN","OPERATOR")
+def admin_minebank_messages():
+    error=None
+    if request.method=="POST":
+        try:
+            subject=request.form.get("subject","").strip()[:200]
+            body=request.form.get("body","").strip()[:2000]
+            target_mode=request.form.get("target_mode","ALL")
+            account_number=request.form.get("account_number","").strip()
+            account_type=request.form.get("account_type","").strip().upper()
+            tier_code=request.form.get("tier_code","").strip().upper()
+            if not subject or not body:
+                raise ValueError("Subject and message are required.")
+            if target_mode=="ACCOUNT":
+                targets=execute_query_dict("SELECT id,client_id FROM bank_accounts WHERE account_number=%s AND status<>'CLOSED'",(account_number,))
+            else:
+                conditions=["a.status<>'CLOSED'"]; params=[]
+                if target_mode=="TYPE":
+                    conditions.append("a.account_type=%s"); params.append(account_type)
+                elif target_mode=="TIER":
+                    conditions.append("t.code=%s"); params.append(tier_code)
+                targets=execute_query_dict("SELECT a.id,a.client_id FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE "+" AND ".join(conditions)+" ORDER BY a.id",tuple(params))
+            if not targets:
+                raise ValueError("No matching accounts were found.")
+            for target in targets:
+                create_notification(target["client_id"],"BANK_MESSAGE",subject,body,target["id"])
+            execute_query("""INSERT INTO minebank_message_campaigns(created_by,subject,body,recipient_filter)
+                             VALUES(%s,%s,%s,%s::jsonb)""",
+                          (session["minebank_client_id"],subject,body,__import__("json").dumps({
+                              "mode":target_mode,"account_number":account_number,"account_type":account_type,"tier_code":tier_code
+                          })),commit=True)
+            flash(f"Message sent to {len(targets)} account(s).","success")
+            return redirect(url_for("admin_minebank_messages"))
+        except Exception as exc:
+            error=str(exc)
+    accounts=execute_query_dict("SELECT a.account_number,a.account_type,t.code,t.display_name FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE a.status<>'CLOSED' ORDER BY a.account_number")
+    tiers=execute_query_dict("SELECT code,display_name,account_type FROM account_tiers_v2 WHERE active=TRUE ORDER BY account_type,id")
+    campaigns=execute_query_dict("""SELECT m.*,c.email created_by_email FROM minebank_message_campaigns m
+                                    JOIN bank_clients c ON c.id=m.created_by ORDER BY m.created_at DESC LIMIT 50""")
+    return render_template("minebank_admin_new.html",mode="messages",accounts=accounts,tiers=tiers,campaigns=campaigns,error=error)
+
 @app.route("/setup", methods=["GET","POST"])
 @app.route("/admin/setup", methods=["GET","POST"])
 def minebank_setup():
