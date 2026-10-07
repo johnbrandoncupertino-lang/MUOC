@@ -99,10 +99,57 @@ def get_credit_limit(cur, account_id):
 
 
 
-def preview_transfer(actor_client_id, sender_account_id, recipient_account_number, amount, extra_fee=0):
+
+def cashline_outstanding(cur, account_id, include_pending=True):
+    """Return current CashLine debt independently from the ordinary bank balance."""
+    statuses = "('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL')" if include_pending else "('COMPLETED',)"
+    cur.execute(f"""
+        SELECT
+          COALESCE(SUM(CASE WHEN transaction_type='TRANSFER' AND transfer_kind='CASHLINE' AND status IN {statuses} THEN amount+fee ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN transaction_type IN ('CREDIT_INTEREST','CREDIT_FEE') AND status='COMPLETED' THEN amount ELSE 0 END),0),
+          COALESCE(SUM(CASE WHEN transaction_type='CREDIT_REPAYMENT' AND status='COMPLETED' THEN amount ELSE 0 END),0)
+        FROM ledger_transactions
+        WHERE sender_account_id=%s OR recipient_account_id=%s
+    """,(account_id,account_id))
+    principal,charges,repaid=cur.fetchone()
+    return max(0,int(principal or 0)+int(charges or 0)-int(repaid or 0))
+
+def cashline_principal_outstanding(cur, account_id, include_pending=True):
+    statuses = "('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL')" if include_pending else "('COMPLETED',)"
+    cur.execute(f"""SELECT COALESCE(SUM(amount+fee),0) FROM ledger_transactions
+                    WHERE sender_account_id=%s AND transaction_type='TRANSFER'
+                      AND transfer_kind='CASHLINE' AND status IN {statuses}""",(account_id,))
+    principal=int(cur.fetchone()[0] or 0)
+    cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions
+                   WHERE transaction_type='CREDIT_REPAYMENT' AND status='COMPLETED'
+                     AND recipient_account_id=%s""",(account_id,))
+    return max(0,principal-int(cur.fetchone()[0] or 0))
+
+def _cashline_repayment_suggestion(cur, account_id, incoming_amount):
+    cur.execute("SELECT client_id FROM bank_accounts WHERE id=%s",(account_id,))
+    row=cur.fetchone()
+    if not row: return
+    outstanding=cashline_outstanding(cur,account_id)
+    if outstanding<=0 or int(incoming_amount)<outstanding: return
+    cur.execute("""SELECT 1 FROM bank_notifications
+                   WHERE client_id=%s AND account_id=%s
+                     AND notification_type='CASHLINE_REPAYMENT_SUGGESTION'
+                     AND read_at IS NULL
+                     AND created_at>=CURRENT_TIMESTAMP-INTERVAL '24 hours'
+                   LIMIT 1""",(row[0],account_id))
+    if cur.fetchone(): return
+    cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
+                   VALUES(%s,%s,'CASHLINE_REPAYMENT_SUGGESTION','CashLine repayment suggestion',%s)""",
+                (row[0],account_id,
+                 f"You have {outstanding} Emerald outstanding on CashLine and just received {int(incoming_amount)} Emerald. You have enough available funds to repay the CashLine balance if you wish. No automatic repayment has been made."))
+
+
+def preview_transfer(actor_client_id, sender_account_id, recipient_account_number, amount, extra_fee=0, funding_source="BALANCE"):
     """Validate a transfer and calculate its fee without changing the ledger."""
     if not isinstance(amount, int) or amount <= 0:
         raise ValueError("Transfer amount must be a positive integer Emerald amount.")
+    funding_source=(funding_source or "BALANCE").upper()
+    if funding_source not in ("BALANCE","CASHLINE"): raise ValueError("Invalid payment source.")
     recipient_account_number = (recipient_account_number or "").strip().upper()
     if not recipient_account_number:
         raise ValueError("Recipient account number is required.")
@@ -165,9 +212,17 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
 
             fee = _fee_for_transfer(cur, sender, recipient[0], amount) + max(0, int(extra_fee))
             total = amount + fee
-            credit_limit = get_credit_limit(cur, sender[0])
-            if int(sender[5]) - total < -credit_limit:
-                raise ValueError("Insufficient available balance/credit.")
+            if funding_source=="BALANCE":
+                if int(sender[5]) < total: raise ValueError("Insufficient MineBank Balance.")
+                available_after=int(sender[5])-total
+            else:
+                cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(sender[0],))
+                facility=cur.fetchone()
+                if not facility or facility[1]!="ACTIVE": raise ValueError("CashLine is not active for this account.")
+                outstanding=cashline_outstanding(cur,sender[0])
+                available_credit=max(0,int(facility[0])-outstanding)
+                if total>available_credit: raise ValueError(f"Insufficient CashLine availability. Available: {available_credit} Emerald.")
+                available_after=available_credit-total
             cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
             max_balance_row = cur.fetchone()
             max_balance = max_balance_row[0] if max_balance_row else None
@@ -180,7 +235,8 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
                 "fee": fee,
                 "total": total,
                 "sender_balance": int(sender[5]),
-                "available_after": int(sender[5]) - total,
+                "available_after": available_after,
+                "funding_source": funding_source,
                 "recipient_balance": int(recipient[5]),
                 "period": period,
             }
@@ -188,9 +244,12 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
         release_db_connection(conn)
 
 def transfer(*, sender_account_id, recipient_account_number, amount,
-             description=None, reference=None, causal=None, currency=CURRENCY, idempotency_key=None, actor_client_id=None, ip_address=None, transfer_kind=None, extra_fee=0):
+             description=None, reference=None, causal=None, currency=CURRENCY, idempotency_key=None,
+             actor_client_id=None, ip_address=None, transfer_kind=None, extra_fee=0, funding_source="BALANCE"):
     if not isinstance(amount, int) or amount <= 0:
         raise ValueError("Transfer amount must be a positive integer Emerald amount.")
+    funding_source=(funding_source or "BALANCE").upper()
+    if funding_source not in ("BALANCE","CASHLINE"): raise ValueError("Invalid payment source.")
     if not recipient_account_number:
         raise ValueError("Recipient account number is required.")
 
@@ -265,9 +324,15 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
 
                 fee = _fee_for_transfer(cur, sender, recipient[0], amount) + max(0, int(extra_fee))
                 total = amount + fee
-                credit_limit = get_credit_limit(cur, sender[0])
-                if int(sender[5]) - total < -credit_limit:
-                    raise ValueError("Insufficient available balance/credit.")
+                if funding_source=="BALANCE":
+                    if int(sender[5]) < total: raise ValueError("Insufficient MineBank Balance.")
+                else:
+                    cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(sender[0],))
+                    facility=cur.fetchone()
+                    if not facility or facility[1]!="ACTIVE": raise ValueError("CashLine is not active for this account.")
+                    outstanding=cashline_outstanding(cur,sender[0])
+                    available_credit=max(0,int(facility[0])-outstanding)
+                    if total>available_credit: raise ValueError(f"Insufficient CashLine availability. Available: {available_credit} Emerald.")
 
                 risk_score = 0
                 risk_reasons = []
@@ -299,13 +364,19 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                     pass
                 requires_business_approval = sender[3]=="BUSINESS" and sender_tier_code in ("BUSINESS_PRO","CORPORATE") and business_role=="EMPLOYEE"
                 status = "PENDING_BUSINESS_APPROVAL" if requires_business_approval else ("PENDING_APPROVAL" if amount > PENDING_APPROVAL_THRESHOLD or risk_score >= 60 else "COMPLETED")
-                if transfer_kind is None:
+                if funding_source=="CASHLINE":
+                    transfer_kind="CASHLINE"
+                elif transfer_kind is None:
                     transfer_kind = "OWN_TRANSFER" if sender[1] == recipient[1] else f"{sender[3]}_TO_{recipient[3]}"
                 txid = next_transaction_id(cur)
-                cur.execute("""UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
+                if funding_source=="BALANCE":
+                    cur.execute("""UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
                                last_outgoing_at=CURRENT_TIMESTAMP,monthly_outgoing_period=%s,
-                               updated_at=CURRENT_TIMESTAMP WHERE id=%s""",
-                            (total,used+amount,period,sender[0]))
+                               updated_at=CURRENT_TIMESTAMP WHERE id=%s""",(total,used+amount,period,sender[0]))
+                else:
+                    cur.execute("""UPDATE bank_accounts SET monthly_outgoing_used=%s,
+                               last_outgoing_at=CURRENT_TIMESTAMP,monthly_outgoing_period=%s,
+                               updated_at=CURRENT_TIMESTAMP WHERE id=%s""",(used+amount,period,sender[0]))
                 if status == "COMPLETED":
                     cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
                     max_balance=cur.fetchone()[0]
@@ -313,6 +384,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                         raise ValueError("Recipient account balance limit exceeded.")
                     cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
                                 (amount,recipient[0]))
+                    if funding_source=="BALANCE": _cashline_repayment_suggestion(cur,recipient[0],amount)
                 ledger_id = create_ledger_transaction(
                     cur,transaction_id=txid,transaction_type="TRANSFER",amount=amount,fee=fee,
                     currency=currency,sender_account_id=sender[0],recipient_account_id=recipient[0],
@@ -395,7 +467,7 @@ def approve_transfer(transaction_id, actor_user_id, ip_address=None):
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT id,sender_account_id,recipient_account_id,amount,status FROM ledger_transactions
+                cur.execute("""SELECT id,sender_account_id,recipient_account_id,amount,status,transfer_kind FROM ledger_transactions
                                WHERE transaction_id=%s FOR UPDATE""", (transaction_id,))
                 tx = cur.fetchone()
                 if not tx or tx[4] != "PENDING_APPROVAL":
@@ -426,7 +498,7 @@ def reject_transfer(transaction_id, actor_user_id, reason=None, ip_address=None)
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT id,sender_account_id,amount,fee,status FROM ledger_transactions
+                cur.execute("""SELECT id,sender_account_id,amount,fee,status,transfer_kind FROM ledger_transactions
                                WHERE transaction_id=%s FOR UPDATE""", (transaction_id,))
                 tx = cur.fetchone()
                 if not tx or tx[4] != "PENDING_APPROVAL":
@@ -434,8 +506,10 @@ def reject_transfer(transaction_id, actor_user_id, reason=None, ip_address=None)
                 sender = _lock_account(cur, tx[1])
                 if not sender:
                     raise ValueError("Sender account not found.")
-                cur.execute("UPDATE bank_accounts SET balance=balance+%s,monthly_outgoing_used=GREATEST(0,monthly_outgoing_used-%s),updated_at=CURRENT_TIMESTAMP WHERE id=%s",
-                            (tx[2]+tx[3],tx[2],tx[1]))
+                if tx[5]=="CASHLINE":
+                    cur.execute("UPDATE bank_accounts SET monthly_outgoing_used=GREATEST(0,monthly_outgoing_used-%s),updated_at=CURRENT_TIMESTAMP WHERE id=%s",(tx[2],tx[1]))
+                else:
+                    cur.execute("UPDATE bank_accounts SET balance=balance+%s,monthly_outgoing_used=GREATEST(0,monthly_outgoing_used-%s),updated_at=CURRENT_TIMESTAMP WHERE id=%s",(tx[2]+tx[3],tx[2],tx[1]))
                 cur.execute("""UPDATE ledger_transactions SET status='REJECTED',approved_by=%s,
                                approved_at=CURRENT_TIMESTAMP,description=COALESCE(description,'') || %s
                                WHERE id=%s""", (actor_user_id, f" [Rejected: {reason or 'No reason supplied'}]",tx[0]))
@@ -450,7 +524,7 @@ def cancel_transfer(transaction_id, actor_client_id, ip_address=None):
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT id,sender_account_id,amount,fee,status FROM ledger_transactions
+                cur.execute("""SELECT id,sender_account_id,amount,fee,status,transfer_kind FROM ledger_transactions
                                WHERE transaction_id=%s FOR UPDATE""",(transaction_id,))
                 tx=cur.fetchone()
                 if not tx or tx[4]!="PENDING_APPROVAL":
@@ -522,51 +596,33 @@ def withdraw(account_id, amount, actor_user_id=None, description=None):
 
 
 def repay_credit(account_id, amount, source_account_id):
-    if not isinstance(amount,int) or amount<=0:
-        raise ValueError("Repayment must be a positive integer Emerald amount.")
+    if not isinstance(amount,int) or amount<=0: raise ValueError("Repayment must be a positive integer Emerald amount.")
     conn=get_db_connection()
     try:
         with conn:
             with conn.cursor() as cur:
-                debt_account=_lock_account(cur,account_id)
-                if debt_account: _assert_banking_unlocked(cur, debt_account[1])
-                source=_lock_account(cur,source_account_id)
-                if not debt_account or not source:
-                    raise ValueError("Account not found.")
-                if debt_account[1] != source[1]:
-                    raise ValueError("Repayment source must belong to the same client.")
-                debt=max(0,-int(debt_account[5]))
-                if debt<=0:
-                    raise ValueError("Account has no outstanding credit debt.")
-                if amount>debt:
-                    raise ValueError("Repayment exceeds outstanding debt.")
-                if int(source[5]) < amount:
-                    raise ValueError("Source account does not have enough positive balance.")
-                if source_account_id == account_id:
-                    raise ValueError("Repayment requires a separate source account.")
-                cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
-                            (amount,source_account_id))
-                cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
-                            (amount,account_id))
+                debt_account=_lock_account(cur,account_id); source=_lock_account(cur,source_account_id)
+                if debt_account: _assert_banking_unlocked(cur,debt_account[1])
+                if not debt_account or not source: raise ValueError("Account not found.")
+                if debt_account[1]!=source[1]: raise ValueError("Repayment source must belong to the same client.")
+                if source_account_id==account_id: raise ValueError("Repayment requires a separate source account.")
+                outstanding=cashline_outstanding(cur,account_id)
+                if outstanding<=0: raise ValueError("CashLine has no outstanding balance.")
+                if amount>outstanding: raise ValueError("Repayment exceeds the outstanding CashLine balance.")
+                if int(source[5])<amount: raise ValueError("Source account does not have enough positive balance.")
+                cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(amount,source_account_id))
                 txid=next_transaction_id(cur)
-                lid=create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_REPAYMENT",
-                                              amount=amount,sender_account_id=source_account_id,
-                                              recipient_account_id=account_id)
+                lid=create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_REPAYMENT",amount=amount,sender_account_id=source_account_id,recipient_account_id=account_id,description="CashLine repayment")
                 remaining=amount
-                cur.execute("""SELECT id,total_due,amount_paid FROM credit_statements
-                               WHERE account_id=%s AND status IN ('OPEN','PARTIALLY_PAID','OVERDUE')
-                               ORDER BY due_at,id FOR UPDATE""",(account_id,))
+                cur.execute("""SELECT id,total_due,amount_paid FROM credit_statements WHERE account_id=%s AND status IN ('OPEN','PARTIALLY_PAID','OVERDUE') ORDER BY due_at,id FOR UPDATE""",(account_id,))
                 for sid,total_due,paid in cur.fetchall():
                     if remaining<=0: break
                     applied=min(remaining,max(0,int(total_due)-int(paid)))
                     if applied<=0: continue
-                    new_paid=int(paid)+applied
-                    status="PAID" if new_paid>=int(total_due) else "PARTIALLY_PAID"
-                    cur.execute("UPDATE credit_statements SET amount_paid=%s,status=%s WHERE id=%s",(new_paid,status,sid))
-                    remaining-=applied
-                return {"transaction_id":txid,"ledger_id":lid,"status":"COMPLETED","amount":amount}
-    finally:
-        release_db_connection(conn)
+                    new_paid=int(paid)+applied; status="PAID" if new_paid>=int(total_due) else "PARTIALLY_PAID"
+                    cur.execute("UPDATE credit_statements SET amount_paid=%s,status=%s WHERE id=%s",(new_paid,status,sid)); remaining-=applied
+                return {"transaction_id":txid,"ledger_id":lid,"status":"COMPLETED","amount":amount,"remaining":outstanding-amount}
+    finally: release_db_connection(conn)
 
 
 def draw_credit(account_id, amount, actor_client_id=None, ip_address=None):
@@ -704,41 +760,29 @@ def cashline_annual_bps(account_type):
 
 
 def accrue_daily_credit_interest(account_id=None):
-    """Accrue CashLine interest using the annual rate on a daily basis."""
-    conn=get_db_connection()
-    results=[]
+    conn=get_db_connection(); results=[]
     try:
         with conn:
             with conn.cursor() as cur:
-                where="" if account_id is None else " AND cf.account_id=%s"
-                params=() if account_id is None else (account_id,)
-                cur.execute(f"""SELECT a.id,a.client_id,a.balance,a.account_type,
-                                       cf.last_interest_at,cf.activated_at,cf.interest_annual_bps
+                where="" if account_id is None else " AND cf.account_id=%s"; params=() if account_id is None else (account_id,)
+                cur.execute(f"""SELECT a.id,a.account_type,cf.last_interest_at,cf.activated_at,cf.interest_annual_bps
                                 FROM bank_accounts a JOIN credit_facilities cf ON cf.account_id=a.id
                                 WHERE cf.status='ACTIVE'{where} FOR UPDATE OF a,cf""",params)
-                for aid,cid,balance,atype,last_interest,activated,annual_bps in cur.fetchall():
-                    debt=max(0,-int(balance))
-                    if debt<=0:
-                        cur.execute("UPDATE credit_facilities SET last_interest_at=CURRENT_TIMESTAMP WHERE account_id=%s",(aid,))
-                        continue
-                    start=last_interest or activated
-                    days=(_now()-start).days
-                    if days<=0:
-                        continue
+                for aid,atype,last_interest,activated,annual_bps in cur.fetchall():
+                    outstanding=cashline_outstanding(cur,aid)
+                    if outstanding<=0:
+                        cur.execute("UPDATE credit_facilities SET last_interest_at=CURRENT_TIMESTAMP WHERE account_id=%s",(aid,)); continue
+                    start=last_interest or activated; days=(_now()-start).days
+                    if days<=0: continue
                     rate=int(annual_bps or cashline_annual_bps(atype))
-                    interest=(debt*rate*days+3650000-1)//3650000
-                    if interest<=0:
-                        continue
-                    cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(interest,aid))
+                    interest=(outstanding*rate*days+3650000-1)//3650000
+                    if interest<=0: continue
                     txid=next_transaction_id(cur)
-                    create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_INTEREST",
-                                              amount=interest,recipient_account_id=aid,
-                                              description=f"CashLine interest ({days} day(s))")
+                    create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_INTEREST",amount=interest,recipient_account_id=aid,description=f"CashLine interest ({days} day(s))")
                     cur.execute("UPDATE credit_facilities SET last_interest_at=CURRENT_TIMESTAMP WHERE account_id=%s",(aid,))
                     results.append({"account_id":aid,"interest":interest,"days":days,"transaction_id":txid})
         return results
-    finally:
-        release_db_connection(conn)
+    finally: release_db_connection(conn)
 
 
 def accrue_monthly_credit_interest(account_id):
@@ -746,53 +790,33 @@ def accrue_monthly_credit_interest(account_id):
 
 
 def generate_cashline_statement(account_id, period_start=None, period_end=None):
-    """Generate a monthly CashLine statement with a minimum payment."""
     conn=get_db_connection()
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT a.balance,cf.minimum_due_percent_bps,cf.minimum_due_floor,cf.status
-                               FROM bank_accounts a JOIN credit_facilities cf ON cf.account_id=a.id
-                               WHERE a.id=%s FOR UPDATE""",(account_id,))
+                cur.execute("SELECT minimum_due_percent_bps,minimum_due_floor,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(account_id,))
                 row=cur.fetchone()
-                if not row or row[3] not in ("ACTIVE","SUSPENDED"):
-                    return None
-                end=period_end or _now().date()
-                start=period_start or end.replace(day=1)
-                cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions
-                               WHERE recipient_account_id=%s AND transaction_type='CREDIT_INTEREST'
-                                 AND created_at::date BETWEEN %s AND %s""",(account_id,start,end))
+                if not row or row[2] not in ("ACTIVE","SUSPENDED"): return None
+                end=period_end or _now().date(); start=period_start or end.replace(day=1)
+                principal=cashline_principal_outstanding(cur,account_id)
+                cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions WHERE recipient_account_id=%s AND transaction_type='CREDIT_INTEREST' AND created_at::date BETWEEN %s AND %s""",(account_id,start,end))
                 interest=int(cur.fetchone()[0] or 0)
-                cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions
-                               WHERE recipient_account_id=%s AND transaction_type='CREDIT_FEE'
-                                 AND created_at::date BETWEEN %s AND %s""",(account_id,start,end))
+                cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions WHERE recipient_account_id=%s AND transaction_type='CREDIT_FEE' AND created_at::date BETWEEN %s AND %s""",(account_id,start,end))
                 fee=int(cur.fetchone()[0] or 0)
-                principal=max(0,-int(row[0]))
-                total=principal+interest+fee
-                minimum=max(int(row[2] or 40),(principal*int(row[1] or 500)+9999)//10000+interest+fee)
+                total=cashline_outstanding(cur,account_id)
+                minimum=max(int(row[1] or 40),(principal*int(row[0] or 500)+9999)//10000+interest+fee)
                 due=end+__import__("datetime").timedelta(days=15)
-                cur.execute("""INSERT INTO credit_statements
-                               (account_id,period_start,period_end,principal_amount,interest_amount,credit_fee,total_due,minimum_due,due_at)
-                               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                               ON CONFLICT(account_id,period_start,period_end) DO NOTHING
-                               RETURNING id""",(account_id,start,end,principal,interest,fee,total,minimum,due))
+                cur.execute("""INSERT INTO credit_statements(account_id,period_start,period_end,principal_amount,interest_amount,credit_fee,total_due,minimum_due,due_at)
+                               VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(account_id,period_start,period_end) DO NOTHING RETURNING id""",(account_id,start,end,principal,interest,fee,total,minimum,due))
                 inserted=cur.fetchone()
-                if inserted:
-                    sid=inserted[0]
+                if inserted: sid=inserted[0]
                 else:
-                    cur.execute("SELECT id FROM credit_statements WHERE account_id=%s AND period_start=%s AND period_end=%s FOR UPDATE",(account_id,start,end))
-                    sid=cur.fetchone()[0]
+                    cur.execute("SELECT id FROM credit_statements WHERE account_id=%s AND period_start=%s AND period_end=%s FOR UPDATE",(account_id,start,end)); sid=cur.fetchone()[0]
                 cur.execute("DELETE FROM credit_statement_items WHERE statement_id=%s",(sid,))
-                for typ,amt,desc in (("PRINCIPAL",principal,"CashLine capital used"),
-                                     ("INTEREST",interest,"CashLine daily interest"),
-                                     ("CREDIT_FEE",fee,"CashLine monthly fee")):
-                    if amt:
-                        cur.execute("INSERT INTO credit_statement_items(statement_id,item_type,amount,description) VALUES(%s,%s,%s,%s)",
-                                    (sid,typ,amt,desc))
-                return {"statement_id":sid,"principal":principal,"interest":interest,"fee":fee,
-                        "total_due":total,"minimum_due":minimum,"due_at":due}
-    finally:
-        release_db_connection(conn)
+                for typ,amt,desc in (("PRINCIPAL",principal,"CashLine capital outstanding"),("INTEREST",interest,"CashLine daily interest"),("CREDIT_FEE",fee,"CashLine monthly fee")):
+                    if amt: cur.execute("INSERT INTO credit_statement_items(statement_id,item_type,amount,description) VALUES(%s,%s,%s,%s)",(sid,typ,amt,desc))
+                return {"statement_id":sid,"principal":principal,"interest":interest,"fee":fee,"total_due":total,"minimum_due":minimum,"due_at":due}
+    finally: release_db_connection(conn)
 
 
 def process_monthly_billing():
@@ -833,7 +857,6 @@ def process_monthly_billing():
                                        ON CONFLICT(account_id,billing_type,billing_period) DO NOTHING""",
                                     (account_id,int(credit_fee),period))
                         if cur.rowcount:
-                            cur.execute("UPDATE bank_accounts SET balance=balance-%s WHERE id=%s",(int(credit_fee),account_id))
                             txid=next_transaction_id(cur)
                             create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_FEE",
                                                       amount=int(credit_fee),recipient_account_id=account_id,
@@ -850,9 +873,9 @@ def process_monthly_billing():
                                        'Your CashLine minimum payment is overdue. Please make the required payment.')""",
                                     (client_id,account_id))
                     cur.execute("SELECT balance FROM bank_accounts WHERE id=%s FOR UPDATE",(account_id,))
-                    current_balance=int(cur.fetchone()[0])
-                    if credit_status=="ACTIVE" and current_balance<0:
-                        debt=-current_balance
+                    current_balance=0
+                    debt=cashline_outstanding(cur,account_id)
+                    if credit_status=="ACTIVE" and debt>0
                         if not overdue:
                             cur.execute("UPDATE credit_facilities SET overdue_since=CURRENT_TIMESTAMP WHERE account_id=%s",(account_id,))
                             cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
