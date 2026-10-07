@@ -8,8 +8,12 @@ from datetime import datetime, timezone
 from .database import get_db_connection, release_db_connection
 
 PENDING_APPROVAL_THRESHOLD = 5000
-STANDARD_CREDIT_INTEREST_MONTHLY_BPS = 700
 CURRENCY = "Emerald"
+CASHLINE_MINIMUM = 300
+CASHLINE_ANNUAL_PERSONAL_BPS = 1830
+CASHLINE_ANNUAL_BUSINESS_BPS = 2370
+CASHLINE_MINIMUM_DUE_BPS = 500
+CASHLINE_MINIMUM_DUE_FLOOR = 40
 
 
 def _now():
@@ -74,21 +78,17 @@ def _reset_month_if_needed(cur, account):
     return int(account[7]), period
 
 
-def _fee_for_transfer(cur, account, amount):
-    cur.execute(
-        """SELECT percentage_bps,fixed_amount FROM fee_rules
-           WHERE active=TRUE AND transaction_type='TRANSFER'
-             AND (account_type IS NULL OR account_type=%s)
-             AND (tier_code IS NULL OR tier_code=(SELECT code FROM account_tiers_v2 WHERE id=%s))
-             AND (min_amount IS NULL OR %s>=min_amount)
-             AND (max_amount IS NULL OR %s<=max_amount)
-           ORDER BY priority ASC,id ASC LIMIT 1""",
-        (account[3],account[4],amount,amount),
-    )
-    rule = cur.fetchone()
-    if not rule:
+def _fee_for_transfer(cur, account, recipient_account_id, amount):
+    """Apply the MineBank transfer tariff."""
+    cur.execute("SELECT client_id FROM bank_accounts WHERE id=%s", (recipient_account_id,))
+    recipient = cur.fetchone()
+    if recipient and int(recipient[0]) == int(account[1]):
         return 0
-    return (amount * int(rule[0] or 0) + 9999) // 10000 + int(rule[1] or 0)
+    cur.execute("SELECT code FROM account_tiers_v2 WHERE id=%s", (account[4],))
+    tier = cur.fetchone()
+    if tier and tier[0] in ("PERSONAL_PRIVATE", "CORPORATE"):
+        return 0
+    return 0 if int(amount) <= 500 else 5
 
 
 def get_credit_limit(cur, account_id):
@@ -163,7 +163,7 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
             if sender[9] and (_now() - sender[9]).total_seconds() < 30:
                 raise ValueError("Outgoing transfers require a 30-second cooldown.")
 
-            fee = _fee_for_transfer(cur, sender, amount)
+            fee = _fee_for_transfer(cur, sender, recipient[0], amount)
             total = amount + fee
             credit_limit = get_credit_limit(cur, sender[0])
             if int(sender[5]) - total < -credit_limit:
@@ -506,7 +506,7 @@ def withdraw(account_id, amount, actor_user_id=None, description=None):
             with conn.cursor() as cur:
                 account=_lock_account(cur,account_id)
                 if account: _assert_banking_unlocked(cur, account[1])
-                if not account or account[6]!="ENABLED":
+                if not account or account[6] not in ("ACTIVE","LIMITED"):
                     raise ValueError("Account is not active.")
                 credit=get_credit_limit(cur,account_id)
                 if account[5]-amount < -credit:
@@ -611,7 +611,10 @@ def activate_credit(account_id, requested_limit):
                             (account[4],))
                 tier=cur.fetchone()
                 if not tier or not tier[0]:
-                    raise ValueError("This account tier does not support credit.")
+                    raise ValueError("This account tier does not support CashLine.")
+                maximum=int(tier[1] or 0)
+                if requested_limit < CASHLINE_MINIMUM or (maximum and requested_limit > maximum):
+                    raise ValueError(f"CashLine limit must be between {CASHLINE_MINIMUM} and {maximum} Emerald.")
                 cur.execute("SELECT id FROM credit_facilities WHERE account_id=%s FOR UPDATE",(account_id,))
                 existing=cur.fetchone()
                 fee=credit_activation_fee(requested_limit)
@@ -621,9 +624,9 @@ def activate_credit(account_id, requested_limit):
                 else:
                     cur.execute("""INSERT INTO credit_facilities(account_id,credit_limit,interest_monthly_bps,
                                    activation_fee_monthly,status) VALUES(%s,%s,%s,%s,'ACTIVE')""",
-                                (account_id,requested_limit,STANDARD_CREDIT_INTEREST_MONTHLY_BPS,fee))
+                                (account_id,requested_limit,cashline_annual_bps(account[3]),fee))
                 return {"account_id":account_id,"credit_limit":requested_limit,"monthly_activation_fee":fee,
-                        "interest_monthly_bps":STANDARD_CREDIT_INTEREST_MONTHLY_BPS,"status":"ACTIVE"}
+                        "interest_annual_bps":cashline_annual_bps(account[3]),"status":"ACTIVE"}
     finally:
         release_db_connection(conn)
 
@@ -682,7 +685,10 @@ def chargeback(transaction_id, actor_user_id, reason):
 
 
 def credit_activation_fee(credit_limit):
-    return 40 if int(credit_limit)>5000 else 10
+    return 20 if int(credit_limit)>5000 else 10
+
+def cashline_annual_bps(account_type):
+    return CASHLINE_ANNUAL_PERSONAL_BPS if account_type == "PERSONAL" else CASHLINE_ANNUAL_BUSINESS_BPS
 
 
 def accrue_monthly_credit_interest(account_id):
