@@ -587,6 +587,7 @@ def deposit(account_id, amount, actor_user_id=None, description=None):
 
 
 def withdraw(account_id, amount, actor_user_id=None, description=None):
+    """Withdraw only from the ordinary MineBank Balance; CashLine is a separate circuit."""
     if not isinstance(amount,int) or amount<=0:
         raise ValueError("Withdrawal must be a positive integer Emerald amount.")
     conn=get_db_connection()
@@ -594,13 +595,11 @@ def withdraw(account_id, amount, actor_user_id=None, description=None):
         with conn:
             with conn.cursor() as cur:
                 account=_lock_account(cur,account_id)
-                if account: _assert_banking_unlocked(cur, account[1])
+                if account: _assert_banking_unlocked(cur,account[1])
                 if not account or account[6] not in ("ACTIVE","LIMITED"):
                     raise ValueError("Account is not active.")
-                credit=get_credit_limit(cur,account_id)
-                if account[5]-amount < -credit:
-                    raise ValueError("Insufficient available balance/credit.")
-                cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s",(account[4],))
+                if int(account[5])<amount:
+                    raise ValueError("Insufficient MineBank Balance. CashLine cannot be used for withdrawals.")
                 txid=next_transaction_id(cur)
                 cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(amount,account_id))
                 lid=create_ledger_transaction(cur,transaction_id=txid,transaction_type="WITHDRAWAL",amount=amount,
@@ -641,42 +640,8 @@ def repay_credit(account_id, amount, source_account_id):
 
 
 def draw_credit(account_id, amount, actor_client_id=None, ip_address=None):
-    if not isinstance(amount, int) or amount <= 0:
-        raise ValueError("Credit draw must be a positive integer Emerald amount.")
-    conn = get_db_connection()
-    try:
-        with conn:
-            with conn.cursor() as cur:
-                account = _lock_account(cur, account_id)
-                if account: _assert_banking_unlocked(cur, account[1])
-                if not account or account[6] not in ("ACTIVE","LIMITED"):
-                    raise ValueError("Account is not active.")
-                if actor_client_id is not None and account[1] != actor_client_id:
-                    raise ValueError("Account does not belong to the logged-in client.")
-                cur.execute("""SELECT credit_limit,status FROM credit_facilities
-                               WHERE account_id=%s FOR UPDATE""", (account_id,))
-                facility = cur.fetchone()
-                if not facility or facility[1] != "ACTIVE":
-                    raise ValueError("No active credit facility is available.")
-                available = int(facility[0]) + min(0, int(account[5]))
-                if amount > available:
-                    raise ValueError(f"Insufficient available credit. Available: {max(0, available)} Emerald.")
-                cur.execute("""UPDATE bank_accounts
-                               SET balance=balance-%s, updated_at=CURRENT_TIMESTAMP
-                               WHERE id=%s""", (amount, account_id))
-                txid = next_transaction_id(cur)
-                lid = create_ledger_transaction(
-                    cur, transaction_id=txid, transaction_type="CREDIT_DRAW",
-                    amount=amount, recipient_account_id=account_id,
-                    description="Credit draw"
-                )
-                audit_event(cur, actor_client_id=actor_client_id, action="CREDIT_DRAW",
-                            target_type="ACCOUNT", target_id=str(account_id), account_id=account_id,
-                            transaction_id=txid, ip_address=ip_address, context={"amount": amount})
-                return {"transaction_id": txid, "ledger_id": lid, "status": "COMPLETED",
-                        "amount": amount, "available_credit": max(0, available - amount)}
-    finally:
-        release_db_connection(conn)
+    """Legacy compatibility guard: CashLine credit is drawn only by selecting CashLine on a transfer."""
+    raise ValueError("CashLine is a separate payment circuit. Select CashLine when creating a transfer.")
 
 
 def activate_credit(account_id, requested_limit):
@@ -722,7 +687,7 @@ def freeze_overdue_credit(account_id):
                 account=_lock_account(cur,account_id)
                 if not account:
                     raise ValueError("Account not found.")
-                debt=max(0,-int(account[5]))
+                debt=cashline_outstanding(cur,account_id)
                 if debt<=0:
                     return {"status":"CURRENT"}
                 cur.execute("""UPDATE credit_facilities SET status='SUSPENDED',overdue_since=COALESCE(overdue_since,CURRENT_TIMESTAMP)
