@@ -148,8 +148,6 @@ CREATE TABLE IF NOT EXISTS credit_facilities (
     overdue_since TIMESTAMPTZ
 );
 
-ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS transfer_kind VARCHAR(40);
-
 CREATE TABLE IF NOT EXISTS ledger_transactions (
     id BIGSERIAL PRIMARY KEY,
     transaction_id VARCHAR(32) UNIQUE NOT NULL,
