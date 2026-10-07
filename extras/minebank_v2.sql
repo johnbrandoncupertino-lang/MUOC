@@ -467,3 +467,17 @@ UPDATE credit_facilities SET interest_annual_bps=1830, minimum_due_percent_bps=5
 WHERE account_id IN (SELECT a.id FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE t.account_type='PERSONAL');
 UPDATE credit_facilities SET interest_annual_bps=2370, minimum_due_percent_bps=500, minimum_due_floor=40
 WHERE account_id IN (SELECT a.id FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE t.account_type='BUSINESS');
+
+
+-- MineBank canonical fee rules
+INSERT INTO fee_rules(name,transaction_type,tier_code,min_amount,max_amount,fixed_amount,priority,active)
+VALUES
+('TRANSFER_STANDARD_UP_TO_500','TRANSFER',NULL,NULL,500,0,10,TRUE),
+('TRANSFER_STANDARD_OVER_500','TRANSFER',NULL,501,NULL,5,20,TRUE),
+('TRANSFER_PRIVATE_FREE','TRANSFER','PERSONAL_PRIVATE',NULL,NULL,0,1,TRUE),
+('TRANSFER_CORPORATE_FREE','TRANSFER','CORPORATE',NULL,NULL,0,1,TRUE),
+('PAYMENT_REQUEST','PAYMENT_REQUEST',NULL,NULL,NULL,1,10,TRUE),
+('SCHEDULE_SETUP','SCHEDULED_PAYMENT_SETUP',NULL,NULL,NULL,2,10,TRUE),
+('SCHEDULE_EXECUTION','SCHEDULED_PAYMENT',NULL,NULL,NULL,1,10,TRUE),
+('PRINTED_STATEMENT','PRINTED_STATEMENT',NULL,NULL,NULL,1,10,TRUE)
+ON CONFLICT(name) DO UPDATE SET fixed_amount=EXCLUDED.fixed_amount,active=TRUE;
