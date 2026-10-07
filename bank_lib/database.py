@@ -90,10 +90,28 @@ _SCHEMA_READY = False
 
 
 def ensure_minebank_schema():
-    """Bootstrap/migrate MineBank without making login depend on a pool."""
+    """Bootstrap/migrate MineBank, but never repeat DDL on an initialized database."""
     global _SCHEMA_READY
     if _SCHEMA_READY:
         return True
+
+    # Existing production databases already contain the MineBank core tables.
+    # Checking the catalog is dramatically cheaper than replaying CREATE/ALTER
+    # statements during login or every cold request.
+    try:
+        rows = execute_query("""
+            SELECT
+                to_regclass('public.bank_clients') IS NOT NULL
+                AND to_regclass('public.bank_accounts') IS NOT NULL
+                AND to_regclass('public.account_tiers_v2') IS NOT NULL
+                AND to_regclass('public.ledger_transactions') IS NOT NULL
+                AND to_regclass('public.bank_notifications') IS NOT NULL
+        """)
+        if rows and rows[0][0]:
+            _SCHEMA_READY = True
+            return True
+    except Exception as exc:
+        print(f"MineBank schema probe warning: {type(exc).__name__}: {exc}")
 
     if not check_db_connection():
         return False
