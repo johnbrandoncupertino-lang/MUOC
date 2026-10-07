@@ -65,6 +65,7 @@ def database():
 
 @pytest.fixture
 def accounts():
+    execute_query("TRUNCATE TABLE ledger_transactions, credit_statements, credit_facilities, bank_accounts RESTART IDENTITY CASCADE", fetch=False, commit=True)
     alice = execute_query_dict(
         "SELECT id FROM bank_clients WHERE email='alice@minebank.test'"
     )[0]["id"]
