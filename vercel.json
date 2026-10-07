@@ -6,6 +6,12 @@
       "use": "@vercel/python"
     }
   ],
+  "crons": [
+    {
+      "path": "/api/cron/minebank",
+      "schedule": "5 0 * * *"
+    }
+  ],
   "routes": [
     {
       "src": "/(.*)",
