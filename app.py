@@ -1240,6 +1240,8 @@ def review_request(request_id):
                                activation_fee_monthly=EXCLUDED.activation_fee_monthly,interest_annual_bps=EXCLUDED.interest_annual_bps,status='ACTIVE'""",
                           (r["account_id"],limit,r["account_id"],r["account_id"],limit),commit=True)
         elif approve and r["request_type"]=="CREDIT_CANCEL":
+            if cashline_outstanding_for_app(r["account_id"])>0:
+                raise ValueError("CashLine cannot be cancelled while a balance is outstanding.")
             execute_query("UPDATE credit_facilities SET status='CLOSED' WHERE account_id=%s AND status='ACTIVE'",(r["account_id"],),commit=True)
         elif approve and r["request_type"]=="TIER_CHANGE":
             code=(r["payload"] or {}).get("tier_code")
