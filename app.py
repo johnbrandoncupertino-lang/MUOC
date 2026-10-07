@@ -883,7 +883,7 @@ def loan_financial_profile(client_id):
 
 def loan_terms(principal,term_days):
     annual_bps=2370 if principal<=100000 else 1830
-    interest=(principal*annual_bps*term_days + 36500)//36500
+    interest=(principal*annual_bps*term_days + 3650000)//3650000
     request_fee=100 if principal>=100000 else 50
     total_cost=principal+interest
     installment=total_cost//term_days
