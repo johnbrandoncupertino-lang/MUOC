@@ -439,30 +439,151 @@ def minebank_transactions_page():
     min_amount=request.args.get("min_amount","").strip()
     max_amount=request.args.get("max_amount","").strip()
     params=[account["id"],account["id"]]
-    where=["(sender_account_id=%s OR recipient_account_id=%s)"]
+    where=["(l.sender_account_id=%s OR l.recipient_account_id=%s)"]
     if q:
-        where.append("(transaction_id ILIKE %s OR COALESCE(description,'') ILIKE %s OR COALESCE(reference_id,'') ILIKE %s)")
-        like=f"%{q}%"; params.extend([like,like,like])
+        where.append("(l.transaction_id ILIKE %s OR COALESCE(l.description,'') ILIKE %s OR COALESCE(l.causal,'') ILIKE %s OR COALESCE(l.reference_id,'') ILIKE %s)")
+        like=f"%{q}%"; params.extend([like,like,like,like])
     if status:
-        where.append("status=%s"); params.append(status)
+        where.append("l.status=%s"); params.append(status)
     if direction=="INCOMING":
-        where.append("recipient_account_id=%s"); params.append(account["id"])
+        where.append("l.recipient_account_id=%s"); params.append(account["id"])
     elif direction=="OUTGOING":
-        where.append("sender_account_id=%s"); params.append(account["id"])
+        where.append("l.sender_account_id=%s"); params.append(account["id"])
     if category:
-        where.append("category=%s"); params.append(category)
+        where.append("EXISTS (SELECT 1 FROM minebank_transaction_categories f WHERE f.transaction_id=l.transaction_id AND f.account_id=%s AND f.category=%s)")
+        params.extend([account["id"],category])
     if date_from:
-        where.append("created_at::date>=%s"); params.append(date_from)
+        where.append("l.created_at::date>=%s"); params.append(date_from)
     if date_to:
-        where.append("created_at::date<=%s"); params.append(date_to)
+        where.append("l.created_at::date<=%s"); params.append(date_to)
     if min_amount:
-        where.append("amount>=%s"); params.append(int(min_amount))
+        where.append("l.amount>=%s"); params.append(int(min_amount))
     if max_amount:
-        where.append("amount<=%s"); params.append(int(max_amount))
-    transactions=execute_query_dict("SELECT transaction_id,transaction_type,amount,fee,status,description,reference_id,created_at,sender_account_id,recipient_account_id,category FROM ledger_transactions WHERE "+" AND ".join(where)+" ORDER BY created_at DESC LIMIT 500",tuple(params))
-    return render_template("minebank_portal.html",mode="transactions",account=account,transactions=transactions,portal_active="transactions")
+        where.append("l.amount<=%s"); params.append(int(max_amount))
+    sql=("SELECT l.transaction_id,l.transaction_type,l.amount,l.fee,l.status,l.description,l.causal,l.reference_id,l.created_at,"
+         "l.sender_account_id,l.recipient_account_id,"
+         "COALESCE(string_agg(tc.category, ', ' ORDER BY tc.category),'') AS categories "
+         "FROM ledger_transactions l LEFT JOIN minebank_transaction_categories tc "
+         "ON tc.transaction_id=l.transaction_id AND tc.account_id=%s WHERE "+" AND ".join(where)+
+         " GROUP BY l.transaction_id ORDER BY l.created_at DESC LIMIT 500")
+    transactions=execute_query_dict(sql,tuple([account["id"]]+params))
+    categories=execute_query_dict("SELECT DISTINCT category FROM minebank_transaction_categories WHERE account_id=%s ORDER BY category",(account["id"],))
+    default_categories=["Groceries","Housing","Transport","Bills","Salary","Shopping","Entertainment","Travel","Health","Education","Fees","Transfers","CashLine","Other"]
+    return render_template("minebank_portal.html",mode="transactions",account=account,transactions=transactions,
+                           categories=categories,default_categories=default_categories,portal_active="transactions")
 
 @app.route("/portal/transactions/<transaction_id>")
+@require_login
+def minebank_transaction_detail(transaction_id):
+    account = selected_account()
+    rows = execute_query_dict(
+        """SELECT l.*,s.account_number sender_number,r.account_number recipient_number
+           FROM ledger_transactions l
+           LEFT JOIN bank_accounts s ON s.id=l.sender_account_id
+           LEFT JOIN bank_accounts r ON r.id=l.recipient_account_id
+           WHERE l.transaction_id=%s AND (s.client_id=%s OR r.client_id=%s)""",
+        (transaction_id,session["minebank_client_id"],session["minebank_client_id"])
+    )
+    if not rows:
+        return "Transaction not found",404
+    return render_template("minebank_portal.html", mode="transaction", account=account,
+                           transaction=rows[0], portal_active="transactions")
+
+def _pdf_response(title, rows, filename):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib import colors
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=16*mm, leftMargin=16*mm,
+                            topMargin=16*mm, bottomMargin=16*mm)
+    styles = getSampleStyleSheet()
+    story = [Paragraph("MineBank", styles["Title"]), Paragraph(title, styles["Heading2"]), Spacer(1, 8)]
+    data = [["Field", "Value"]] + [[str(k), str(v if v not in (None, "") else "—")] for k,v in rows]
+    table = Table(data, colWidths=[45*mm, 125*mm], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("GRID",(0,0),(-1,-1),0.5,colors.grey),("BACKGROUND",(0,0),(-1,0),colors.lightgrey),
+        ("VALIGN",(0,0),(-1,-1),"TOP"),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
+        ("LEFTPADDING",(0,0),(-1,-1),6),("RIGHTPADDING",(0,0),(-1,-1),6),
+        ("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("Generated by MineBank Online", styles["Normal"]))
+    doc.build(story)
+    buffer.seek(0)
+    return Response(buffer.getvalue(),mimetype="application/pdf",
+                    headers={"Content-Disposition":f'inline; filename="{filename}"'})
+
+@app.route("/portal/transactions/<transaction_id>/receipt")
+@require_login
+def minebank_transaction_receipt(transaction_id):
+    rows=execute_query_dict("""SELECT l.*,s.account_number sender_number,r.account_number recipient_number,
+                                      sc.email sender_email,rc.email recipient_email
+                               FROM ledger_transactions l
+                               LEFT JOIN bank_accounts s ON s.id=l.sender_account_id
+                               LEFT JOIN bank_accounts r ON r.id=l.recipient_account_id
+                               LEFT JOIN bank_clients sc ON sc.id=s.client_id
+                               LEFT JOIN bank_clients rc ON rc.id=r.client_id
+                               WHERE l.transaction_id=%s AND (s.client_id=%s OR r.client_id=%s)""",
+                            (transaction_id,session["minebank_client_id"],session["minebank_client_id"]))
+    if not rows: return "Transaction not found",404
+    tx=rows[0]
+    return _pdf_response("Transaction Receipt",[
+        ("Transaction ID",tx["transaction_id"]),("Date",tx["created_at"]),("Status",tx["status"]),
+        ("Type",tx["transaction_type"]),("Sender",tx["sender_email"] or tx["sender_number"] or "Bank"),
+        ("Sender account",tx["sender_number"]),("Recipient",tx["recipient_email"] or tx["recipient_number"] or "Bank"),
+        ("Recipient account",tx["recipient_number"]),("Amount",f'{tx["amount"]} Emerald'),
+        ("Fee",f'{tx["fee"]} Emerald'),("Description",tx["description"]),("Reference",tx["reference_id"])
+    ],f"minebank-receipt-{transaction_id}.pdf")
+
+@app.route("/portal/transactions/<transaction_id>/category",methods=["POST"])
+@require_login
+def minebank_transaction_category(transaction_id):
+    account=selected_account()
+    values=[x.strip()[:60] for x in request.form.getlist("category") if x.strip()][:3]
+    defaults={"Groceries","Housing","Transport","Bills","Salary","Shopping","Entertainment","Travel","Health","Education","Fees","Transfers","CashLine","Other"}
+    custom=execute_query_dict("SELECT DISTINCT category FROM minebank_transaction_categories WHERE account_id=%s",(account["id"],))
+    allowed=defaults|{x["category"] for x in custom}
+    if not values or all(v in allowed for v in values):
+        execute_query("DELETE FROM minebank_transaction_categories WHERE transaction_id=%s AND account_id=%s",(transaction_id,account["id"]),commit=True)
+        for value in values:
+            execute_query("INSERT INTO minebank_transaction_categories(transaction_id,account_id,category) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING",(transaction_id,account["id"],value),commit=True)
+        flash("Transaction categories updated.","success")
+    else:
+        flash("One or more categories are not valid.","error")
+    return redirect(url_for("minebank_transaction_detail",transaction_id=transaction_id))
+
+@app.route("/portal/transactions/<transaction_id>/cancel",methods=["POST"])
+@require_login
+def minebank_cancel_transfer(transaction_id):
+    try:
+        cancel_transfer(transaction_id,session["minebank_client_id"],request.remote_addr)
+        flash("Pending transfer cancelled and funds released.","success")
+    except Exception as exc:
+        flash(str(exc),"error")
+    return redirect(url_for("minebank_transaction_detail",transaction_id=transaction_id))
+
+@app.route("/portal/transactions/<transaction_id>/refund", methods=["POST"])
+@require_login
+def minebank_refund(transaction_id):
+    tx = execute_query_dict(
+        """SELECT l.* FROM ledger_transactions l JOIN bank_accounts a ON a.id=l.sender_account_id
+           WHERE l.transaction_id=%s AND a.client_id=%s""",(transaction_id,session["minebank_client_id"])
+    )
+    if not tx:
+        flash("Transaction not found or not eligible for refund.","error")
+    else:
+        create_request(session["minebank_client_id"],"REFUND",tx[0]["sender_account_id"],
+                       {"transaction_id":transaction_id,"reason":request.form.get("reason","")[:500]})
+        flash("Refund request submitted for bank review.","success")
+    return redirect(url_for("minebank_transaction_detail",transaction_id=transaction_id))
+
+@app.route("/portal/statements")
+@require_login
+def minebank_statements_page():
+    account=selected_account()@app.route("/portal/transactions/<transaction_id>")
 @require_login
 def minebank_transaction_detail(transaction_id):
     account = selected_account()
