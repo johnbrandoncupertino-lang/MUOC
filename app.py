@@ -752,6 +752,9 @@ def minebank_payment_requests_page():
             count=execute_query("SELECT COUNT(*) FROM minebank_payment_requests WHERE requester_client_id=%s AND created_at::date=CURRENT_DATE",(cid,))
             if count and int(count[0][0]) >= 5:
                 raise ValueError("Maximum 5 Payment Requests per day.")
+            payer=execute_query_dict("SELECT id,client_id FROM bank_accounts WHERE account_number=%s AND status<>'CLOSED'",(payer_number,))
+            if not payer: raise ValueError("Payer account not found.")
+            if payer[0]["client_id"]==cid: raise ValueError("You cannot request payment from your own account.")
             if int(account["balance"]) < 1:
                 raise ValueError("1 Emerald is required for a Payment Request.")
             execute_query("UPDATE bank_accounts SET balance=balance-1,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(account["id"],),commit=True)
@@ -759,9 +762,6 @@ def minebank_payment_requests_page():
                              (transaction_id,transaction_type,amount,fee,currency,sender_account_id,status,description)
                              VALUES(%s,'PAYMENT_REQUEST_FEE',1,0,'Emerald',%s,'COMPLETED','Payment Request fee')""",
                           (f"MB-PREQ-{secrets.token_hex(6)}",account["id"]),commit=True)
-            payer=execute_query_dict("SELECT id,client_id FROM bank_accounts WHERE account_number=%s AND status<>'CLOSED'",(payer_number,))
-            if not payer: raise ValueError("Payer account not found.")
-            if payer[0]["client_id"]==cid: raise ValueError("You cannot request payment from your own account.")
             execute_query("""INSERT INTO minebank_payment_requests
                              (requester_client_id,payer_client_id,requester_account_id,payer_account_number,amount,description,expires_at)
                              VALUES(%s,%s,%s,%s,%s,%s,CURRENT_TIMESTAMP+INTERVAL '30 days')""",
