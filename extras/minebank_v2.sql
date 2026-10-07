@@ -399,3 +399,71 @@ CREATE TABLE IF NOT EXISTS minebank_email_outbox (
 CREATE INDEX IF NOT EXISTS minebank_email_outbox_idx ON minebank_email_outbox(status,created_at);
 
 ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS category VARCHAR(60);
+
+
+-- MineBank pricing and credit policy (2026-10-07)
+-- Canonical MineBank pricing, limits and CashLine terms.
+ALTER TABLE account_tiers_v2 ADD COLUMN IF NOT EXISTS opening_fee INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS interest_annual_bps INTEGER NOT NULL DEFAULT 1830;
+ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS minimum_due_percent_bps INTEGER NOT NULL DEFAULT 500;
+ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS minimum_due_floor INTEGER NOT NULL DEFAULT 40;
+
+UPDATE account_tiers_v2 SET monthly_fee=0, opening_fee=0, max_balance=5000,
+  monthly_outgoing_limit=10000, daily_outgoing_limit=1000, single_transfer_limit=NULL,
+  credit_enabled=TRUE, default_credit_limit=1800, private_or_corporate=FALSE WHERE code='PERSONAL';
+UPDATE account_tiers_v2 SET monthly_fee=10, opening_fee=40, max_balance=NULL,
+  monthly_outgoing_limit=100000, daily_outgoing_limit=10000, single_transfer_limit=NULL,
+  credit_enabled=TRUE, default_credit_limit=5000, private_or_corporate=FALSE WHERE code='PERSONAL_PRO';
+UPDATE account_tiers_v2 SET monthly_fee=50, opening_fee=50, max_balance=NULL,
+  monthly_outgoing_limit=NULL, daily_outgoing_limit=NULL, single_transfer_limit=NULL,
+  credit_enabled=TRUE, default_credit_limit=50000, private_or_corporate=TRUE WHERE code='PERSONAL_PRIVATE';
+UPDATE account_tiers_v2 SET monthly_fee=10, opening_fee=10, max_balance=50000,
+  monthly_outgoing_limit=50000, daily_outgoing_limit=5000, single_transfer_limit=NULL,
+  credit_enabled=TRUE, default_credit_limit=5000, private_or_corporate=FALSE WHERE code='BUSINESS';
+UPDATE account_tiers_v2 SET monthly_fee=50, opening_fee=50, max_balance=NULL,
+  monthly_outgoing_limit=1000000, daily_outgoing_limit=100000, single_transfer_limit=NULL,
+  credit_enabled=TRUE, default_credit_limit=100000, private_or_corporate=FALSE WHERE code='BUSINESS_PRO';
+UPDATE account_tiers_v2 SET monthly_fee=100, opening_fee=200, max_balance=NULL,
+  monthly_outgoing_limit=NULL, daily_outgoing_limit=NULL, single_transfer_limit=NULL,
+  credit_enabled=TRUE, default_credit_limit=5000000, private_or_corporate=TRUE WHERE code='CORPORATE';
+
+UPDATE credit_facilities cf SET
+  interest_annual_bps=CASE WHEN t.account_type='PERSONAL' THEN 1830 ELSE 2370 END,
+  interest_monthly_bps=CASE WHEN t.account_type='PERSONAL' THEN 1830 ELSE 2370 END,
+  minimum_due_percent_bps=500, minimum_due_floor=40,
+  activation_fee_monthly=CASE WHEN cf.credit_limit>5000 THEN 20 ELSE 10 END
+FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
+WHERE cf.account_id=a.id;
+
+CREATE TABLE IF NOT EXISTS credit_statements (
+  id BIGSERIAL PRIMARY KEY,
+  account_id BIGINT NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  principal_amount BIGINT NOT NULL DEFAULT 0,
+  interest_amount BIGINT NOT NULL DEFAULT 0,
+  credit_fee BIGINT NOT NULL DEFAULT 0,
+  other_costs BIGINT NOT NULL DEFAULT 0,
+  total_due BIGINT NOT NULL DEFAULT 0,
+  minimum_due BIGINT NOT NULL DEFAULT 40,
+  amount_paid BIGINT NOT NULL DEFAULT 0,
+  status VARCHAR(20) NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN','PARTIALLY_PAID','PAID','OVERDUE')),
+  issued_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  due_at TIMESTAMPTZ NOT NULL,
+  UNIQUE(account_id,period_start,period_end)
+);
+CREATE INDEX IF NOT EXISTS credit_statements_account_idx ON credit_statements(account_id,due_at DESC);
+
+CREATE TABLE IF NOT EXISTS credit_statement_items (
+  id BIGSERIAL PRIMARY KEY,
+  statement_id BIGINT NOT NULL REFERENCES credit_statements(id) ON DELETE CASCADE,
+  item_type VARCHAR(30) NOT NULL,
+  amount BIGINT NOT NULL,
+  description VARCHAR(500),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+UPDATE credit_facilities SET interest_annual_bps=1830, minimum_due_percent_bps=500, minimum_due_floor=40
+WHERE account_id IN (SELECT a.id FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE t.account_type='PERSONAL');
+UPDATE credit_facilities SET interest_annual_bps=2370, minimum_due_percent_bps=500, minimum_due_floor=40
+WHERE account_id IN (SELECT a.id FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE t.account_type='BUSINESS');
