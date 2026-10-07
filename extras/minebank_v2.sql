@@ -401,6 +401,36 @@ CREATE INDEX IF NOT EXISTS minebank_email_outbox_idx ON minebank_email_outbox(st
 ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS category VARCHAR(60);
 
 
+
+-- Banking UX and administrative messaging extensions.
+ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS phone VARCHAR(40);
+ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS address VARCHAR(300);
+ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS city VARCHAR(120);
+ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS postal_code VARCHAR(20);
+ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS country VARCHAR(80);
+ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS occupation VARCHAR(120);
+ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS causal VARCHAR(500);
+
+CREATE TABLE IF NOT EXISTS minebank_transaction_categories (
+    id BIGSERIAL PRIMARY KEY,
+    transaction_id VARCHAR(32) NOT NULL REFERENCES ledger_transactions(transaction_id) ON DELETE CASCADE,
+    account_id BIGINT NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+    category VARCHAR(60) NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(transaction_id,account_id,category)
+);
+CREATE INDEX IF NOT EXISTS minebank_transaction_categories_account_idx
+    ON minebank_transaction_categories(account_id,created_at DESC);
+
+CREATE TABLE IF NOT EXISTS minebank_message_campaigns (
+    id BIGSERIAL PRIMARY KEY,
+    created_by BIGINT NOT NULL REFERENCES bank_clients(id),
+    subject VARCHAR(200) NOT NULL,
+    body VARCHAR(2000) NOT NULL,
+    recipient_filter JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- MineBank pricing and credit policy (2026-10-07)
 -- Canonical MineBank pricing, limits and CashLine terms.
 ALTER TABLE account_tiers_v2 ADD COLUMN IF NOT EXISTS opening_fee INTEGER NOT NULL DEFAULT 0;
