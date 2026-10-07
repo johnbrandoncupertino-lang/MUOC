@@ -11,7 +11,7 @@ from flask import jsonify, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from .database import get_db_connection
-from .minebank_security import (clear_login_failures, create_session, ensure_security_schema, login_challenge_required,
+from .minebank_security import (clear_login_failures, create_session, login_challenge_required,
                                 check_login_challenge, record_login_failure, set_login_challenge, revoke_current_session, security_event)
 
 
@@ -37,11 +37,8 @@ def client_from_session(cur):
 
 
 def login_client(email, password, captcha_answer=None):
-    # Login must fail gracefully when the database is temporarily unavailable.
-    try:
-        ensure_security_schema()
-    except Exception as exc:
-        print(f"MineBank security schema warning: {type(exc).__name__}: {exc}")
+    # Schema/migration work is intentionally kept out of authentication.
+    # Login should only perform the queries required to authenticate the client.
     conn = get_db_connection()
     if conn is None:
         return False, "MineBank is temporarily unavailable. Please try again in a moment."
