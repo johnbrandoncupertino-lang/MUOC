@@ -149,6 +149,31 @@ def ensure_minebank_schema():
         return False
 
 
+_TRANSACTION_SCHEMA_READY = False
+
+def ensure_transaction_schema():
+    """Ensure transaction-history extensions exist without replaying the full MineBank migration."""
+    global _TRANSACTION_SCHEMA_READY
+    if _TRANSACTION_SCHEMA_READY:
+        return True
+    try:
+        execute_query("ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS causal VARCHAR(500)", fetch=False, commit=True)
+        execute_query("ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS category VARCHAR(60)", fetch=False, commit=True)
+        execute_query("""CREATE TABLE IF NOT EXISTS minebank_transaction_categories (
+            id BIGSERIAL PRIMARY KEY,
+            transaction_id VARCHAR(32) NOT NULL REFERENCES ledger_transactions(transaction_id) ON DELETE CASCADE,
+            account_id BIGINT NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+            category VARCHAR(60) NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(transaction_id,account_id,category)
+        )""", fetch=False, commit=True)
+        execute_query("CREATE INDEX IF NOT EXISTS minebank_transaction_categories_account_idx ON minebank_transaction_categories(account_id,created_at DESC)", fetch=False, commit=True)
+        _TRANSACTION_SCHEMA_READY = True
+        return True
+    except Exception as exc:
+        print(f"MineBank transaction schema warning: {type(exc).__name__}: {exc}")
+        return False
+
 def check_db_connection():
     conn = get_db_connection()
     if conn is None:
