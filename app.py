@@ -84,16 +84,16 @@ def get_accounts(client_id):
                   t.code,t.display_name,t.monthly_fee,t.max_balance,t.monthly_outgoing_limit,
                   t.daily_outgoing_limit,t.single_transfer_limit,t.credit_enabled,t.default_credit_limit,
                   cf.credit_limit AS facility_credit_limit,cf.status AS credit_status,
-                  GREATEST(0, COALESCE(cf.credit_limit,0) - COALESCE((
+                  CASE WHEN cf.status='ACTIVE' THEN GREATEST(0, COALESCE(cf.credit_limit,0) - COALESCE((
                     SELECT SUM(CASE WHEN l.transaction_type='TRANSFER' AND l.transfer_kind='CASHLINE'
                                       AND l.status IN ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL') THEN l.amount+l.fee
                                     WHEN l.transaction_type IN ('CREDIT_INTEREST','CREDIT_FEE') AND l.status='COMPLETED' THEN l.amount
                                     WHEN l.transaction_type='CREDIT_REPAYMENT' AND l.status='COMPLETED' THEN -l.amount
                                     ELSE 0 END)
                     FROM ledger_transactions l WHERE l.sender_account_id=a.id OR l.recipient_account_id=a.id
-                  ),0)) AS available_credit
+                  ),0)) ELSE 0 END AS available_credit
            FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
-           LEFT JOIN credit_facilities cf ON cf.account_id=a.id AND cf.status='ACTIVE'
+           LEFT JOIN credit_facilities cf ON cf.account_id=a.id
            WHERE a.status<>'CLOSED' AND (a.client_id=%s OR EXISTS (SELECT 1 FROM minebank_business_members bm WHERE bm.account_id=a.id AND bm.client_id=%s))
            ORDER BY a.account_type,a.id""", (client_id,client_id,)
     )
