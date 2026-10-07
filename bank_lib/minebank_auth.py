@@ -389,8 +389,8 @@ def review_tier_change(request_id, reviewer_id, approve):
                             cur.execute("UPDATE credit_facilities SET credit_limit=LEAST(credit_limit,%s) WHERE account_id=%s",(int(target[3] or 0),row[2]))
                     cur.execute("UPDATE bank_accounts SET tier_id=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
                                 (target[0],row[2]))
-                cur.execute("""UPDATE bank_requests_v2 SET status=%s,reviewed_by=%s,reviewed_at=CURRENT_TIMESTAMP
-                               WHERE id=%s""",(status,reviewer_id,request_id))
+                cur.execute("UPDATE bank_requests_v2 SET status=%s,reviewed_by=%s,reviewed_at=CURRENT_TIMESTAMP WHERE id=%s",
+                            (status,reviewer_id,request_id))
                 return status
     finally:
         release_db_connection(conn)
