@@ -20,6 +20,7 @@ from bank_lib.minebank_auth import (
 from bank_lib.minebank_core import (
     approve_transfer, chargeback, deposit, draw_credit,
     reject_transfer, repay_credit, transfer, cancel_transfer,
+    accrue_daily_credit_interest, generate_cashline_statement,
 )
 from bank_lib.minebank_requests import create_request, list_requests, create_notification
 from bank_lib.minebank_security import ensure_security_schema, validate_session, list_active_sessions, terminate_session, terminate_other_sessions, security_event
@@ -625,6 +626,9 @@ def minebank_credit_page():
                 flash("Credit cancellation request submitted for bank review.","success")
             else:
                 amount=int(request.form.get("requested_limit","0"))
+                maximum=int(account.get("default_credit_limit") or 0)
+                if amount < 300 or (maximum and amount > maximum):
+                    raise ValueError(f"CashLine request must be between 300 and {maximum} Emerald.")
                 if amount<=0: raise ValueError("Credit limit must be greater than zero.")
                 create_request(session["minebank_client_id"],"CREDIT_LINE",account["id"],
                                {"requested_limit":amount,"reason":request.form.get("reason","")[:500]})
@@ -671,13 +675,20 @@ def minebank_scheduled_page():
                 raise ValueError("Complete the scheduled payment fields.")
             interval_days=max(1,int(request.form.get("interval_days","1") or 1))
             recurrence=json.dumps({"interval_days":interval_days})
+            if int(account["balance"]) < 2:
+                raise ValueError("2 Emerald are required to set up a scheduled payment.")
+            execute_query("UPDATE bank_accounts SET balance=balance-2,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(account["id"],),commit=True)
+            execute_query("""INSERT INTO ledger_transactions
+                             (transaction_id,transaction_type,amount,fee,currency,sender_account_id,status,description)
+                             VALUES(%s,'SCHEDULED_PAYMENT_SETUP',2,0,'Emerald',%s,'COMPLETED','Scheduled payment setup fee')""",
+                          (f"MB-SCHED-{secrets.token_hex(6)}",account["id"]),commit=True)
             execute_query("""INSERT INTO minebank_scheduled_transfers
                              (client_id,account_id,recipient_account_number,amount,schedule_type,next_run_at,end_at,description,reference,recurrence_config)
                              VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)""",
                           (session["minebank_client_id"],account["id"],number,amount,schedule,next_run,
                            request.form.get("end_at") or None,request.form.get("description","")[:500],
                            request.form.get("reference","")[:100],recurrence),commit=True)
-            flash("Scheduled payment created.","success")
+            flash("Scheduled payment created. Setup fee: 2 Emerald.","success")
         except Exception as exc:
             flash(str(exc),"error")
     schedules=execute_query_dict("""SELECT * FROM minebank_scheduled_transfers
@@ -692,7 +703,12 @@ def minebank_cron():
         return jsonify(error="Unauthorized"),401
     from bank_lib.minebank_scheduler import process_due_scheduled_transfers
     try:
-        return jsonify(results=process_due_scheduled_transfers())
+        interest=accrue_daily_credit_interest()
+        billing=[]
+        if datetime.now(timezone.utc).day == 1:
+            from bank_lib.minebank_core import process_monthly_billing
+            billing=process_monthly_billing()
+        return jsonify(interest=interest,billing=billing,scheduled=process_due_scheduled_transfers())
     except Exception as exc:
         return jsonify(error=str(exc)),500
 
@@ -716,6 +732,16 @@ def minebank_payment_requests_page():
             payer_number=request.form.get("payer_account_number","").strip().upper()
             amount=int(request.form.get("amount","0"))
             if amount<=0: raise ValueError("Requested amount must be positive.")
+            count=execute_query("SELECT COUNT(*) FROM minebank_payment_requests WHERE requester_client_id=%s AND created_at::date=CURRENT_DATE",(cid,))
+            if count and int(count[0][0]) >= 5:
+                raise ValueError("Maximum 5 Payment Requests per day.")
+            if int(account["balance"]) < 1:
+                raise ValueError("1 Emerald is required for a Payment Request.")
+            execute_query("UPDATE bank_accounts SET balance=balance-1,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(account["id"],),commit=True)
+            execute_query("""INSERT INTO ledger_transactions
+                             (transaction_id,transaction_type,amount,fee,currency,sender_account_id,status,description)
+                             VALUES(%s,'PAYMENT_REQUEST_FEE',1,0,'Emerald',%s,'COMPLETED','Payment Request fee')""",
+                          (f"MB-PREQ-{secrets.token_hex(6)}",account["id"]),commit=True)
             payer=execute_query_dict("SELECT id,client_id FROM bank_accounts WHERE account_number=%s AND status<>'CLOSED'",(payer_number,))
             if not payer: raise ValueError("Payer account not found.")
             if payer[0]["client_id"]==cid: raise ValueError("You cannot request payment from your own account.")
@@ -1151,7 +1177,7 @@ def minebank_setup():
                     "VALUES(%s,%s,'ADMIN',%s,'ACTIVE') RETURNING id",
                     (email,generate_password_hash(password),generate_password_hash(pin)),commit=True)
                 admin_id = rows[0][0]
-                create_account(admin_id, "BUSINESS", "BUSINESS")
+                create_account(admin_id, "BUSINESS", "BUSINESS", charge_opening_fee=False)
                 session.clear()
                 session.permanent = True
                 session["minebank_client_id"] = admin_id
