@@ -377,16 +377,12 @@ table .pending{color:#8a671c;font-weight:bold}
 /* Subtle secure-login motion; respects reduced-motion preferences. */
 .login-body{position:relative;overflow:hidden}
 .login-card{animation:minebankLoginIn .55s ease-out both}
-.login-orb{position:fixed;width:180px;height:180px;border:1px solid rgba(86,119,143,.16);border-radius:50%;pointer-events:none}
-.orb-one{top:8%;left:7%;animation:minebankFloat 8s ease-in-out infinite}
-.orb-two{right:8%;bottom:10%;width:120px;height:120px;animation:minebankFloat 10s ease-in-out infinite reverse}
 .login-status{font-size:12px;color:#6f8493;margin:-5px 0 18px;text-align:center}
 .login-status span{display:inline-block;width:7px;height:7px;border-radius:50%;background:#5b8d72;box-shadow:0 0 0 0 rgba(91,141,114,.35);animation:minebankPulse 2.2s infinite}
 .login-card input:focus{transform:translateY(-1px);transition:transform .16s ease,box-shadow .16s ease}
 @keyframes minebankLoginIn{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-@keyframes minebankFloat{0%,100%{transform:translate3d(0,0,0)}50%{transform:translate3d(0,-12px,0)}}
 @keyframes minebankPulse{0%,100%{box-shadow:0 0 0 0 rgba(91,141,114,.35)}50%{box-shadow:0 0 0 5px rgba(91,141,114,0)}}
-@media (prefers-reduced-motion:reduce){.login-card,.login-orb,.login-status span{animation:none!important}.login-card input:focus{transform:none}}
+@media (prefers-reduced-motion:reduce){.login-card,.login-status span{animation:none!important}.login-card input:focus{transform:none}}
 
 .chart-controls{display:flex;gap:6px;justify-content:flex-end;margin:-4px 0 8px}
 .chart-controls .button{min-width:70px}
@@ -407,3 +403,11 @@ table .pending{color:#8a671c;font-weight:bold}
 .balance-breakdown b{font-weight:700}
 
 .loan-step{display:none}.loan-step.active{display:block}.loan-step h3{margin:0 0 10px;color:#1d4e72}.loan-presets,.loan-wizard-actions{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}.loan-term-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}.loan-term{margin:0!important}.loan-term input{display:none}.loan-term span{display:block;padding:12px;border:1px solid #aebdca;background:linear-gradient(#fff,#e8eef3);cursor:pointer;text-align:center}.loan-term input:checked+span{border-color:#397cae;background:#e5f2fb;box-shadow:inset 0 0 0 1px #74a9cc}.loan-term small{display:block;margin-top:4px;color:#718596}.loan-calculator,.loan-approval-box{margin-top:14px;padding:12px;border:1px solid #b6c6d3;background:#edf5fa}.loan-approval-box label{font-weight:normal}.loan-repay-form{display:flex;gap:5px;align-items:center;margin-top:6px}.loan-repay-form select,.loan-repay-form input{width:auto;min-width:80px}.loan-wizard-actions{justify-content:flex-end;border-top:1px solid #ccd7df;padding-top:12px}.loan-wizard-actions #loanPrev{margin-right:auto}@media(max-width:900px){.loan-term-grid{grid-template-columns:1fr 1fr}.loan-repay-form{flex-wrap:wrap}}
+
+/* Login submission state */
+#login-submit{position:relative;min-height:34px;transition:opacity .12s ease,filter .12s ease}
+#login-submit:disabled{cursor:wait;opacity:.92;filter:saturate(.82)}
+#login-submit.connecting .login-button-label{display:inline-block}
+.login-spinner{display:none;width:13px;height:13px;margin-left:7px;vertical-align:-2px;border:2px solid rgba(255,255,255,.48);border-top-color:#fff;border-radius:50%;animation:minebankLoginSpin .7s linear infinite}
+#login-submit.connecting .login-spinner{display:inline-block}
+@keyframes minebankLoginSpin{to{transform:rotate(360deg)}}
