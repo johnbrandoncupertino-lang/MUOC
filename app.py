@@ -84,7 +84,14 @@ def get_accounts(client_id):
                   t.code,t.display_name,t.monthly_fee,t.max_balance,t.monthly_outgoing_limit,
                   t.daily_outgoing_limit,t.single_transfer_limit,t.credit_enabled,t.default_credit_limit,
                   cf.credit_limit AS facility_credit_limit,cf.status AS credit_status,
-                  GREATEST(0, COALESCE(cf.credit_limit,0) + LEAST(a.balance,0)) AS available_credit
+                  GREATEST(0, COALESCE(cf.credit_limit,0) - COALESCE((
+                    SELECT SUM(CASE WHEN l.transaction_type='TRANSFER' AND l.transfer_kind='CASHLINE'
+                                      AND l.status IN ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL') THEN l.amount+l.fee
+                                    WHEN l.transaction_type IN ('CREDIT_INTEREST','CREDIT_FEE') AND l.status='COMPLETED' THEN l.amount
+                                    WHEN l.transaction_type='CREDIT_REPAYMENT' AND l.status='COMPLETED' THEN -l.amount
+                                    ELSE 0 END)
+                    FROM ledger_transactions l WHERE l.sender_account_id=a.id OR l.recipient_account_id=a.id
+                  ),0)) AS available_credit
            FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
            LEFT JOIN credit_facilities cf ON cf.account_id=a.id AND cf.status='ACTIVE'
            WHERE a.status<>'CLOSED' AND (a.client_id=%s OR EXISTS (SELECT 1 FROM minebank_business_members bm WHERE bm.account_id=a.id AND bm.client_id=%s))
@@ -450,7 +457,8 @@ def minebank_transfer_page():
                 recipient = request.form.get("recipient_account_number","").strip().upper()
                 # preview_transfer is deliberately kept in the core library; no duplicate fee logic in the web layer.
                 from bank_lib.minebank_core import preview_transfer
-                preview = preview_transfer(session["minebank_client_id"],account["id"],recipient,amount)
+                funding_source=request.form.get("funding_source","BALANCE").upper()
+                preview = preview_transfer(session["minebank_client_id"],account["id"],recipient,amount,funding_source=funding_source)
                 preview["description"] = request.form.get("description","")[:500]
                 preview["reference"] = request.form.get("reference","")[:100]
                 preview["causal"] = request.form.get("causal","").strip()[:500]
@@ -480,6 +488,7 @@ def minebank_transfer_page():
                         description=preview.get("description"),
                         reference=preview.get("reference"),
                         causal=preview.get("causal"),
+                        funding_source=preview.get("funding_source","BALANCE"),
                         actor_client_id=session["minebank_client_id"],
                         ip_address=request.remote_addr,
                     )
@@ -698,6 +707,14 @@ def minebank_plans_page():
         flash("Account tier change submitted for bank review.","success")
     return redirect(url_for("minebank_accounts_page",account_id=account["id"] if account else None))
 
+def cashline_outstanding_for_app(account_id):
+    from bank_lib.minebank_core import cashline_outstanding
+    conn=__import__("bank_lib.database",fromlist=["get_db_connection"]).get_db_connection()
+    if conn is None: return 0
+    try:
+        with conn.cursor() as cur: return cashline_outstanding(cur,account_id)
+    finally: __import__("bank_lib.database",fromlist=["release_db_connection"]).release_db_connection(conn)
+
 @app.route("/portal/credit", methods=["GET","POST"])
 @require_login
 def minebank_credit_page():
@@ -715,8 +732,8 @@ def minebank_credit_page():
                 result=repay_credit(account["id"],amount,source_id)
                 flash(f'Credit repayment completed: {result["transaction_id"]}.',"success")
             elif action=="cancel":
-                if facility and int(account["balance"])<0:
-                    raise ValueError("Repay the outstanding credit balance before requesting cancellation.")
+                if facility and cashline_outstanding_for_app(account["id"])>0:
+                    raise ValueError("Repay the outstanding CashLine balance before requesting cancellation.")
                 create_request(session["minebank_client_id"],"CREDIT_CANCEL",account["id"],
                                 {"reason":request.form.get("reason","")[:500]})
                 flash("Credit cancellation request submitted for bank review.","success")
