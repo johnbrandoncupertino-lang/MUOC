@@ -631,12 +631,12 @@ def activate_credit(account_id, requested_limit):
                 existing=cur.fetchone()
                 fee=credit_activation_fee(requested_limit)
                 if existing:
-                    cur.execute("UPDATE credit_facilities SET credit_limit=%s,activation_fee_monthly=%s,status='ACTIVE' WHERE account_id=%s",
-                                (requested_limit,fee,account_id))
+                    cur.execute("UPDATE credit_facilities SET credit_limit=%s,activation_fee_monthly=%s,interest_annual_bps=%s,interest_monthly_bps=%s,status='ACTIVE' WHERE account_id=%s",
+                                (requested_limit,fee,cashline_annual_bps(account[3]),cashline_annual_bps(account[3]),account_id))
                 else:
                     cur.execute("""INSERT INTO credit_facilities(account_id,credit_limit,interest_monthly_bps,
                                    activation_fee_monthly,status) VALUES(%s,%s,%s,%s,'ACTIVE')""",
-                                (account_id,requested_limit,cashline_annual_bps(account[3]),fee))
+                                (account_id,requested_limit,cashline_annual_bps(account[3]),cashline_annual_bps(account[3]),fee))
                 return {"account_id":account_id,"credit_limit":requested_limit,"monthly_activation_fee":fee,
                         "interest_annual_bps":cashline_annual_bps(account[3]),"status":"ACTIVE"}
     finally:
