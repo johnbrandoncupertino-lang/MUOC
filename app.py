@@ -769,7 +769,7 @@ def minebank_statements_print():
         direction="Incoming" if tx["recipient_account_id"]==account["id"] else "Outgoing"
         detail.append((f'{tx["created_at"]} · {tx["transaction_id"]}',
                        f'{direction} · {tx["transaction_type"]} · {tx["status"]} · {tx["amount"]} Emerald · Fee {tx["fee"]} · {tx["description"] or tx["causal"] or "No description"}'))
-    return _pdf_response("Account Statement",rows,f"minebank-statement-{account["account_number"]}.pdf",
+    return _pdf_response("Account Statement",rows,f"minebank-statement-{account['account_number']}.pdf",
                          sections=[("Statement overview",rows),("Transaction register",detail)])
 
 @app.route("/portal/statements/csv")
