@@ -316,7 +316,7 @@ def minebank_accounts_page():
             return redirect(url_for("minebank_accounts_page"))
         except Exception as exc:
             error=str(exc)
-    business_tiers=execute_query_dict("SELECT code,display_name,monthly_fee,monthly_outgoing_limit,credit_enabled,default_credit_limit FROM account_tiers_v2 WHERE account_type='BUSINESS' AND active=TRUE ORDER BY id")
+    business_tiers=execute_query_dict("SELECT code,display_name,monthly_fee,opening_fee,monthly_outgoing_limit,credit_enabled,default_credit_limit FROM account_tiers_v2 WHERE account_type='BUSINESS' AND active=TRUE ORDER BY id")
     return render_template("minebank_portal.html",mode="account",account=selected_account(),accounts=get_accounts(session["minebank_client_id"]),
                            business_tiers=business_tiers,account_error=error,portal_active="account")
 
