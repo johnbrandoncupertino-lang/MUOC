@@ -198,7 +198,7 @@ def prepare_request():
 
 @app.route("/")
 def home():
-    return render_template("minebank_public.html")
+    return render_template("minebank_institutional.html")
 
 @app.route("/login")
 def legacy_login():
