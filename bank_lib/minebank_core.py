@@ -660,11 +660,13 @@ def repay_loan_installment(loan_id, source_account_id, actor_client_id):
                 source=_lock_account(cur,source_account_id)
                 if not source or int(source[1])!=int(actor_client_id): raise ValueError("Repayment account does not belong to you.")
                 if source[6]!="ACTIVE": raise ValueError("Repayment account is not active.")
-                if int(source[5])<int(loan[4]): raise ValueError("Insufficient balance to pay today's loan installment.")
+                remaining_total=max(0,int(loan[9])-int(loan[5])*int(loan[4]))
+                installment=min(int(loan[4]),remaining_total) if int(loan[5])+1 < int(loan[6]) else remaining_total
+                if int(source[5])<installment: raise ValueError("Insufficient balance to pay today's loan installment.")
                 txid=next_transaction_id(cur)
-                cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(loan[4],source_account_id))
+                cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(installment,source_account_id))
                 create_ledger_transaction(cur,transaction_id=txid,transaction_type="LOAN_REPAYMENT",
-                                          amount=loan[4],sender_account_id=source_account_id,
+                                          amount=installment,sender_account_id=source_account_id,
                                           description=f"Loan repayment {loan[11]}",reference_id=loan[11])
                 paid=int(loan[5])+1
                 status="COMPLETED" if paid>=int(loan[6]) else "ACTIVE"
@@ -672,7 +674,7 @@ def repay_loan_installment(loan_id, source_account_id, actor_client_id):
                                   next_due_date=CASE WHEN %s='ACTIVE' THEN CURRENT_DATE+1 ELSE NULL END,
                                   completed_at=CASE WHEN %s='COMPLETED' THEN CURRENT_TIMESTAMP ELSE completed_at END
                                WHERE id=%s""",(paid,status,status,status,loan_id))
-                return {"transaction_id":txid,"amount":loan[4],"status":status,"installments_paid":paid,"term_days":loan[6]}
+                return {"transaction_id":txid,"amount":installment,"status":status,"installments_paid":paid,"term_days":loan[6]}
     finally:
         release_db_connection(conn)
 
