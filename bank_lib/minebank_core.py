@@ -57,7 +57,7 @@ def next_transaction_id(cur):
 def create_ledger_transaction(cur, *, transaction_id, transaction_type, amount, fee=0,
                               currency=CURRENCY, sender_account_id=None,
                               recipient_account_id=None, status="COMPLETED",
-                              description=None, reference_id=None, metadata=None, transfer_kind=None, extra_fee=0):
+                              description=None, reference_id=None, metadata=None, transfer_kind=None):
     cur.execute(
         """INSERT INTO ledger_transactions
            (transaction_id,transaction_type,amount,fee,currency,sender_account_id,
@@ -188,7 +188,7 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
         release_db_connection(conn)
 
 def transfer(*, sender_account_id, recipient_account_number, amount,
-             description=None, reference=None, currency=CURRENCY, idempotency_key=None, actor_client_id=None, ip_address=None, transfer_kind=None):
+             description=None, reference=None, currency=CURRENCY, idempotency_key=None, actor_client_id=None, ip_address=None, transfer_kind=None, extra_fee=0):
     if not isinstance(amount, int) or amount <= 0:
         raise ValueError("Transfer amount must be a positive integer Emerald amount.")
     if not recipient_account_number:
