@@ -13,6 +13,10 @@
     <link href="{{ url_for('static', filename='css/main.css') }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/dark-mode.css') }}" rel="stylesheet">
     <link href="{{ url_for('static', filename='css/legacy-bank.css') }}" rel="stylesheet">
+    <script>
+      window.si = window.si || function () { (window.siq = window.siq || []).push(arguments); };
+    </script>
+    <script defer src="/_vercel/speed-insights/script.js"></script>
     {% block head %}{% endblock %}
 </head>
 <body{% if is_logged_in %} data-wallet-name="{{ session.wallet_name }}"{% endif %}>
