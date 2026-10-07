@@ -706,10 +706,18 @@ def minebank_cron():
     try:
         interest=accrue_daily_credit_interest()
         billing=[]
+        statements=[]
         if datetime.now(timezone.utc).day == 1:
             from bank_lib.minebank_core import process_monthly_billing
             billing=process_monthly_billing()
-        return jsonify(interest=interest,billing=billing,scheduled=process_due_scheduled_transfers())
+            from datetime import timedelta
+            today=datetime.now(timezone.utc).date()
+            first=today.replace(day=1)
+            prev_end=first-timedelta(days=1)
+            prev_start=prev_end.replace(day=1)
+            facilities=execute_query_dict("SELECT account_id FROM credit_facilities WHERE status IN ('ACTIVE','SUSPENDED')")
+            statements=[generate_cashline_statement(int(x["account_id"]),prev_start,prev_end) for x in facilities]
+        return jsonify(interest=interest,billing=billing,statements=statements,scheduled=process_due_scheduled_transfers())
     except Exception as exc:
         return jsonify(error=str(exc)),500
 
@@ -1081,10 +1089,10 @@ def review_request(request_id):
             if limit<=0 or limit>requested:
                 raise ValueError("Approved credit limit must be greater than zero and no higher than the requested amount.")
             execute_query("""INSERT INTO credit_facilities(account_id,credit_limit,interest_monthly_bps,activation_fee_monthly,status)
-                             VALUES(%s,%s,700,CASE WHEN %s>5000 THEN 40 ELSE 10 END,'ACTIVE')
+                             VALUES(%s,%s,CASE WHEN a.account_type='PERSONAL' THEN 1830 ELSE 2370 END,CASE WHEN %s>5000 THEN 20 ELSE 10 END,'ACTIVE')
                              ON CONFLICT(account_id) DO UPDATE SET credit_limit=EXCLUDED.credit_limit,
                                activation_fee_monthly=EXCLUDED.activation_fee_monthly,status='ACTIVE'""",
-                          (r["account_id"],limit,limit),commit=True)
+                          (r["account_id"],limit,r["account_id"],limit),commit=True)
         elif approve and r["request_type"]=="CREDIT_CANCEL":
             execute_query("UPDATE credit_facilities SET status='CLOSED' WHERE account_id=%s AND status='ACTIVE'",(r["account_id"],),commit=True)
         elif approve and r["request_type"]=="TIER_CHANGE":
