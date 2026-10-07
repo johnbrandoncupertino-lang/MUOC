@@ -12,7 +12,7 @@ from functools import wraps
 from flask import Flask, Response, flash, jsonify, redirect, render_template, render_template_string, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from bank_lib.database import execute_query, execute_query_dict, ensure_minebank_schema
+from bank_lib.database import execute_query, execute_query_dict, ensure_minebank_schema, ensure_transaction_schema
 from bank_lib.minebank_auth import (
     create_account, get_client_accounts, login_client, logout_client,
     set_wallet_pin, verify_wallet_pin,
@@ -511,9 +511,12 @@ def minebank_transfer_page():
 @app.route("/portal/transactions")
 @require_login
 def minebank_transactions_page():
-    if not ensure_minebank_schema():
+    if not ensure_transaction_schema():
         return "MineBank database is temporarily unavailable. Please try again in a moment.", 503
     account=selected_account()
+    if not account:
+        flash("No bank account is available for this client yet.","error")
+        return redirect(url_for("minebank_accounts_page"))
     q=request.args.get("q","").strip()
     status=request.args.get("status","").strip().upper()
     direction=request.args.get("direction","").strip().upper()
