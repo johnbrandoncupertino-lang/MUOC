@@ -5,7 +5,7 @@ presentation live here; financial mutations are delegated to bank_lib's tested
 ledger/auth modules.  The old fragmented portal is no longer assembled at
 import time.
 """
-import csv, io, secrets
+import csv, io, secrets, hashlib, os
 from datetime import datetime, timezone
 from functools import wraps
 
@@ -27,8 +27,23 @@ from bank_lib.minebank_requests import create_request, list_requests, create_not
 from bank_lib.minebank_security import ensure_security_schema, validate_session, list_active_sessions, terminate_session, terminate_other_sessions, security_event
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
-app.secret_key = (secrets.token_hex(32) if not __import__("os").environ.get("SECRET_KEY")
-                  else __import__("os").environ["SECRET_KEY"])
+# Vercel may run multiple serverless workers. Flask's signed session cookie
+# requires the same secret on every worker; generating a random key at import
+# time silently invalidates sessions whenever traffic moves between workers.
+_configured_secret = os.environ.get("SECRET_KEY", "").strip()
+if not _configured_secret:
+    # Prefer a stable deployment-specific fallback if SECRET_KEY was omitted.
+    # The raw database URL is never exposed; only its SHA-256 digest is used.
+    _database_secret = (
+        os.environ.get("DATABASE_URL")
+        or os.environ.get("POSTGRES_URL")
+        or os.environ.get("POSTGRES_PRISMA_URL")
+        or ""
+    ).strip()
+    _configured_secret = hashlib.sha256(
+        ("MineBank session secret|" + _database_secret).encode("utf-8")
+    ).hexdigest()
+app.secret_key = _configured_secret
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
@@ -191,13 +206,6 @@ def legacy_login():
 def minebank_login():
     error = None
     if request.method == "POST":
-        # Finish the small database migration before touching account data.
-        # This prevents legacy production schemas from turning the first
-        # successful login into a dashboard HTTP 500.
-        if not ensure_minebank_schema():
-            error = "MineBank database is temporarily unavailable. Please try again in a moment."
-            return render_template("minebank_login_new.html", error=error,
-                                   captcha_question=session.get("login_captcha_question")), 503
         ok, message = login_client(request.form.get("email",""), request.form.get("password",""), request.form.get("captcha_answer"))
         if ok:
             session["csrf"] = secrets.token_urlsafe(32)
