@@ -298,7 +298,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 except Exception:
                     pass
                 requires_business_approval = sender[3]=="BUSINESS" and sender_tier_code in ("BUSINESS_PRO","CORPORATE") and business_role=="EMPLOYEE"
-                status = "PENDING_BUSINESS_APPROVAL" if requires_business_approval else ("PENDING_APPROVAL" if amount >= PENDING_APPROVAL_THRESHOLD or risk_score >= 60 else "COMPLETED")
+                status = "PENDING_BUSINESS_APPROVAL" if requires_business_approval else ("PENDING_APPROVAL" if amount > PENDING_APPROVAL_THRESHOLD or risk_score >= 60 else "COMPLETED")
                 if transfer_kind is None:
                     transfer_kind = "OWN_TRANSFER" if sender[1] == recipient[1] else f"{sender[3]}_TO_{recipient[3]}"
                 txid = next_transaction_id(cur)
