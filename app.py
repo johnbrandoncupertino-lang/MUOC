@@ -299,6 +299,42 @@ def recent_transactions(account, limit=10):
 def minebank_account_page():
     return redirect(url_for("minebank_accounts_page"))
 
+def evaluate_tier_eligibility(client, account, tier):
+    """Return (eligible, explanation) using the tier's configured eligibility rules."""
+    config = tier.get("eligibility_config") or {}
+    reasons = []
+    minimum_age = int(config.get("minimum_age") or 0)
+    if minimum_age:
+        dob = client.get("date_of_birth")
+        if not dob:
+            reasons.append(f"Minimum age: {minimum_age}; date of birth is not set.")
+        else:
+            try:
+                today = datetime.now(timezone.utc).date()
+                birth = dob.date() if hasattr(dob, "date") else dob
+                age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
+                if age < minimum_age:
+                    reasons.append(f"Minimum age: {minimum_age} (you are {age}).")
+            except Exception:
+                reasons.append(f"Minimum age: {minimum_age}; date of birth could not be verified.")
+    minimum_balance = int(config.get("minimum_balance") or 0)
+    if int(account.get("balance") or 0) < minimum_balance:
+        reasons.append(f"Minimum balance: {minimum_balance} Emerald.")
+    minimum_operations = int(config.get("minimum_operations") or 0)
+    if minimum_operations:
+        rows = execute_query(
+            """SELECT COUNT(*) FROM ledger_transactions
+               WHERE (sender_account_id=%s OR recipient_account_id=%s)
+                 AND status='COMPLETED'
+                 AND created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'""",
+            (account["id"], account["id"])
+        )
+        operations = int(rows[0][0]) if rows else 0
+        if operations < minimum_operations:
+            reasons.append(f"Minimum activity: {minimum_operations} completed operations in the last 30 days (you have {operations}).")
+    return (False, "Not eligible: " + " ".join(reasons)) if reasons else (True, "You qualify for this plan.")
+
+
 @app.route("/portal/accounts", methods=["GET","POST"])
 @require_login
 def minebank_accounts_page():
@@ -334,7 +370,16 @@ def minebank_accounts_page():
         except Exception as exc:
             error=str(exc)
     account=selected_account()
-    plan_tiers=execute_query_dict("SELECT code,display_name,monthly_fee,opening_fee,monthly_outgoing_limit,credit_enabled,default_credit_limit FROM account_tiers_v2 WHERE account_type=%s AND active=TRUE ORDER BY id",(account["account_type"] if account else "PERSONAL",))
+    plan_tiers=execute_query_dict("""SELECT code,display_name,monthly_fee,opening_fee,monthly_outgoing_limit,
+                                               credit_enabled,default_credit_limit,eligibility_config
+                                        FROM account_tiers_v2
+                                        WHERE account_type=%s AND active=TRUE ORDER BY id""",
+                                   (account["account_type"] if account else "PERSONAL",))
+    for tier in plan_tiers:
+        tier["is_current"] = bool(account and tier["code"] == account.get("tier_code"))
+        tier["eligible"], tier["eligibility_reason"] = evaluate_tier_eligibility(
+            current_client(), account, tier
+        ) if account else (False, "No account selected.")
     business_tiers=execute_query_dict("SELECT code,display_name,monthly_fee,opening_fee,monthly_outgoing_limit,credit_enabled,default_credit_limit FROM account_tiers_v2 WHERE account_type='BUSINESS' AND active=TRUE ORDER BY id")
     return render_template("minebank_portal.html",mode="account",account=account,accounts=get_accounts(session["minebank_client_id"]),
                            plan_tiers=plan_tiers,business_tiers=business_tiers,account_error=error,portal_active="account")
@@ -449,6 +494,8 @@ def minebank_transfer_page():
 @app.route("/portal/transactions")
 @require_login
 def minebank_transactions_page():
+    if not ensure_minebank_schema():
+        return "MineBank database is temporarily unavailable. Please try again in a moment.", 503
     account=selected_account()
     q=request.args.get("q","").strip()
     status=request.args.get("status","").strip().upper()
@@ -1281,14 +1328,18 @@ def admin_minebank_messages():
                 targets=execute_query_dict("SELECT a.id,a.client_id FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE "+" AND ".join(conditions)+" ORDER BY a.id",tuple(params))
             if not targets:
                 raise ValueError("No matching accounts were found.")
+            recipients={}
             for target in targets:
-                create_notification(target["client_id"],"BANK_MESSAGE",subject,body,target["id"])
+                recipients.setdefault(target["client_id"], target["id"])
+            for client_id, account_id in recipients.items():
+                create_notification(client_id,"BANK_MESSAGE",subject,body,account_id)
             execute_query("""INSERT INTO minebank_message_campaigns(created_by,subject,body,recipient_filter)
                              VALUES(%s,%s,%s,%s::jsonb)""",
                           (session["minebank_client_id"],subject,body,__import__("json").dumps({
-                              "mode":target_mode,"account_number":account_number,"account_type":account_type,"tier_code":tier_code
+                              "mode":target_mode,"account_number":account_number,"account_type":account_type,"tier_code":tier_code,
+                              "recipient_count":len(recipients)
                           })),commit=True)
-            flash(f"Message sent to {len(targets)} account(s).","success")
+            flash(f"Message sent to {len(recipients)} customer(s).","success")
             return redirect(url_for("admin_minebank_messages"))
         except Exception as exc:
             error=str(exc)
