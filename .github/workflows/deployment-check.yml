@@ -36,7 +36,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:test@localhost:5432/muoc_test
           SECRET_KEY: ci-test-secret
-        run: pytest -q tests/test_minebank_postgres.py
+        run: timeout 180s pytest -vv -s --maxfail=1 tests/test_minebank_postgres.py
       - name: Validate required application files
         run: |
           test -f app.py
