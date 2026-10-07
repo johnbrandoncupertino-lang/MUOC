@@ -520,11 +520,26 @@ ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS minimum_due_floor INTEGER
 ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS transfer_kind VARCHAR(40);
 
 -- Preserve legacy negative account balances as CashLine debt before the new
--- separate-circuit model is used. This is idempotent by description.
+-- separate-circuit model. Existing CREDIT_DRAW rows are reclassified first so
+-- historical interest/fees are not double-counted.
+UPDATE ledger_transactions l
+SET transfer_kind='CASHLINE'
+WHERE l.transaction_type='CREDIT_DRAW'
+  AND l.transfer_kind IS NULL
+  AND EXISTS (
+      SELECT 1 FROM bank_accounts a
+      JOIN credit_facilities cf ON cf.account_id=a.id
+      WHERE a.id=l.recipient_account_id
+        AND a.balance < 0
+        AND cf.status IN ('ACTIVE','SUSPENDED')
+  );
+
+-- If an older installation has a negative balance but no legacy credit-draw
+-- ledger entries, create exactly the missing debt amount.
 INSERT INTO ledger_transactions
 (transaction_id,transaction_type,amount,fee,currency,recipient_account_id,status,description,transfer_kind)
 SELECT 'MUOC-' || EXTRACT(YEAR FROM CURRENT_TIMESTAMP)::INT || '-' || LPAD(nextval('muoc_transaction_seq')::TEXT,6,'0'),
-       'TRANSFER', -a.balance, 0, 'Emerald', a.id, 'COMPLETED',
+       'TRANSFER', GREATEST(0,-a.balance), 0, 'Emerald', a.id, 'COMPLETED',
        'Migrated legacy CashLine balance', 'CASHLINE'
 FROM bank_accounts a
 JOIN credit_facilities cf ON cf.account_id=a.id
@@ -535,6 +550,11 @@ WHERE a.balance < 0
       WHERE l.recipient_account_id=a.id
         AND l.transfer_kind='CASHLINE'
         AND l.description='Migrated legacy CashLine balance'
+  )
+  AND NOT EXISTS (
+      SELECT 1 FROM ledger_transactions l
+      WHERE l.recipient_account_id=a.id
+        AND l.transaction_type='CREDIT_DRAW'
   );
 
 UPDATE bank_accounts a
