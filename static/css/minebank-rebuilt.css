@@ -433,3 +433,7 @@ table .pending{color:#8a671c;font-weight:bold}
 
 /* MineBank amount selectors */
 .amount-selector{margin:10px 0 18px}.amount-range{width:100%;accent-color:#07549a;cursor:pointer}.amount-range-labels{display:flex;justify-content:space-between;align-items:center;margin-top:7px;font-size:12px;color:#60778b}.amount-range-labels strong{font-size:18px;color:#173f65}.amount-number-label{display:block;margin-top:14px}.amount-selector input[type=number]{margin-top:5px}
+
+/* Important operation submission state */
+.operation-loading{position:relative;min-height:34px;cursor:wait!important;opacity:.92;filter:saturate(.84)}.operation-label{display:inline-block}.operation-spinner{display:inline-block;width:13px;height:13px;margin-left:8px;vertical-align:-2px;border:2px solid rgba(255,255,255,.48);border-top-color:#fff;border-radius:50%;animation:minebankOperationSpin .7s linear infinite}@keyframes minebankOperationSpin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.operation-spinner{animation:none}}
