@@ -511,3 +511,10 @@ VALUES
 ('SCHEDULE_EXECUTION','SCHEDULED_PAYMENT',NULL,NULL,NULL,1,10,TRUE),
 ('PRINTED_STATEMENT','PRINTED_STATEMENT',NULL,NULL,NULL,1,10,TRUE)
 ON CONFLICT(name) DO UPDATE SET fixed_amount=EXCLUDED.fixed_amount,active=TRUE;
+
+
+-- CashLine circuit migration: credit is a separate payment source and never makes the ordinary balance negative.
+ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS interest_annual_bps INTEGER NOT NULL DEFAULT 1830;
+ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS minimum_due_percent_bps INTEGER NOT NULL DEFAULT 500;
+ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS minimum_due_floor INTEGER NOT NULL DEFAULT 40;
+ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS transfer_kind VARCHAR(40);
