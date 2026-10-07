@@ -88,7 +88,7 @@ def get_accounts(client_id):
                     SELECT SUM(CASE WHEN l.transaction_type='TRANSFER' AND l.transfer_kind='CASHLINE'
                                       AND l.status IN ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL') THEN l.amount+l.fee
                                     WHEN l.transaction_type IN ('CREDIT_INTEREST','CREDIT_FEE') AND l.status='COMPLETED' THEN l.amount
-                                    WHEN l.transaction_type='CREDIT_REPAYMENT' AND l.status='COMPLETED' THEN -l.amount
+                                    WHEN l.transaction_type='CREDIT_REPAYMENT' AND l.status='COMPLETED' AND l.recipient_account_id=a.id THEN -l.amount
                                     ELSE 0 END)
                     FROM ledger_transactions l WHERE l.sender_account_id=a.id OR l.recipient_account_id=a.id
                   ),0)) ELSE 0 END AS available_credit
