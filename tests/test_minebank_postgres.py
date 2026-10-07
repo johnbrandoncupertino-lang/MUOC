@@ -186,6 +186,7 @@ def test_transfer_over_5000_is_pending_approval(accounts):
 
 def test_cashline_limits_and_daily_interest(accounts):
     alice, _, alice_id, _, _, _ = accounts
+    execute_query("UPDATE bank_accounts SET balance=0 WHERE id=%s", (alice_id,), fetch=False, commit=True)
     activation = activate_credit(alice_id, 500)
     assert activation["credit_limit"] == 500
     assert activation["interest_annual_bps"] == 1830
