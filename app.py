@@ -69,7 +69,8 @@ def inject_bank_context():
         "minebank_request_updates": request_update_count(client["id"]) if client else 0,
         "minebank_unread_messages": unread_message_count(client["id"]) if client else 0,
         "minebank_frozen_account": (
-            next((a for a in accounts if a.get("status") == "FROZEN"), None)
+            next((a for a in accounts if a.get("id") == session.get("minebank_account_id") and a.get("status") == "FROZEN"),
+                 next((a for a in accounts if a.get("status") == "FROZEN"), None))
             if client else None
         ),
     }
@@ -356,9 +357,12 @@ def evaluate_tier_eligibility(client, account, tier):
                 reasons.append("Minimum balance: 10,000 Emerald.")
             if debt > max(1000, balance // 4):
                 reasons.append("Good financial standing required: outstanding debt is too high.")
-            reasons.append("Corporate accounts require Admin approval.")
+            # The financial checks determine eligibility; Admin approval is
+            # a separate authorization step handled by the TIER_CHANGE request.
         else:
             reasons.append("This Business tier is not currently available.")
+        if code == "CORPORATE" and not reasons:
+            return True, "You qualify. Corporate accounts require Admin approval."
         return (False, "Not eligible: " + " ".join(reasons)) if reasons else (True, "You qualify for this plan.")
 
     minimum_age = int(config.get("minimum_age") or 0)
