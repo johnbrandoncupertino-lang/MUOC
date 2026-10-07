@@ -280,7 +280,7 @@ def create_account(client_id, account_type="PERSONAL", tier_code="PERSONAL", cha
                     txid=f"MUOC-{_now().year}-{cur.fetchone()[0]:06d}"
                     cur.execute("""INSERT INTO ledger_transactions
                                    (transaction_id,transaction_type,amount,fee,currency,sender_account_id,status,description)
-                                   VALUES(%s,'ACCOUNT_OPENING_FEE',%s,0,'Emerald',%s,'COMPLETED',%s)"""
+                                   VALUES(%s,'ACCOUNT_OPENING_FEE',%s,0,'Emerald',%s,'COMPLETED',%s)""",
                                 (txid,opening_fee,source[0],f"Opening fee for {account_number}"))
                 if account_type=="BUSINESS":
                     cur.execute("""INSERT INTO minebank_business_members(account_id,client_id,role)
