@@ -90,6 +90,8 @@ def current_client():
     return client
 
 def get_accounts(client_id):
+    # Keep account/dashboard CashLine data compatible with older production schemas.
+    ensure_transaction_schema()
     cache = getattr(__import__("flask").g, "_minebank_accounts", None)
     if cache is not None and cache[0] == client_id:
         return cache[1]
@@ -729,6 +731,7 @@ def cashline_outstanding_for_app(account_id):
 @app.route("/portal/credit", methods=["GET","POST"])
 @require_login
 def minebank_credit_page():
+    ensure_transaction_schema()
     account=selected_account()
     if not account:
         flash("No bank account exists for this client yet.","error")
