@@ -663,6 +663,9 @@ def activate_credit(account_id, requested_limit):
                 maximum=int(tier[1] or 0)
                 if requested_limit < CASHLINE_MINIMUM or (maximum and requested_limit > maximum):
                     raise ValueError(f"CashLine limit must be between {CASHLINE_MINIMUM} and {maximum} Emerald.")
+                outstanding=cashline_outstanding(cur,account_id)
+                if requested_limit < outstanding:
+                    raise ValueError(f"CashLine limit cannot be lower than the outstanding balance of {outstanding} Emerald.")
                 cur.execute("SELECT id FROM credit_facilities WHERE account_id=%s FOR UPDATE",(account_id,))
                 existing=cur.fetchone()
                 fee=credit_activation_fee(requested_limit)
