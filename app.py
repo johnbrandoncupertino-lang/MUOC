@@ -1089,7 +1089,7 @@ def review_request(request_id):
             if limit<=0 or limit>requested:
                 raise ValueError("Approved credit limit must be greater than zero and no higher than the requested amount.")
             execute_query("""INSERT INTO credit_facilities(account_id,credit_limit,interest_monthly_bps,activation_fee_monthly,status)
-                             VALUES(%s,%s,CASE WHEN a.account_type='PERSONAL' THEN 1830 ELSE 2370 END,CASE WHEN %s>5000 THEN 20 ELSE 10 END,'ACTIVE')
+                             VALUES(%s,%s,CASE WHEN (SELECT account_type FROM bank_accounts WHERE id=%s)='PERSONAL' THEN 1830 ELSE 2370 END,CASE WHEN %s>5000 THEN 20 ELSE 10 END,'ACTIVE')
                              ON CONFLICT(account_id) DO UPDATE SET credit_limit=EXCLUDED.credit_limit,
                                activation_fee_monthly=EXCLUDED.activation_fee_monthly,status='ACTIVE'""",
                           (r["account_id"],limit,r["account_id"],limit),commit=True)
