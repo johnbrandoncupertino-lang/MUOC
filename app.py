@@ -751,9 +751,17 @@ def minebank_credit_page():
             flash(str(exc),"error")
     statements=execute_query_dict("""SELECT * FROM credit_statements WHERE account_id=%s ORDER BY period_end DESC LIMIT 12""",(account["id"],))
     outstanding=cashline_outstanding_for_app(account["id"])
+    cashline_transactions=execute_query_dict("""SELECT l.transaction_id,l.transaction_type,l.amount,l.fee,l.status,l.description,l.created_at,
+                                                       l.transfer_kind,s.account_number sender_number,r.account_number recipient_number
+                                                FROM ledger_transactions l
+                                                LEFT JOIN bank_accounts s ON s.id=l.sender_account_id
+                                                LEFT JOIN bank_accounts r ON r.id=l.recipient_account_id
+                                                WHERE (l.sender_account_id=%s AND l.transfer_kind='CASHLINE')
+                                                   OR (l.recipient_account_id=%s AND l.transaction_type IN ('CREDIT_INTEREST','CREDIT_FEE','CREDIT_REPAYMENT'))
+                                                ORDER BY l.created_at DESC LIMIT 100""",(account["id"],account["id"]))
     return render_template("minebank_portal.html",mode="credit",account=account,
                            facility=facility[0] if facility else None,statements=statements,
-                           cashline_outstanding=outstanding,
+                           cashline_outstanding=outstanding,cashline_transactions=cashline_transactions,
                            repayment_sources=[a for a in get_accounts(session["minebank_client_id"]) if int(a["id"])!=int(account["id"])],
                            portal_active="credit")
 
