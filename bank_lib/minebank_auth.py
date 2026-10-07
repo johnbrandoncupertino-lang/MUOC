@@ -133,65 +133,47 @@ def set_wallet_pin(client_id, pin):
 
 
 def verify_wallet_pin(client_id, pin):
-    conn = get_db_connection()
+    """Verify a Wallet PIN and apply the 3-attempt/5-minute lockout without nested DB transactions."""
+    conn=get_db_connection()
+    notification=None
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute(
-                    "SELECT wallet_pin_hash,wallet_pin_failed_attempts,wallet_pin_locked_until "
-                    "FROM bank_clients WHERE id=%s FOR UPDATE",
-                    (client_id,),
-                )
-                row = cur.fetchone()
+                cur.execute("SELECT wallet_pin_hash,wallet_pin_failed_attempts,wallet_pin_locked_until FROM bank_clients WHERE id=%s FOR UPDATE",(client_id,))
+                row=cur.fetchone()
                 if not row or not row[0]:
-                    return False, "Wallet PIN is not configured."
-                now = _now()
-                if row[2] and row[2] > now:
-                    seconds = max(1, int((row[2] - now).total_seconds()))
-                    return False, f"Wallet PIN temporarily locked. Try again in {seconds} seconds."
-                if check_password_hash(row[0], pin):
-                    cur.execute(
-                        "UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL "
-                        "WHERE id=%s",
-                        (client_id,),
-                    )
-                    return True, None
-                attempts = int(row[1] or 0) + 1
-                if attempts >= WALLET_PIN_MAX_ATTEMPTS:
-                    locked = now + timedelta(minutes=WALLET_PIN_LOCKOUT_MINUTES)
-                    cur.execute(
-                        "UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=%s WHERE id=%s",
-                        (locked, client_id),
-                    )
-                    try:
-                        from bank_lib.minebank_requests import create_notification
-                        from bank_lib.minebank_features import queue_email
-                        create_notification(client_id, "SECURITY", "Wallet PIN locked",
-                                             "Three failed Wallet PIN attempts triggered a 5-minute security lockout.", None)
-                        queue_email(client_id, "SECURITY", "MineBank security alert",
-                                   "Three failed Wallet PIN attempts triggered a 5-minute lockout on your MineBank account.")
-                    except Exception:
-                        pass
-                    return False, "Wallet PIN temporarily locked for 5 minutes after three failed attempts."
-                cur.execute(
-                    "UPDATE bank_clients SET wallet_pin_failed_attempts=%s WHERE id=%s",
-                    (attempts, client_id),
-                )
-                if attempts >= 2:
-                    try:
-                        from bank_lib.minebank_requests import create_notification
-                        from bank_lib.minebank_features import queue_email
-                        create_notification(client_id, "SECURITY", "Security warning",
-                                             f"Wallet PIN failed attempt {attempts} of 3.", None)
-                        queue_email(client_id, "SECURITY", "MineBank security warning",
-                                   f"Your MineBank Wallet PIN has failed {attempts} times. Review Security Centre if this was not you.")
-                    except Exception:
-                        pass
-                return False, f"Invalid wallet PIN. Failed attempt {attempts} of 3."
+                    return False,"Wallet PIN is not configured."
+                now=_now()
+                if row[2] and row[2]>now:
+                    seconds=max(1,int((row[2]-now).total_seconds()))
+                    return False,f"Wallet PIN temporarily locked. Try again in {seconds} seconds."
+                if check_password_hash(row[0],pin):
+                    cur.execute("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",(client_id,))
+                    return True,None
+                attempts=int(row[1] or 0)+1
+                if attempts>=WALLET_PIN_MAX_ATTEMPTS:
+                    locked=now+timedelta(minutes=WALLET_PIN_LOCKOUT_MINUTES)
+                    cur.execute("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=%s WHERE id=%s",(locked,client_id))
+                    notification=("Wallet PIN locked","Three failed Wallet PIN attempts triggered a 5-minute security lockout.","MineBank security alert","Three failed Wallet PIN attempts triggered a 5-minute lockout on your MineBank account.")
+                    result=(False,"Wallet PIN temporarily locked for 5 minutes after three failed attempts.")
+                else:
+                    cur.execute("UPDATE bank_clients SET wallet_pin_failed_attempts=%s WHERE id=%s",(attempts,client_id))
+                    if attempts>=2:
+                        notification=("Security warning",f"Wallet PIN failed attempt {attempts} of 3.","MineBank security warning",f"Your MineBank Wallet PIN has failed {attempts} times. Review Security Centre if this was not you.")
+                    result=(False,f"Invalid wallet PIN. Failed attempt {attempts} of 3.")
     finally:
         from .database import release_db_connection
         release_db_connection(conn)
-
+    if notification:
+        try:
+            from bank_lib.minebank_requests import create_notification
+            from bank_lib.minebank_features import queue_email
+            title,message,subject,email_body=notification
+            create_notification(client_id,"SECURITY",title,message,None)
+            queue_email(client_id,"SECURITY",subject,email_body)
+        except Exception:
+            pass
+    return result
 
 def require_minebank_login(f):
     @wraps(f)
