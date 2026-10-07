@@ -129,8 +129,9 @@ def cashline_outstanding(cur, account_id, include_pending=True):
 def cashline_principal_outstanding(cur, account_id, include_pending=True):
     statuses = "('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL')" if include_pending else "('COMPLETED',)"
     cur.execute(f"""SELECT COALESCE(SUM(amount+fee),0) FROM ledger_transactions
-                    WHERE sender_account_id=%s AND transaction_type='TRANSFER'
-                      AND transfer_kind='CASHLINE' AND status IN {statuses}""",(account_id,))
+                    WHERE ((sender_account_id=%s AND transaction_type='TRANSFER')
+                           OR (recipient_account_id=%s AND transaction_type='CREDIT_DRAW'))
+                      AND transfer_kind='CASHLINE' AND status IN {statuses}""",(account_id,account_id))
     principal=int(cur.fetchone()[0] or 0)
     cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions
                    WHERE transaction_type='CREDIT_REPAYMENT' AND status='COMPLETED'
