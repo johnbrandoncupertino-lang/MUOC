@@ -392,3 +392,16 @@ table .pending{color:#8a671c;font-weight:bold}
 .chart-controls .button{min-width:70px}
 .chart-controls .button.active{font-weight:700;box-shadow:inset 0 0 0 1px rgba(50,75,90,.25)}
 .send-message-button{margin-top:12px;font-weight:700;min-height:42px}
+
+/* MineBank account suspension state */
+.frozen-banner{margin:0 0 14px;padding:15px 18px;border:1px solid #c6a4a4;background:#f4eeee;color:#493b3b}
+.frozen-banner strong{font-weight:800}
+.frozen-banner p{margin:5px 0 10px;line-height:1.45}
+.frozen-reason{display:flex;align-items:center;gap:10px}
+.frozen-reason span{font-size:.82rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:#7b6b6b}
+.frozen-reason b{display:inline-block;padding:6px 10px;border:1px solid #cfc3c3;background:#e8e3e3;color:#8b7e7e;font-weight:700}
+.frozen-content{position:relative}
+.frozen-content:after{content:"";position:absolute;inset:0;z-index:20;background:rgba(236,241,244,.24);cursor:not-allowed}
+.balance-breakdown{margin-top:12px;border-top:1px solid #c9d4dc;padding-top:8px}
+.balance-breakdown div{display:flex;justify-content:space-between;gap:16px;padding:4px 0}
+.balance-breakdown b{font-weight:700}
