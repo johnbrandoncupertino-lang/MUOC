@@ -486,8 +486,13 @@ def minebank_transaction_detail(transaction_id):
     )
     if not rows:
         return "Transaction not found",404
+    tx=rows[0]
+    cat_rows=execute_query_dict("SELECT category FROM minebank_transaction_categories WHERE transaction_id=%s AND account_id=%s ORDER BY category",
+                                (transaction_id,account["id"]))
+    tx["categories"]=", ".join(x["category"] for x in cat_rows)
+    default_categories=["Groceries","Housing","Transport","Bills","Salary","Shopping","Entertainment","Travel","Health","Education","Fees","Transfers","CashLine","Other"]
     return render_template("minebank_portal.html", mode="transaction", account=account,
-                           transaction=rows[0], portal_active="transactions")
+                           transaction=tx,default_categories=default_categories,portal_active="transactions")
 
 def _pdf_response(title, rows, filename):
     from reportlab.lib.pagesizes import A4
