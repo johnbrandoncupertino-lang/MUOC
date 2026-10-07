@@ -636,8 +636,9 @@ def minebank_credit_page():
             return redirect(url_for("minebank_credit_page"))
         except Exception as exc:
             flash(str(exc),"error")
+    statements=execute_query_dict("""SELECT * FROM credit_statements WHERE account_id=%s ORDER BY period_end DESC LIMIT 12""",(account["id"],))
     return render_template("minebank_portal.html",mode="credit",account=account,
-                           facility=facility[0] if facility else None,
+                           facility=facility[0] if facility else None,statements=statements,
                            repayment_sources=[a for a in get_accounts(session["minebank_client_id"]) if int(a["id"])!=int(account["id"])],
                            portal_active="credit")
 
