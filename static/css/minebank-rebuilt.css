@@ -411,3 +411,22 @@ table .pending{color:#8a671c;font-weight:bold}
 .login-spinner{display:none;width:13px;height:13px;margin-left:7px;vertical-align:-2px;border:2px solid rgba(255,255,255,.48);border-top-color:#fff;border-radius:50%;animation:minebankLoginSpin .7s linear infinite}
 #login-submit.connecting .login-spinner{display:inline-block}
 @keyframes minebankLoginSpin{to{transform:rotate(360deg)}}
+
+/* Dashboard smart suggestions */
+.dashboard-suggestions{margin-top:0}
+.suggestion-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:9px}
+.suggestion-card{display:flex;gap:9px;align-items:flex-start;padding:10px;border:1px solid #b7c6d2;background:linear-gradient(#fff,#edf4f8);box-shadow:inset 0 1px #fff}
+.suggestion-icon{flex:0 0 26px;width:26px;height:26px;border:1px solid #8fa8bb;background:linear-gradient(#f8fcff,#dceaf4);color:#2e6791;display:flex;align-items:center;justify-content:center;font:bold 15px Arial}
+.suggestion-card b{color:#234f70;font-size:12px}
+.suggestion-card p{margin:4px 0 6px}
+.suggestion-card a{font-size:11px;font-weight:bold}
+@media(max-width:900px){.suggestion-grid{grid-template-columns:1fr}.cashline-battery-scale{font-size:9px}}
+
+/* CashLine battery */
+.cashline-visual{margin:4px 0 14px;padding:11px 12px;border:1px solid #b6c6d3;background:linear-gradient(#f9fcfe,#e7eff5);box-shadow:inset 0 1px #fff}
+.cashline-battery-label{display:flex;justify-content:space-between;gap:12px;margin-bottom:7px;color:#4f687b;font-size:11px}
+.cashline-battery-label strong{color:#14548a}
+.cashline-battery{position:relative;height:34px;border:2px solid #7e97aa;border-radius:3px;background:#d9e2e9;box-shadow:inset 1px 1px 3px #bdc8d0,0 1px #fff;padding:3px}
+.cashline-battery:after{content:"";position:absolute;right:-7px;top:9px;width:5px;height:12px;border:1px solid #7e97aa;border-left:0;background:#c8d4dc;border-radius:0 2px 2px 0}
+.cashline-battery-level{height:100%;background:linear-gradient(#78b8ea,#2f79b9);box-shadow:inset 0 1px rgba(255,255,255,.55);transition:width .45s ease}
+.cashline-battery-scale{display:flex;justify-content:space-between;margin-top:4px;color:#718596;font-size:10px}
