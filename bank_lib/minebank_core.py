@@ -599,9 +599,9 @@ def draw_credit(account_id, amount, actor_client_id=None, ip_address=None):
                     amount=amount, recipient_account_id=account_id,
                     description="Credit draw"
                 )
-                audit_event(cur, actor_client_id, "CREDIT_DRAW", "ACCOUNT", str(account_id),
-                            account_id=account_id, transaction_id=txid, ip_address=ip_address,
-                            context={"amount": amount})
+                audit_event(cur, actor_client_id=actor_client_id, action="CREDIT_DRAW",
+                            target_type="ACCOUNT", target_id=str(account_id), account_id=account_id,
+                            transaction_id=txid, ip_address=ip_address, context={"amount": amount})
                 return {"transaction_id": txid, "ledger_id": lid, "status": "COMPLETED",
                         "amount": amount, "available_credit": max(0, available - amount)}
     finally:

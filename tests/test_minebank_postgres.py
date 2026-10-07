@@ -1,5 +1,10 @@
 import os
+import sys
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
 
 import pytest
 from werkzeug.security import generate_password_hash
@@ -48,14 +53,14 @@ def database():
         """
         INSERT INTO bank_clients(email,password_hash,role,status,wallet_pin_hash)
         VALUES
-            ('alice@minebank.test', %s, 'CLIENT', 'ENABLED', %s),
-            ('bob@minebank.test', %s, 'CLIENT', 'ENABLED', %s)
+            ('alice@minebank.test', %s, 'CLIENT', 'ACTIVE', %s),
+            ('bob@minebank.test', %s, 'CLIENT', 'ACTIVE', %s)
         """,
         (
-            generate_password_hash("alice-password"),
-            generate_password_hash("123456"),
-            generate_password_hash("bob-password"),
-            generate_password_hash("654321"),
+            generate_password_hash("alice-password", method="pbkdf2:sha256:10000"),
+            generate_password_hash("123456", method="pbkdf2:sha256:10000"),
+            generate_password_hash("bob-password", method="pbkdf2:sha256:10000"),
+            generate_password_hash("654321", method="pbkdf2:sha256:10000"),
         ),
         fetch=False,
         commit=True,
@@ -154,9 +159,8 @@ def test_transfer_over_5000_is_pending_approval(accounts):
         fetch=False,
         commit=True,
     )
-    # Personal has a 1,000 Emerald daily limit, so use Personal Private for
-    # the approval-threshold test.
-    private_id, private_number = create_account(alice, "PERSONAL", "PERSONAL_PRIVATE")
+    # Use Business Pro so the 5,001 Emerald transfer can reach the approval threshold.
+    private_id, private_number = create_account(alice, "BUSINESS", "BUSINESS_PRO")
     execute_query(
         "UPDATE bank_accounts SET balance=20000,last_outgoing_at=NULL WHERE id=%s",
         (private_id,),
@@ -177,11 +181,12 @@ def test_transfer_over_5000_is_pending_approval(accounts):
     )[0]
     assert tx["status"] == "PENDING_APPROVAL"
     assert tx["amount"] == 5001
-    assert tx["fee"] == 0
+    assert tx["fee"] == 5
 
 
 def test_cashline_limits_and_daily_interest(accounts):
     alice, _, alice_id, _, _, _ = accounts
+    execute_query("UPDATE bank_accounts SET balance=0 WHERE id=%s", (alice_id,), fetch=False, commit=True)
     activation = activate_credit(alice_id, 500)
     assert activation["credit_limit"] == 500
     assert activation["interest_annual_bps"] == 1830

@@ -133,7 +133,12 @@ def set_wallet_pin(client_id, pin):
 
 
 def verify_wallet_pin(client_id, pin):
+    """Verify a Wallet PIN without opening nested transactions while the client row is locked."""
     conn = get_db_connection()
+    if conn is None:
+        return False, "MineBank is temporarily unavailable. Please try again in a moment."
+
+    notification = None
     try:
         with conn:
             with conn.cursor() as cur:
@@ -145,10 +150,12 @@ def verify_wallet_pin(client_id, pin):
                 row = cur.fetchone()
                 if not row or not row[0]:
                     return False, "Wallet PIN is not configured."
+
                 now = _now()
                 if row[2] and row[2] > now:
                     seconds = max(1, int((row[2] - now).total_seconds()))
                     return False, f"Wallet PIN temporarily locked. Try again in {seconds} seconds."
+
                 if check_password_hash(row[0], pin):
                     cur.execute(
                         "UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL "
@@ -156,6 +163,7 @@ def verify_wallet_pin(client_id, pin):
                         (client_id,),
                     )
                     return True, None
+
                 attempts = int(row[1] or 0) + 1
                 if attempts >= WALLET_PIN_MAX_ATTEMPTS:
                     locked = now + timedelta(minutes=WALLET_PIN_LOCKOUT_MINUTES)
@@ -163,35 +171,40 @@ def verify_wallet_pin(client_id, pin):
                         "UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=%s WHERE id=%s",
                         (locked, client_id),
                     )
-                    try:
-                        from bank_lib.minebank_requests import create_notification
-                        from bank_lib.minebank_features import queue_email
-                        create_notification(client_id, "SECURITY", "Wallet PIN locked",
-                                             "Three failed Wallet PIN attempts triggered a 5-minute security lockout.", None)
-                        queue_email(client_id, "SECURITY", "MineBank security alert",
-                                   "Three failed Wallet PIN attempts triggered a 5-minute lockout on your MineBank account.")
-                    except Exception:
-                        pass
-                    return False, "Wallet PIN temporarily locked for 5 minutes after three failed attempts."
-                cur.execute(
-                    "UPDATE bank_clients SET wallet_pin_failed_attempts=%s WHERE id=%s",
-                    (attempts, client_id),
-                )
-                if attempts >= 2:
-                    try:
-                        from bank_lib.minebank_requests import create_notification
-                        from bank_lib.minebank_features import queue_email
-                        create_notification(client_id, "SECURITY", "Security warning",
-                                             f"Wallet PIN failed attempt {attempts} of 3.", None)
-                        queue_email(client_id, "SECURITY", "MineBank security warning",
-                                   f"Your MineBank Wallet PIN has failed {attempts} times. Review Security Centre if this was not you.")
-                    except Exception:
-                        pass
-                return False, f"Invalid wallet PIN. Failed attempt {attempts} of 3."
+                    notification = (
+                        "Wallet PIN locked",
+                        "Three failed Wallet PIN attempts triggered a 5-minute security lockout.",
+                        "MineBank security alert",
+                        "Three failed Wallet PIN attempts triggered a 5-minute lockout on your MineBank account.",
+                    )
+                    result = (False, "Wallet PIN temporarily locked for 5 minutes after three failed attempts.")
+                else:
+                    cur.execute(
+                        "UPDATE bank_clients SET wallet_pin_failed_attempts=%s WHERE id=%s",
+                        (attempts, client_id),
+                    )
+                    if attempts >= 2:
+                        notification = (
+                            "Security warning",
+                            f"Wallet PIN failed attempt {attempts} of 3.",
+                            "MineBank security warning",
+                            f"Your MineBank Wallet PIN has failed {attempts} times. Review Security Centre if this was not you.",
+                        )
+                    result = (False, f"Invalid wallet PIN. Failed attempt {attempts} of 3.")
     finally:
         from .database import release_db_connection
         release_db_connection(conn)
 
+    if notification:
+        try:
+            from bank_lib.minebank_requests import create_notification
+            from bank_lib.minebank_features import queue_email
+            title, message, subject, email_body = notification
+            create_notification(client_id, "SECURITY", title, message, None)
+            queue_email(client_id, "SECURITY", subject, email_body)
+        except Exception:
+            pass
+    return result
 
 def require_minebank_login(f):
     @wraps(f)
@@ -280,7 +293,7 @@ def create_account(client_id, account_type="PERSONAL", tier_code="PERSONAL", cha
                     txid=f"MUOC-{_now().year}-{cur.fetchone()[0]:06d}"
                     cur.execute("""INSERT INTO ledger_transactions
                                    (transaction_id,transaction_type,amount,fee,currency,sender_account_id,status,description)
-                                   VALUES(%s,'ACCOUNT_OPENING_FEE',%s,0,'Emerald',%s,'COMPLETED',%s)""
+                                   VALUES(%s,'ACCOUNT_OPENING_FEE',%s,0,'Emerald',%s,'COMPLETED',%s)""",
                                 (txid,opening_fee,source[0],f"Opening fee for {account_number}"))
                 if account_type=="BUSINESS":
                     cur.execute("""INSERT INTO minebank_business_members(account_id,client_id,role)
@@ -309,88 +322,115 @@ def get_client_accounts(client_id):
 
 
 def request_tier_change(client_id, account_id, tier_code, requested_credit_limit=None):
-    conn=get_db_connection()
+    conn = get_db_connection()
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT a.id,a.client_id,a.balance,a.account_type,t.code
-                               FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
-                               WHERE a.id=%s AND a.client_id=%s AND a.status<>'CLOSED'""",(account_id,client_id))
-                account=cur.fetchone()
+                cur.execute(
+                    "SELECT a.id,a.client_id,a.balance,a.account_type,t.code "
+                    "FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id "
+                    "WHERE a.id=%s AND a.client_id=%s AND a.status<>'CLOSED'",
+                    (account_id, client_id),
+                )
+                account = cur.fetchone()
                 if not account:
                     raise ValueError("Account not found.")
-                cur.execute("""SELECT id,code,account_type,private_or_corporate,eligibility_config
-                               FROM account_tiers_v2 WHERE code=%s AND active=TRUE""",(tier_code,))
-                tier=cur.fetchone()
+                cur.execute(
+                    "SELECT id,code,account_type,private_or_corporate,eligibility_config "
+                    "FROM account_tiers_v2 WHERE code=%s AND active=TRUE",
+                    (tier_code,),
+                )
+                tier = cur.fetchone()
                 if not tier or tier[2] != account[3]:
                     raise ValueError("Requested tier is unavailable for this account type.")
-                payload={"tier_code":tier_code}
+                payload = {"tier_code": tier_code}
                 if requested_credit_limit is not None:
-                    payload["requested_credit_limit"]=int(requested_credit_limit)
-                cur.execute("""INSERT INTO bank_requests_v2(client_id,account_id,request_type,payload)
-                               VALUES(%s,%s,'TIER_CHANGE',%s::jsonb) RETURNING id""",
-                            (client_id,account_id,__import__('json').dumps(payload)))
+                    payload["requested_credit_limit"] = int(requested_credit_limit)
+                cur.execute(
+                    "INSERT INTO bank_requests_v2(client_id,account_id,request_type,payload) "
+                    "VALUES(%s,%s,'TIER_CHANGE',%s::jsonb) RETURNING id",
+                    (client_id, account_id, __import__("json").dumps(payload)),
+                )
                 return cur.fetchone()[0]
     finally:
         release_db_connection(conn)
 
 
 def review_tier_change(request_id, reviewer_id, approve):
-    conn=get_db_connection()
+    conn = get_db_connection()
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT r.id,r.client_id,r.account_id,r.payload,a.balance,a.account_type
-                               FROM bank_requests_v2 r JOIN bank_accounts a ON a.id=r.account_id
-                               WHERE r.id=%s AND r.request_type='TIER_CHANGE' AND r.status='PENDING' FOR UPDATE""",
-                            (request_id,))
-                row=cur.fetchone()
+                cur.execute(
+                    "SELECT r.id,r.client_id,r.account_id,r.payload,a.balance,a.account_type "
+                    "FROM bank_requests_v2 r JOIN bank_accounts a ON a.id=r.account_id "
+                    "WHERE r.id=%s AND r.request_type='TIER_CHANGE' AND r.status='PENDING' FOR UPDATE",
+                    (request_id,),
+                )
+                row = cur.fetchone()
                 if not row:
                     raise ValueError("Tier request not found.")
-                status="APPROVED" if approve else "REJECTED"
+                status = "APPROVED" if approve else "REJECTED"
                 if approve:
-                    tier_code=row[3].get("tier_code")
-                    cur.execute("""SELECT id,eligibility_config FROM account_tiers_v2
-                                   WHERE code=%s AND active=TRUE""",(tier_code,))
-                    tier=cur.fetchone()
+                    tier_code = row[3].get("tier_code")
+                    cur.execute(
+                        "SELECT id,eligibility_config FROM account_tiers_v2 "
+                        "WHERE code=%s AND active=TRUE",
+                        (tier_code,),
+                    )
+                    tier = cur.fetchone()
                     if not tier:
                         raise ValueError("Requested tier is unavailable.")
                     import datetime as _dt
-                    cur.execute("SELECT date_of_birth FROM bank_clients WHERE id=%s",(row[1],))
-                    dob=cur.fetchone()[0]
-                    cfg=tier[1] or {}
-                    minimum_age=int(cfg.get("minimum_age",0))
+                    cur.execute("SELECT date_of_birth FROM bank_clients WHERE id=%s", (row[1],))
+                    dob = cur.fetchone()[0]
+                    cfg = tier[1] or {}
+                    minimum_age = int(cfg.get("minimum_age", 0))
                     if minimum_age and dob:
-                        today=_dt.date.today()
-                        age=today.year-dob.year-((today.month,today.day)<(dob.month,dob.day))
-                        if age<minimum_age:
+                        today = _dt.date.today()
+                        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+                        if age < minimum_age:
                             raise ValueError("Client does not meet minimum age eligibility.")
-                    if int(row[4]) < int(cfg.get("minimum_balance",0)):
+                    if int(row[4]) < int(cfg.get("minimum_balance", 0)):
                         raise ValueError("Client does not meet minimum balance eligibility.")
-                    cur.execute("""SELECT COUNT(*) FROM ledger_transactions
-                                   WHERE (sender_account_id=%s OR recipient_account_id=%s)
-                                     AND status='COMPLETED' AND created_at>=CURRENT_TIMESTAMP-INTERVAL '30 days'""",
-                                (row[2],row[2]))
-                    if int(cur.fetchone()[0]) < int(cfg.get("minimum_operations",0)):
+                    cur.execute(
+                        "SELECT COUNT(*) FROM ledger_transactions "
+                        "WHERE (sender_account_id=%s OR recipient_account_id=%s) "
+                        "AND status='COMPLETED' AND created_at>=CURRENT_TIMESTAMP-INTERVAL '30 days'",
+                        (row[2], row[2]),
+                    )
+                    if int(cur.fetchone()[0]) < int(cfg.get("minimum_operations", 0)):
                         raise ValueError("Client does not meet minimum operations eligibility.")
-                    cur.execute("SELECT id,max_balance,credit_enabled,default_credit_limit FROM account_tiers_v2 WHERE code=%s",(tier_code,))
-                    target=cur.fetchone()
+                    cur.execute(
+                        "SELECT id,max_balance,credit_enabled,default_credit_limit "
+                        "FROM account_tiers_v2 WHERE code=%s",
+                        (tier_code,),
+                    )
+                    target = cur.fetchone()
                     if not target:
                         raise ValueError("Requested tier is unavailable.")
                     if target[1] is not None and int(row[4]) > int(target[1]):
                         raise ValueError("Tier downgrade would violate the new maximum account balance.")
-                    cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(row[2],))
-                    facility=cur.fetchone()
-                    if facility and facility[1]=="ACTIVE" and int(facility[0]) > int(target[3] or 0):
-                        if int(row[4]) < 0:
-                            new_limit=max(0,int(target[3] or 0))
-                            cur.execute("UPDATE credit_facilities SET credit_limit=%s WHERE account_id=%s",(new_limit,row[2]))
-                        else:
-                            cur.execute("UPDATE credit_facilities SET credit_limit=LEAST(credit_limit,%s) WHERE account_id=%s",(int(target[3] or 0),row[2]))
-                    cur.execute("UPDATE bank_accounts SET tier_id=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
-                                (target[0],row[2]))
-                cur.execute("""UPDATE bank_requests_v2 SET status=%s,reviewed_by=%s,reviewed_at=CURRENT_TIMESTAMP
-                               WHERE id=%s""",(status,reviewer_id,request_id))
+                    cur.execute(
+                        "SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",
+                        (row[2],),
+                    )
+                    facility = cur.fetchone()
+                    if facility and facility[1] == "ACTIVE" and int(facility[0]) > int(target[3] or 0):
+                        new_limit = max(0, int(target[3] or 0))
+                        cur.execute(
+                            "UPDATE credit_facilities SET credit_limit=%s WHERE account_id=%s",
+                            (new_limit, row[2]),
+                        )
+                    cur.execute(
+                        "UPDATE bank_accounts SET tier_id=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                        (target[0], row[2]),
+                    )
+                cur.execute(
+                    "UPDATE bank_requests_v2 SET status=%s,reviewed_by=%s,reviewed_at=CURRENT_TIMESTAMP "
+                    "WHERE id=%s",
+                    (status, reviewer_id, request_id),
+                )
                 return status
     finally:
         release_db_connection(conn)
