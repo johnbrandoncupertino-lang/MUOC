@@ -574,6 +574,14 @@ def minebank_statements_page():
 @require_login
 def minebank_statements_print():
     account=selected_account()
+    if int(account["balance"]) < 1:
+        flash("1 Emerald is required for a printed statement.","error")
+        return redirect(url_for("minebank_statements_page"))
+    execute_query("UPDATE bank_accounts SET balance=balance-1,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(account["id"],),commit=True)
+    execute_query("""INSERT INTO ledger_transactions
+                     (transaction_id,transaction_type,amount,fee,currency,sender_account_id,status,description)
+                     VALUES(%s,'PRINTED_STATEMENT_FEE',1,0,'Emerald',%s,'COMPLETED','Printed statement')""",
+                  (f"MB-STMT-{secrets.token_hex(6)}",account["id"]),commit=True)
     transactions=recent_transactions(account,500)
     rows=[("Account",account["account_number"]),("Account type",account["display_name"]),
           ("Generated",datetime.now(timezone.utc))]
