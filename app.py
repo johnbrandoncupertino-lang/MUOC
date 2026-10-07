@@ -18,10 +18,10 @@ from bank_lib.minebank_auth import (
     set_wallet_pin, verify_wallet_pin,
 )
 from bank_lib.minebank_core import (
-    approve_transfer, chargeback, deposit, draw_credit,
+    approve_transfer, chargeback, deposit, withdraw, draw_credit,
     reject_transfer, reject_business_transfer, approve_business_transfer,
     repay_credit, transfer, cancel_transfer,
-    accrue_daily_credit_interest, generate_cashline_statement,
+    accrue_daily_credit_interest, generate_cashline_statement, disburse_loan, repay_loan_installment,
 )
 from bank_lib.minebank_requests import create_request, list_requests, create_notification
 from bank_lib.minebank_security import ensure_security_schema, validate_session, list_active_sessions, terminate_session, terminate_other_sessions, security_event
@@ -932,7 +932,7 @@ def minebank_loans_page():
             if approval_mode=="AUTO":
                 if amount>20000:
                     raise ValueError("Loans above 20,000 Emerald always require Bank authorisation.")
-                if amount<10000 or profile["cashline_limit"]<=0 or profile["cashline_debt"] >= profile["cashline_limit"]*0.40:
+                if amount<10000 or (profile["cashline_limit"] and profile["cashline_debt"] >= profile["cashline_limit"]*0.40):
                     raise ValueError("This Loan does not qualify for automatic approval. Choose Bank review.")
                 if profile["balance"] < int(amount*1.10):
                     raise ValueError("Automatic approval requires sufficient available balance to cover the Loan plus 10%.")
