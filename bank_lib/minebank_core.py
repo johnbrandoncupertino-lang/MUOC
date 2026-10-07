@@ -101,18 +101,26 @@ def get_credit_limit(cur, account_id):
 
 
 def cashline_outstanding(cur, account_id, include_pending=True):
-    """Return current CashLine debt independently from the ordinary bank balance."""
+    """Return CashLine debt for one account, independent from the ordinary balance."""
     statuses = "('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL')" if include_pending else "('COMPLETED',)"
-    cur.execute(f"""
-        SELECT
-          COALESCE(SUM(CASE WHEN transaction_type='TRANSFER' AND transfer_kind='CASHLINE' AND status IN {statuses} THEN amount+fee ELSE 0 END),0),
-          COALESCE(SUM(CASE WHEN transaction_type IN ('CREDIT_INTEREST','CREDIT_FEE') AND status='COMPLETED' THEN amount ELSE 0 END),0),
-          COALESCE(SUM(CASE WHEN transaction_type='CREDIT_REPAYMENT' AND status='COMPLETED' THEN amount ELSE 0 END),0)
-        FROM ledger_transactions
-        WHERE sender_account_id=%s OR recipient_account_id=%s
-    """,(account_id,account_id))
-    principal,charges,repaid=cur.fetchone()
-    return max(0,int(principal or 0)+int(charges or 0)-int(repaid or 0))
+    cur.execute(f"""SELECT COALESCE(SUM(amount+fee),0)
+                    FROM ledger_transactions
+                    WHERE sender_account_id=%s AND transaction_type='TRANSFER'
+                      AND transfer_kind='CASHLINE' AND status IN {statuses}""",(account_id,))
+    principal=int(cur.fetchone()[0] or 0)
+    cur.execute("""SELECT COALESCE(SUM(amount),0)
+                   FROM ledger_transactions
+                   WHERE recipient_account_id=%s
+                     AND transaction_type IN ('CREDIT_INTEREST','CREDIT_FEE')
+                     AND status='COMPLETED'""",(account_id,))
+    charges=int(cur.fetchone()[0] or 0)
+    cur.execute("""SELECT COALESCE(SUM(amount),0)
+                   FROM ledger_transactions
+                   WHERE recipient_account_id=%s
+                     AND transaction_type='CREDIT_REPAYMENT'
+                     AND status='COMPLETED'""",(account_id,))
+    repaid=int(cur.fetchone()[0] or 0)
+    return max(0,principal+charges-repaid)
 
 def cashline_principal_outstanding(cur, account_id, include_pending=True):
     statuses = "('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL')" if include_pending else "('COMPLETED',)"
