@@ -610,15 +610,32 @@ def minebank_credit_page():
         return redirect(url_for("minebank_account_page"))
     facility=execute_query_dict("SELECT * FROM credit_facilities WHERE account_id=%s",(account["id"],))
     if request.method=="POST":
-        amount=int(request.form.get("requested_limit","0"))
-        if amount<=0: flash("Credit limit must be greater than zero.","error")
-        else:
-            create_request(session["minebank_client_id"],"CREDIT_LINE",account["id"],
-                           {"requested_limit":amount,"reason":request.form.get("reason","")[:500]})
-            flash("Credit request submitted for bank approval.","success")
+        action=request.form.get("action","request")
+        try:
+            if action=="repay":
+                source_id=int(request.form.get("source_account_id","0"))
+                amount=int(request.form.get("amount","0"))
+                result=repay_credit(account["id"],amount,source_id)
+                flash(f'Credit repayment completed: {result["transaction_id"]}.',"success")
+            elif action=="cancel":
+                if facility and int(account["balance"])<0:
+                    raise ValueError("Repay the outstanding credit balance before requesting cancellation.")
+                create_request(session["minebank_client_id"],"CREDIT_CANCEL",account["id"],
+                                {"reason":request.form.get("reason","")[:500]})
+                flash("Credit cancellation request submitted for bank review.","success")
+            else:
+                amount=int(request.form.get("requested_limit","0"))
+                if amount<=0: raise ValueError("Credit limit must be greater than zero.")
+                create_request(session["minebank_client_id"],"CREDIT_LINE",account["id"],
+                               {"requested_limit":amount,"reason":request.form.get("reason","")[:500]})
+                flash("Credit request submitted for bank approval.","success")
             return redirect(url_for("minebank_credit_page"))
+        except Exception as exc:
+            flash(str(exc),"error")
     return render_template("minebank_portal.html",mode="credit",account=account,
-                           facility=facility[0] if facility else None,portal_active="credit")
+                           facility=facility[0] if facility else None,
+                           repayment_sources=[a for a in get_accounts(session["minebank_client_id"]) if int(a["id"])!=int(account["id"])],
+                           portal_active="credit")
 
 @app.route("/portal/recipients", methods=["GET","POST"])
 @require_login
