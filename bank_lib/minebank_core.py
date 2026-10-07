@@ -392,7 +392,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                         raise ValueError("Recipient account balance limit exceeded.")
                     cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
                                 (amount,recipient[0]))
-                    if funding_source=="BALANCE": _cashline_repayment_suggestion(cur,recipient[0],amount)
+                    _cashline_repayment_suggestion(cur,recipient[0],amount)
                 ledger_id = create_ledger_transaction(
                     cur,transaction_id=txid,transaction_type="TRANSFER",amount=amount,fee=fee,
                     currency=currency,sender_account_id=sender[0],recipient_account_id=recipient[0],
