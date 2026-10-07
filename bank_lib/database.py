@@ -152,13 +152,17 @@ def ensure_minebank_schema():
 _TRANSACTION_SCHEMA_READY = False
 
 def ensure_transaction_schema():
-    """Ensure transaction-history extensions exist without replaying the full MineBank migration."""
+    """Ensure transaction and CashLine extensions exist on older production databases."""
     global _TRANSACTION_SCHEMA_READY
     if _TRANSACTION_SCHEMA_READY:
         return True
     try:
         execute_query("ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS causal VARCHAR(500)", fetch=False, commit=True)
         execute_query("ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS category VARCHAR(60)", fetch=False, commit=True)
+        execute_query("ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS transfer_kind VARCHAR(30)", fetch=False, commit=True)
+        execute_query("ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS interest_annual_bps INTEGER NOT NULL DEFAULT 1830", fetch=False, commit=True)
+        execute_query("ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS minimum_due_percent_bps INTEGER NOT NULL DEFAULT 500", fetch=False, commit=True)
+        execute_query("ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS minimum_due_floor INTEGER NOT NULL DEFAULT 40", fetch=False, commit=True)
         execute_query("""CREATE TABLE IF NOT EXISTS minebank_transaction_categories (
             id BIGSERIAL PRIMARY KEY,
             transaction_id VARCHAR(32) NOT NULL REFERENCES ledger_transactions(transaction_id) ON DELETE CASCADE,
@@ -168,10 +172,27 @@ def ensure_transaction_schema():
             UNIQUE(transaction_id,account_id,category)
         )""", fetch=False, commit=True)
         execute_query("CREATE INDEX IF NOT EXISTS minebank_transaction_categories_account_idx ON minebank_transaction_categories(account_id,created_at DESC)", fetch=False, commit=True)
+        execute_query("""CREATE TABLE IF NOT EXISTS credit_statements (
+            id BIGSERIAL PRIMARY KEY,
+            account_id BIGINT NOT NULL REFERENCES bank_accounts(id) ON DELETE CASCADE,
+            period_start DATE NOT NULL,
+            period_end DATE NOT NULL,
+            principal_amount BIGINT NOT NULL DEFAULT 0,
+            interest_amount BIGINT NOT NULL DEFAULT 0,
+            credit_fee BIGINT NOT NULL DEFAULT 0,
+            other_costs BIGINT NOT NULL DEFAULT 0,
+            total_due BIGINT NOT NULL DEFAULT 0,
+            minimum_due BIGINT NOT NULL DEFAULT 40,
+            amount_paid BIGINT NOT NULL DEFAULT 0,
+            status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
+            issued_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            due_at TIMESTAMPTZ NOT NULL,
+            UNIQUE(account_id,period_start,period_end)
+        )""", fetch=False, commit=True)
         _TRANSACTION_SCHEMA_READY = True
         return True
     except Exception as exc:
-        print(f"MineBank transaction schema warning: {type(exc).__name__}: {exc}")
+        print(f"MineBank transaction/CashLine schema warning: {type(exc).__name__}: {exc}")
         return False
 
 def check_db_connection():
