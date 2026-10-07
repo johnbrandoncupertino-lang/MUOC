@@ -774,12 +774,14 @@ def generate_cashline_statement(account_id, period_start=None, period_end=None):
                 cur.execute("""INSERT INTO credit_statements
                                (account_id,period_start,period_end,principal_amount,interest_amount,credit_fee,total_due,minimum_due,due_at)
                                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                               ON CONFLICT(account_id,period_start,period_end) DO UPDATE SET
-                               principal_amount=EXCLUDED.principal_amount,interest_amount=EXCLUDED.interest_amount,
-                               credit_fee=EXCLUDED.credit_fee,total_due=EXCLUDED.total_due,minimum_due=EXCLUDED.minimum_due,
-                               due_at=EXCLUDED.due_at
+                               ON CONFLICT(account_id,period_start,period_end) DO NOTHING
                                RETURNING id""",(account_id,start,end,principal,interest,fee,total,minimum,due))
-                sid=cur.fetchone()[0]
+                inserted=cur.fetchone()
+                if inserted:
+                    sid=inserted[0]
+                else:
+                    cur.execute("SELECT id FROM credit_statements WHERE account_id=%s AND period_start=%s AND period_end=%s FOR UPDATE",(account_id,start,end))
+                    sid=cur.fetchone()[0]
                 cur.execute("DELETE FROM credit_statement_items WHERE statement_id=%s",(sid,))
                 for typ,amt,desc in (("PRINCIPAL",principal,"CashLine capital used"),
                                      ("INTEREST",interest,"CashLine daily interest"),
