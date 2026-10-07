@@ -243,13 +243,13 @@ def reauthenticate_admin(client_id, password):
         release_db_connection(conn)
 
 
-def create_account(client_id, account_type="PERSONAL", tier_code="PERSONAL"):
+def create_account(client_id, account_type="PERSONAL", tier_code="PERSONAL", charge_opening_fee=True):
     account_type=account_type.upper()
     conn=get_db_connection()
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT id FROM account_tiers_v2 WHERE code=%s AND account_type=%s AND active=TRUE",(tier_code,account_type))
+                cur.execute("SELECT id,opening_fee FROM account_tiers_v2 WHERE code=%s AND account_type=%s AND active=TRUE",(tier_code,account_type))
                 tier=cur.fetchone()
                 if not tier:
                     raise ValueError("Requested account tier is unavailable.")
@@ -266,6 +266,22 @@ def create_account(client_id, account_type="PERSONAL", tier_code="PERSONAL"):
                 cur.execute("""INSERT INTO bank_accounts(client_id,account_number,account_type,tier_id)
                                VALUES(%s,%s,%s,%s) RETURNING id,account_number""",(client_id,number,account_type,tier[0]))
                 account_id,account_number=cur.fetchone()
+                opening_fee=int(tier[1] or 0)
+                if charge_opening_fee and opening_fee:
+                    cur.execute("""SELECT id,balance FROM bank_accounts
+                                   WHERE client_id=%s AND status='ACTIVE' AND id<>%s AND balance>=%s
+                                   ORDER BY CASE WHEN account_type='PERSONAL' THEN 0 ELSE 1 END,id
+                                   LIMIT 1 FOR UPDATE""",(client_id,account_id,opening_fee))
+                    source=cur.fetchone()
+                    if not source:
+                        raise ValueError("Opening this account requires available Emerald in another MineBank account.")
+                    cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(opening_fee,source[0]))
+                    cur.execute("SELECT nextval('muoc_transaction_seq')")
+                    txid=f"MUOC-{_now().year}-{cur.fetchone()[0]:06d}"
+                    cur.execute("""INSERT INTO ledger_transactions
+                                   (transaction_id,transaction_type,amount,fee,currency,sender_account_id,status,description)
+                                   VALUES(%s,'ACCOUNT_OPENING_FEE',%s,0,'Emerald',%s,'COMPLETED',%s)""
+                                (txid,opening_fee,source[0],f"Opening fee for {account_number}"))
                 if account_type=="BUSINESS":
                     cur.execute("""INSERT INTO minebank_business_members(account_id,client_id,role)
                                    VALUES(%s,%s,'OWNER') ON CONFLICT(account_id,client_id) DO NOTHING""",(account_id,client_id))
