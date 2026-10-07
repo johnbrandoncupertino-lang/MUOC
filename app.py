@@ -62,7 +62,7 @@ def current_client():
     if not cid:
         return None
     rows = execute_query_dict(
-        "SELECT id,email,role,status,date_of_birth,password_hash,password_changed_at,last_login,"
+        "SELECT id,email,role,status,date_of_birth,phone,address,city,postal_code,country,occupation,password_hash,password_changed_at,last_login,"
         "wallet_pin_hash,wallet_pin_failed_attempts,wallet_pin_locked_until,admin_reauth_at FROM bank_clients WHERE id=%s", (cid,)
     )
     client = rows[0] if rows else None
@@ -292,8 +292,7 @@ def recent_transactions(account, limit=10):
 @app.route("/portal/account")
 @require_login
 def minebank_account_page():
-    return render_template("minebank_portal.html", mode="account", account=selected_account(),
-                           accounts=get_accounts(session["minebank_client_id"]), portal_active="account")
+    return redirect(url_for("minebank_accounts_page"))
 
 @app.route("/portal/accounts", methods=["GET","POST"])
 @require_login
@@ -309,10 +308,9 @@ def minebank_accounts_page():
             if not tier.startswith("BUSINESS"):
                 raise ValueError("Only Business tiers can be opened from this page.")
             account_id,number=create_account(session["minebank_client_id"],"BUSINESS",tier)
-            execute_query("""INSERT INTO minebank_business_profiles(account_id,legal_name,trading_name,registration_number,address,contact_email)
-                             VALUES(%s,%s,%s,%s,%s,%s)""",
-                          (account_id,legal,trading,request.form.get("registration_number","")[:100],
-                           request.form.get("address","")[:300],session.get("minebank_email","")),commit=True)
+            execute_query("""INSERT INTO minebank_business_profiles(account_id,legal_name,trading_name,address,contact_email)
+                             VALUES(%s,%s,%s,%s,%s)""",
+                          (account_id,legal,trading,request.form.get("address","")[:300],session.get("minebank_email","")),commit=True)
             flash(f"Business account {number} created.","success")
             return redirect(url_for("minebank_accounts_page"))
         except Exception as exc:
@@ -390,6 +388,7 @@ def minebank_transfer_page():
                 preview = preview_transfer(session["minebank_client_id"],account["id"],recipient,amount)
                 preview["description"] = request.form.get("description","")[:500]
                 preview["reference"] = request.form.get("reference","")[:100]
+                preview["causal"] = request.form.get("causal","").strip()[:500]
                 session["transfer_preview"] = preview
             except Exception as exc:
                 error = str(exc)
@@ -415,6 +414,7 @@ def minebank_transfer_page():
                         amount=int(preview["amount"]),
                         description=preview.get("description"),
                         reference=preview.get("reference"),
+                        causal=preview.get("causal"),
                         actor_client_id=session["minebank_client_id"],
                         ip_address=request.remote_addr,
                     )
@@ -439,30 +439,156 @@ def minebank_transactions_page():
     min_amount=request.args.get("min_amount","").strip()
     max_amount=request.args.get("max_amount","").strip()
     params=[account["id"],account["id"]]
-    where=["(sender_account_id=%s OR recipient_account_id=%s)"]
+    where=["(l.sender_account_id=%s OR l.recipient_account_id=%s)"]
     if q:
-        where.append("(transaction_id ILIKE %s OR COALESCE(description,'') ILIKE %s OR COALESCE(reference_id,'') ILIKE %s)")
-        like=f"%{q}%"; params.extend([like,like,like])
+        where.append("(l.transaction_id ILIKE %s OR COALESCE(l.description,'') ILIKE %s OR COALESCE(l.causal,'') ILIKE %s OR COALESCE(l.reference_id,'') ILIKE %s)")
+        like=f"%{q}%"; params.extend([like,like,like,like])
     if status:
-        where.append("status=%s"); params.append(status)
+        where.append("l.status=%s"); params.append(status)
     if direction=="INCOMING":
-        where.append("recipient_account_id=%s"); params.append(account["id"])
+        where.append("l.recipient_account_id=%s"); params.append(account["id"])
     elif direction=="OUTGOING":
-        where.append("sender_account_id=%s"); params.append(account["id"])
+        where.append("l.sender_account_id=%s"); params.append(account["id"])
     if category:
-        where.append("category=%s"); params.append(category)
+        where.append("EXISTS (SELECT 1 FROM minebank_transaction_categories f WHERE f.transaction_id=l.transaction_id AND f.account_id=%s AND f.category=%s)")
+        params.extend([account["id"],category])
     if date_from:
-        where.append("created_at::date>=%s"); params.append(date_from)
+        where.append("l.created_at::date>=%s"); params.append(date_from)
     if date_to:
-        where.append("created_at::date<=%s"); params.append(date_to)
+        where.append("l.created_at::date<=%s"); params.append(date_to)
     if min_amount:
-        where.append("amount>=%s"); params.append(int(min_amount))
+        where.append("l.amount>=%s"); params.append(int(min_amount))
     if max_amount:
-        where.append("amount<=%s"); params.append(int(max_amount))
-    transactions=execute_query_dict("SELECT transaction_id,transaction_type,amount,fee,status,description,reference_id,created_at,sender_account_id,recipient_account_id,category FROM ledger_transactions WHERE "+" AND ".join(where)+" ORDER BY created_at DESC LIMIT 500",tuple(params))
-    return render_template("minebank_portal.html",mode="transactions",account=account,transactions=transactions,portal_active="transactions")
+        where.append("l.amount<=%s"); params.append(int(max_amount))
+    sql=("SELECT l.transaction_id,l.transaction_type,l.amount,l.fee,l.status,l.description,l.causal,l.reference_id,l.created_at,"
+         "l.sender_account_id,l.recipient_account_id,"
+         "COALESCE(string_agg(tc.category, ', ' ORDER BY tc.category),'') AS categories "
+         "FROM ledger_transactions l LEFT JOIN minebank_transaction_categories tc "
+         "ON tc.transaction_id=l.transaction_id AND tc.account_id=%s WHERE "+" AND ".join(where)+
+         " GROUP BY l.transaction_id ORDER BY l.created_at DESC LIMIT 500")
+    transactions=execute_query_dict(sql,tuple([account["id"]]+params))
+    categories=execute_query_dict("SELECT DISTINCT category FROM minebank_transaction_categories WHERE account_id=%s ORDER BY category",(account["id"],))
+    default_categories=["Groceries","Housing","Transport","Bills","Salary","Shopping","Entertainment","Travel","Health","Education","Fees","Transfers","CashLine","Other"]
+    return render_template("minebank_portal.html",mode="transactions",account=account,transactions=transactions,
+                           categories=categories,default_categories=default_categories,portal_active="transactions")
 
 @app.route("/portal/transactions/<transaction_id>")
+@require_login
+def minebank_transaction_detail(transaction_id):
+    account = selected_account()
+    rows = execute_query_dict(
+        """SELECT l.*,s.account_number sender_number,r.account_number recipient_number
+           FROM ledger_transactions l
+           LEFT JOIN bank_accounts s ON s.id=l.sender_account_id
+           LEFT JOIN bank_accounts r ON r.id=l.recipient_account_id
+           WHERE l.transaction_id=%s AND (s.client_id=%s OR r.client_id=%s)""",
+        (transaction_id,session["minebank_client_id"],session["minebank_client_id"])
+    )
+    if not rows:
+        return "Transaction not found",404
+    tx=rows[0]
+    cat_rows=execute_query_dict("SELECT category FROM minebank_transaction_categories WHERE transaction_id=%s AND account_id=%s ORDER BY category",
+                                (transaction_id,account["id"]))
+    tx["categories"]=", ".join(x["category"] for x in cat_rows)
+    default_categories=["Groceries","Housing","Transport","Bills","Salary","Shopping","Entertainment","Travel","Health","Education","Fees","Transfers","CashLine","Other"]
+    return render_template("minebank_portal.html", mode="transaction", account=account,
+                           transaction=tx,default_categories=default_categories,portal_active="transactions")
+
+def _pdf_response(title, rows, filename):
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib import colors
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=16*mm, leftMargin=16*mm,
+                            topMargin=16*mm, bottomMargin=16*mm)
+    styles = getSampleStyleSheet()
+    story = [Paragraph("MineBank", styles["Title"]), Paragraph(title, styles["Heading2"]), Spacer(1, 8)]
+    data = [["Field", "Value"]] + [[str(k), str(v if v not in (None, "") else "—")] for k,v in rows]
+    table = Table(data, colWidths=[45*mm, 125*mm], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("GRID",(0,0),(-1,-1),0.5,colors.grey),("BACKGROUND",(0,0),(-1,0),colors.lightgrey),
+        ("VALIGN",(0,0),(-1,-1),"TOP"),("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
+        ("LEFTPADDING",(0,0),(-1,-1),6),("RIGHTPADDING",(0,0),(-1,-1),6),
+        ("TOPPADDING",(0,0),(-1,-1),5),("BOTTOMPADDING",(0,0),(-1,-1),5)
+    ]))
+    story.append(table)
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("Generated by MineBank Online", styles["Normal"]))
+    doc.build(story)
+    buffer.seek(0)
+    return Response(buffer.getvalue(),mimetype="application/pdf",
+                    headers={"Content-Disposition":f'inline; filename="{filename}"'})
+
+@app.route("/portal/transactions/<transaction_id>/receipt")
+@require_login
+def minebank_transaction_receipt(transaction_id):
+    rows=execute_query_dict("""SELECT l.*,s.account_number sender_number,r.account_number recipient_number,
+                                      sc.email sender_email,rc.email recipient_email
+                               FROM ledger_transactions l
+                               LEFT JOIN bank_accounts s ON s.id=l.sender_account_id
+                               LEFT JOIN bank_accounts r ON r.id=l.recipient_account_id
+                               LEFT JOIN bank_clients sc ON sc.id=s.client_id
+                               LEFT JOIN bank_clients rc ON rc.id=r.client_id
+                               WHERE l.transaction_id=%s AND (s.client_id=%s OR r.client_id=%s)""",
+                            (transaction_id,session["minebank_client_id"],session["minebank_client_id"]))
+    if not rows: return "Transaction not found",404
+    tx=rows[0]
+    return _pdf_response("Transaction Receipt",[
+        ("Transaction ID",tx["transaction_id"]),("Date",tx["created_at"]),("Status",tx["status"]),
+        ("Type",tx["transaction_type"]),("Sender",tx["sender_email"] or tx["sender_number"] or "Bank"),
+        ("Sender account",tx["sender_number"]),("Recipient",tx["recipient_email"] or tx["recipient_number"] or "Bank"),
+        ("Recipient account",tx["recipient_number"]),("Amount",f'{tx["amount"]} Emerald'),
+        ("Fee",f'{tx["fee"]} Emerald'),("Description",tx["description"]),("Reference",tx["reference_id"])
+    ],f"minebank-receipt-{transaction_id}.pdf")
+
+@app.route("/portal/transactions/<transaction_id>/category",methods=["POST"])
+@require_login
+def minebank_transaction_category(transaction_id):
+    account=selected_account()
+    values=[x.strip()[:60] for x in request.form.getlist("category") if x.strip()][:3]
+    defaults={"Groceries","Housing","Transport","Bills","Salary","Shopping","Entertainment","Travel","Health","Education","Fees","Transfers","CashLine","Other"}
+    custom=execute_query_dict("SELECT DISTINCT category FROM minebank_transaction_categories WHERE account_id=%s",(account["id"],))
+    allowed=defaults|{x["category"] for x in custom}
+    if not values or all(v in allowed for v in values):
+        execute_query("DELETE FROM minebank_transaction_categories WHERE transaction_id=%s AND account_id=%s",(transaction_id,account["id"]),commit=True)
+        for value in values:
+            execute_query("INSERT INTO minebank_transaction_categories(transaction_id,account_id,category) VALUES(%s,%s,%s) ON CONFLICT DO NOTHING",(transaction_id,account["id"],value),commit=True)
+        flash("Transaction categories updated.","success")
+    else:
+        flash("One or more categories are not valid.","error")
+    return redirect(url_for("minebank_transaction_detail",transaction_id=transaction_id))
+
+@app.route("/portal/transactions/<transaction_id>/cancel",methods=["POST"])
+@require_login
+def minebank_cancel_transfer(transaction_id):
+    try:
+        cancel_transfer(transaction_id,session["minebank_client_id"],request.remote_addr)
+        flash("Pending transfer cancelled and funds released.","success")
+    except Exception as exc:
+        flash(str(exc),"error")
+    return redirect(url_for("minebank_transaction_detail",transaction_id=transaction_id))
+
+@app.route("/portal/transactions/<transaction_id>/refund", methods=["POST"])
+@require_login
+def minebank_refund(transaction_id):
+    tx = execute_query_dict(
+        """SELECT l.* FROM ledger_transactions l JOIN bank_accounts a ON a.id=l.sender_account_id
+           WHERE l.transaction_id=%s AND a.client_id=%s""",(transaction_id,session["minebank_client_id"])
+    )
+    if not tx:
+        flash("Transaction not found or not eligible for refund.","error")
+    else:
+        create_request(session["minebank_client_id"],"REFUND",tx[0]["sender_account_id"],
+                       {"transaction_id":transaction_id,"reason":request.form.get("reason","")[:500]})
+        flash("Refund request submitted for bank review.","success")
+    return redirect(url_for("minebank_transaction_detail",transaction_id=transaction_id))
+
+@app.route("/portal/statements")
+@require_login
+def minebank_statements_page():
+    account=selected_account()@app.route("/portal/transactions/<transaction_id>")
 @require_login
 def minebank_transaction_detail(transaction_id):
     account = selected_account()
@@ -833,14 +959,30 @@ def pay_payment_request(request_id):
 @require_login
 def minebank_profile_page():
     if request.method=="POST":
-        execute_query("UPDATE bank_clients SET date_of_birth=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
-                      (request.form.get("date_of_birth") or None,session["minebank_client_id"]),commit=True)
+        execute_query("""UPDATE bank_clients
+                         SET date_of_birth=%s,phone=%s,address=%s,city=%s,postal_code=%s,country=%s,occupation=%s,updated_at=CURRENT_TIMESTAMP
+                         WHERE id=%s""",
+                      (request.form.get("date_of_birth") or None,
+                       request.form.get("phone","").strip()[:40],
+                       request.form.get("address","").strip()[:300],
+                       request.form.get("city","").strip()[:120],
+                       request.form.get("postal_code","").strip()[:20],
+                       request.form.get("country","").strip()[:80],
+                       request.form.get("occupation","").strip()[:120],
+                       session["minebank_client_id"]),commit=True)
         flash("Profile updated.","success")
     return render_template("minebank_portal.html",mode="profile",client=current_client(),portal_active="profile")
 
-@app.route("/portal/notifications")
+@app.route("/portal/notifications", methods=["GET","POST"])
 @require_login
 def minebank_notifications_page():
+    if request.method=="POST":
+        if request.form.get("action")=="read_all":
+            execute_query("UPDATE bank_notifications SET read_at=CURRENT_TIMESTAMP WHERE client_id=%s AND read_at IS NULL",
+                          (session["minebank_client_id"],),commit=True)
+        elif request.form.get("notification_id"):
+            execute_query("UPDATE bank_notifications SET read_at=CURRENT_TIMESTAMP WHERE id=%s AND client_id=%s",
+                          (request.form["notification_id"],session["minebank_client_id"]),commit=True)
     messages=execute_query_dict("SELECT * FROM bank_notifications WHERE client_id=%s ORDER BY created_at DESC LIMIT 100",(session["minebank_client_id"],))
     return render_template("minebank_portal.html",mode="notifications",messages=messages,portal_active="notifications")
 
@@ -1160,6 +1302,85 @@ def review_transfer(transaction_id):
     except Exception as exc:
         flash(f"Could not review transfer: {exc}", "error")
         return redirect(url_for("admin_minebank_requests"))
+
+@app.route("/admin/minebank/transactions", methods=["GET"])
+@require_role("ADMIN","OPERATOR")
+def admin_minebank_transactions():
+    q=request.args.get("q","").strip()
+    status=request.args.get("status","").strip().upper()
+    params=[]
+    where=[]
+    if q:
+        where.append("(l.transaction_id ILIKE %s OR COALESCE(l.description,'') ILIKE %s OR COALESCE(l.causal,'') ILIKE %s OR COALESCE(s.account_number,'') ILIKE %s OR COALESCE(r.account_number,'') ILIKE %s)")
+        like=f"%{q}%"; params.extend([like,like,like,like,like])
+    if status:
+        where.append("l.status=%s"); params.append(status)
+    condition=("WHERE "+" AND ".join(where)) if where else ""
+    transactions=execute_query_dict(
+        """SELECT l.*,s.account_number sender_number,r.account_number recipient_number,
+                  sc.email sender_email,rc.email recipient_email,
+                  COALESCE(string_agg(DISTINCT a.action,' | '),'') audit_actions
+           FROM ledger_transactions l
+           LEFT JOIN bank_accounts s ON s.id=l.sender_account_id
+           LEFT JOIN bank_accounts r ON r.id=l.recipient_account_id
+           LEFT JOIN bank_clients sc ON sc.id=s.client_id
+           LEFT JOIN bank_clients rc ON rc.id=r.client_id
+           LEFT JOIN audit_events a ON a.transaction_id=l.transaction_id
+           """+condition+""" GROUP BY l.id,s.account_number,r.account_number,sc.email,rc.email
+           ORDER BY l.created_at DESC LIMIT 500""",tuple(params))
+    audits=execute_query_dict("""SELECT a.*,c.email actor_email FROM audit_events a
+                                 LEFT JOIN bank_clients c ON c.id=a.actor_client_id
+                                 ORDER BY a.created_at DESC LIMIT 300""")
+    risks=execute_query_dict("""SELECT r.*,a.account_number,c.email FROM minebank_risk_events r
+                                LEFT JOIN bank_accounts a ON a.id=r.account_id
+                                LEFT JOIN bank_clients c ON c.id=r.client_id
+                                ORDER BY r.created_at DESC LIMIT 300""")
+    security=execute_query_dict("""SELECT s.*,c.email FROM minebank_security_events s
+                                   LEFT JOIN bank_clients c ON c.id=s.client_id
+                                   ORDER BY s.created_at DESC LIMIT 300""")
+    return render_template("minebank_admin_new.html",mode="transactions",transactions=transactions,audits=audits,risks=risks,security=security)
+
+@app.route("/admin/minebank/messages", methods=["GET","POST"])
+@require_role("ADMIN","OPERATOR")
+def admin_minebank_messages():
+    error=None
+    if request.method=="POST":
+        try:
+            subject=request.form.get("subject","").strip()[:200]
+            body=request.form.get("body","").strip()[:2000]
+            target_mode=request.form.get("target_mode","ALL")
+            account_number=request.form.get("account_number","").strip()
+            account_type=request.form.get("account_type","").strip().upper()
+            tier_code=request.form.get("tier_code","").strip().upper()
+            if not subject or not body:
+                raise ValueError("Subject and message are required.")
+            if target_mode=="ACCOUNT":
+                targets=execute_query_dict("SELECT id,client_id FROM bank_accounts WHERE account_number=%s AND status<>'CLOSED'",(account_number,))
+            else:
+                conditions=["a.status<>'CLOSED'"]; params=[]
+                if target_mode=="TYPE":
+                    conditions.append("a.account_type=%s"); params.append(account_type)
+                elif target_mode=="TIER":
+                    conditions.append("t.code=%s"); params.append(tier_code)
+                targets=execute_query_dict("SELECT a.id,a.client_id FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE "+" AND ".join(conditions)+" ORDER BY a.id",tuple(params))
+            if not targets:
+                raise ValueError("No matching accounts were found.")
+            for target in targets:
+                create_notification(target["client_id"],"BANK_MESSAGE",subject,body,target["id"])
+            execute_query("""INSERT INTO minebank_message_campaigns(created_by,subject,body,recipient_filter)
+                             VALUES(%s,%s,%s,%s::jsonb)""",
+                          (session["minebank_client_id"],subject,body,__import__("json").dumps({
+                              "mode":target_mode,"account_number":account_number,"account_type":account_type,"tier_code":tier_code
+                          })),commit=True)
+            flash(f"Message sent to {len(targets)} account(s).","success")
+            return redirect(url_for("admin_minebank_messages"))
+        except Exception as exc:
+            error=str(exc)
+    accounts=execute_query_dict("SELECT a.account_number,a.account_type,t.code,t.display_name FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE a.status<>'CLOSED' ORDER BY a.account_number")
+    tiers=execute_query_dict("SELECT code,display_name,account_type FROM account_tiers_v2 WHERE active=TRUE ORDER BY account_type,id")
+    campaigns=execute_query_dict("""SELECT m.*,c.email created_by_email FROM minebank_message_campaigns m
+                                    JOIN bank_clients c ON c.id=m.created_by ORDER BY m.created_at DESC LIMIT 50""")
+    return render_template("minebank_admin_new.html",mode="messages",accounts=accounts,tiers=tiers,campaigns=campaigns,error=error)
 
 @app.route("/setup", methods=["GET","POST"])
 @app.route("/admin/setup", methods=["GET","POST"])

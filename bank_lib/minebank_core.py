@@ -57,14 +57,14 @@ def next_transaction_id(cur):
 def create_ledger_transaction(cur, *, transaction_id, transaction_type, amount, fee=0,
                               currency=CURRENCY, sender_account_id=None,
                               recipient_account_id=None, status="COMPLETED",
-                              description=None, reference_id=None, metadata=None, transfer_kind=None):
+                              description=None, reference_id=None, metadata=None, transfer_kind=None, causal=None):
     cur.execute(
         """INSERT INTO ledger_transactions
            (transaction_id,transaction_type,amount,fee,currency,sender_account_id,
-            recipient_account_id,status,description,reference_id,transfer_kind)
-           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+            recipient_account_id,status,description,reference_id,transfer_kind,causal)
+           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
         (transaction_id,transaction_type,amount,fee,currency,sender_account_id,
-         recipient_account_id,status,description,reference_id,transfer_kind),
+         recipient_account_id,status,description,reference_id,transfer_kind,causal),
     )
     return cur.fetchone()[0]
 
@@ -188,7 +188,7 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
         release_db_connection(conn)
 
 def transfer(*, sender_account_id, recipient_account_number, amount,
-             description=None, reference=None, currency=CURRENCY, idempotency_key=None, actor_client_id=None, ip_address=None, transfer_kind=None, extra_fee=0):
+             description=None, reference=None, causal=None, currency=CURRENCY, idempotency_key=None, actor_client_id=None, ip_address=None, transfer_kind=None, extra_fee=0):
     if not isinstance(amount, int) or amount <= 0:
         raise ValueError("Transfer amount must be a positive integer Emerald amount.")
     if not recipient_account_number:
@@ -316,7 +316,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 ledger_id = create_ledger_transaction(
                     cur,transaction_id=txid,transaction_type="TRANSFER",amount=amount,fee=fee,
                     currency=currency,sender_account_id=sender[0],recipient_account_id=recipient[0],
-                    status=status,description=description,reference_id=reference,transfer_kind=transfer_kind)
+                    status=status,description=description,reference_id=reference,transfer_kind=transfer_kind,causal=causal)
                 if status == "PENDING_BUSINESS_APPROVAL":
                     cur.execute("""INSERT INTO minebank_business_payment_approvals(transaction_id,account_id,requested_by,risk_score)
                                    VALUES(%s,%s,%s,%s)""",(txid,sender[0],actor_client_id,risk_score))
