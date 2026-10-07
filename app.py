@@ -308,8 +308,8 @@ def minebank_accounts_page():
             if not tier.startswith("BUSINESS"):
                 raise ValueError("Only Business tiers can be opened from this page.")
             account_id,number=create_account(session["minebank_client_id"],"BUSINESS",tier)
-            execute_query("""INSERT INTO minebank_business_profiles(account_id,legal_name,trading_name,registration_number,address,contact_email)
-                             VALUES(%s,%s,%s,%s,%s,%s)""",
+            execute_query("""INSERT INTO minebank_business_profiles(account_id,legal_name,trading_name,address,contact_email)
+                             VALUES(%s,%s,%s,%s,%s)""",
                           (account_id,legal,trading,request.form.get("address","")[:300],session.get("minebank_email","")),commit=True)
             flash(f"Business account {number} created.","success")
             return redirect(url_for("minebank_accounts_page"))
