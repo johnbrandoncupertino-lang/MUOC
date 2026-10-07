@@ -841,11 +841,48 @@ def minebank_statements_csv():
 @app.route("/portal/plans", methods=["GET","POST"])
 @require_login
 def minebank_plans_page():
-    account=selected_account()
+    error=None
     if request.method=="POST":
-        create_request(session["minebank_client_id"],"TIER_CHANGE",account["id"],{"tier_code":request.form.get("tier_code")})
-        flash("Account tier change submitted for bank review.","success")
-    return redirect(url_for("minebank_accounts_page",account_id=account["id"] if account else None))
+        try:
+            account_id=int(request.form.get("account_id","0") or 0)
+            tier_code=request.form.get("tier_code","").strip().upper()
+            owned=execute_query_dict(
+                "SELECT id,account_type,status FROM bank_accounts WHERE id=%s AND client_id=%s AND status<>'CLOSED'",
+                (account_id,session["minebank_client_id"])
+            )
+            if not owned:
+                raise ValueError("Account not found.")
+            account=selected_account(account_id)
+            tier=execute_query_dict(
+                "SELECT code FROM account_tiers_v2 WHERE code=%s AND account_type=%s AND active=TRUE",
+                (tier_code,owned[0]["account_type"])
+            )
+            if not tier:
+                raise ValueError("That tier is not available for this account.")
+            eligible,reason=evaluate_tier_eligibility(current_client(),account,tier[0])
+            if tier_code==account.get("tier_code"):
+                raise ValueError("This is already your current plan.")
+            if not eligible:
+                raise ValueError(reason)
+            create_request(session["minebank_client_id"],"TIER_CHANGE",account_id,{"tier_code":tier_code})
+            flash("Account tier upgrade submitted for bank review.","success")
+            return redirect(url_for("minebank_plans_page",account_id=account_id))
+        except Exception as exc:
+            error=str(exc)
+    account=selected_account()
+    plan_tiers=execute_query_dict("""SELECT code,display_name,monthly_fee,opening_fee,monthly_outgoing_limit,
+                                             credit_enabled,default_credit_limit,eligibility_config
+                                      FROM account_tiers_v2
+                                      WHERE account_type=%s AND active=TRUE ORDER BY id""",
+                                   (account["account_type"] if account else "PERSONAL",))
+    for tier in plan_tiers:
+        tier["is_current"]=bool(account and tier["code"]==account.get("tier_code"))
+        tier["eligible"],tier["eligibility_reason"]=evaluate_tier_eligibility(
+            current_client(),account,tier
+        ) if account else (False,"No account selected.")
+    return render_template("minebank_portal.html",mode="plans",account=account,
+                           accounts=get_accounts(session["minebank_client_id"]),
+                           tiers=plan_tiers,error=error,portal_active="plans")
 
 def cashline_outstanding_for_app(account_id):
     from bank_lib.minebank_core import cashline_outstanding
