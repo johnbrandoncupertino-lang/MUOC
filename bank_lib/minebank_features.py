@@ -124,15 +124,7 @@ def preview_transfer(client_id, account_id, recipient_account_number, amount):
     if not recipient or recipient[0]["id"] == account_id:
         raise ValueError("Recipient account is invalid.")
     sender=rows[0]
-    fee_rows=execute_query("""SELECT percentage_bps,fixed_amount FROM fee_rules
-                              WHERE active=TRUE AND transaction_type='TRANSFER'
-                                AND (account_type IS NULL OR account_type=%s)
-                                AND (tier_code IS NULL OR tier_code=%s)
-                                AND (min_amount IS NULL OR %s>=min_amount)
-                                AND (max_amount IS NULL OR %s<=max_amount)
-                              ORDER BY priority ASC,id ASC LIMIT 1""",
-                           (sender["account_type"],sender["code"],amount,amount))
-    fee=((int(amount)*int(fee_rows[0][0] or 0)+9999)//10000+int(fee_rows[0][1] or 0)) if fee_rows else 0
+    fee=0 if sender["code"] in ("PERSONAL_PRIVATE","CORPORATE") or int(recipient[0]["client_id"])==int(sender["client_id"]) else (0 if int(amount)<=500 else 5)
     return {"amount":int(amount),"fee":fee,"total":int(amount)+fee,
             "recipient_account_number":recipient_account_number,"recipient_id":recipient[0]["id"],
             "remaining_balance":int(sender["balance"])-int(amount)-fee}
