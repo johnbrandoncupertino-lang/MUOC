@@ -161,7 +161,7 @@ def test_transfer_over_5000_is_pending_approval(accounts):
     )
     # Personal has a 1,000 Emerald daily limit, so use Personal Private for
     # the approval-threshold test.
-    private_id, private_number = create_account(alice, "PERSONAL", "PERSONAL_PRIVATE")
+    private_id, private_number = create_account(alice, "BUSINESS", "BUSINESS_PRO")
     execute_query(
         "UPDATE bank_accounts SET balance=20000,last_outgoing_at=NULL WHERE id=%s",
         (private_id,),
