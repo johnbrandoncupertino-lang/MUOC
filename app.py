@@ -6,13 +6,13 @@ ledger/auth modules.  The old fragmented portal is no longer assembled at
 import time.
 """
 import csv, io, secrets, hashlib, os
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from functools import wraps
 
 from flask import Flask, Response, flash, jsonify, redirect, render_template, render_template_string, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
-from bank_lib.database import execute_query, execute_query_dict, ensure_minebank_schema, ensure_transaction_schema, ensure_message_schema
+from bank_lib.database import execute_query, execute_query_dict, ensure_minebank_schema, ensure_transaction_schema, ensure_message_schema, ensure_loan_schema
 from bank_lib.minebank_auth import (
     create_account, get_client_accounts, login_client, logout_client,
     set_wallet_pin, verify_wallet_pin,
@@ -851,6 +851,161 @@ def cashline_outstanding_for_app(account_id):
         with conn.cursor() as cur: return cashline_outstanding(cur,account_id)
     finally: __import__("bank_lib.database",fromlist=["release_db_connection"]).release_db_connection(conn)
 
+
+def loan_financial_profile(client_id):
+    accounts=get_accounts(client_id)
+    positive_balance=sum(max(0,int(a.get("balance") or 0)) for a in accounts)
+    cashline_debt=0
+    cashline_limit=0
+    for a in accounts:
+        try:
+            cashline_debt += cashline_outstanding_for_app(a["id"])
+        except Exception:
+            pass
+        if a.get("credit_status")=="ACTIVE":
+            cashline_limit += int(a.get("facility_credit_limit") or 0)
+    active_loan_rows=execute_query("SELECT COALESCE(SUM(principal),0) FROM minebank_loans WHERE client_id=%s AND status='ACTIVE'",(client_id,))
+    active_loans=int(active_loan_rows[0][0] or 0) if active_loan_rows else 0
+    net_position=max(0,positive_balance-cashline_debt-active_loans)
+    maximum=(net_position*10//5000)*5000
+    maximum=min(50000000,maximum)
+    auto_budget=positive_balance >= 0
+    return {
+        "accounts":accounts,
+        "balance":positive_balance,
+        "cashline_debt":cashline_debt,
+        "cashline_limit":cashline_limit,
+        "active_loans":active_loans,
+        "maximum":maximum,
+        "auto_budget":auto_budget,
+        "cashline_ratio":(cashline_debt/cashline_limit if cashline_limit else 0),
+    }
+
+def loan_terms(principal,term_days):
+    annual_bps=2370 if principal<=100000 else 1830
+    interest=(principal*annual_bps*term_days + 36500)//36500
+    request_fee=100 if principal>=100000 else 50
+    total_cost=principal+interest
+    installment=total_cost//term_days
+    return {"annual_bps":annual_bps,"interest":interest,"request_fee":request_fee,
+            "total_cost":total_cost,"installment":installment}
+
+@app.route("/portal/loans", methods=["GET","POST"])
+@require_login
+def minebank_loans_page():
+    if not ensure_loan_schema():
+        return "MineBank Loans are temporarily unavailable. Please try again in a moment.",503
+    profile=loan_financial_profile(session["minebank_client_id"])
+    error=None
+    if request.method=="POST":
+        action=request.form.get("action","request")
+        try:
+            if action=="repay":
+                loan_id=int(request.form.get("loan_id","0"))
+                source_id=int(request.form.get("source_account_id","0"))
+                ok,msg=verify_wallet_pin(session["minebank_client_id"],request.form.get("wallet_pin",""))
+                if not ok: raise ValueError(msg)
+                result=repay_loan_installment(loan_id,source_id,session["minebank_client_id"])
+                flash(f"Loan installment paid: {result['amount']} Emerald.","success")
+                return redirect(url_for("minebank_loans_page"))
+            if action!="request":
+                raise ValueError("Invalid Loan operation.")
+            amount=int(request.form.get("amount","0"))
+            term=int(request.form.get("term_days","0"))
+            source_id=int(request.form.get("source_account_id","0"))
+            destination_id=int(request.form.get("destination_account_id","0"))
+            approval_mode=request.form.get("approval_mode","BANK_REVIEW").upper()
+            pin=request.form.get("wallet_pin","")
+            if amount<10000 or amount>50000000:
+                raise ValueError("Loan amount must be between 10,000 and 50,000,000 Emerald.")
+            if profile["maximum"]<amount:
+                raise ValueError(f"Based on your current financial position, your maximum requestable Loan is {profile['maximum'] or 'below the 10,000 Emerald minimum'} Emerald.")
+            if term not in (12,24,48,96,192):
+                raise ValueError("Select a valid repayment term.")
+            owned_ids={int(a["id"]) for a in profile["accounts"]}
+            if source_id not in owned_ids or destination_id not in owned_ids:
+                raise ValueError("Select one of your own accounts.")
+            if any(int(a["id"])==destination_id and a["status"]!="ACTIVE" for a in profile["accounts"]):
+                raise ValueError("The destination account is not active.")
+            if any(int(a["id"])==source_id and a["status"]!="ACTIVE" for a in profile["accounts"]):
+                raise ValueError("The fee source account is not active.")
+            if approval_mode=="AUTO":
+                if amount>20000:
+                    raise ValueError("Loans above 20,000 Emerald always require Bank authorisation.")
+                if amount<10000 or profile["cashline_limit"]<=0 or profile["cashline_debt"] >= profile["cashline_limit"]*0.40:
+                    raise ValueError("This Loan does not qualify for automatic approval. Choose Bank review.")
+                if profile["balance"] < int(amount*1.10):
+                    raise ValueError("Automatic approval requires sufficient available balance to cover the Loan plus 10%.")
+            else:
+                approval_mode="BANK_REVIEW"
+            ok,msg=verify_wallet_pin(session["minebank_client_id"],pin)
+            if not ok: raise ValueError(msg)
+            terms=loan_terms(amount,term)
+            withdraw(source_id,terms["request_fee"],description=f"Loan request fee")
+            loan_number="LN-"+secrets.token_hex(8).upper()
+            next_due=(datetime.now(timezone.utc).date()+timedelta(days=1))
+            rows=execute_query("""INSERT INTO minebank_loans
+                (loan_number,client_id,account_id,destination_account_id,principal,term_days,annual_interest_bps,total_interest,total_cost,request_fee,installment_amount,next_due_date,status,approval_mode)
+                VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                (loan_number,session["minebank_client_id"],destination_id,destination_id,amount,term,terms["annual_bps"],
+                 terms["interest"],terms["total_cost"],terms["request_fee"],terms["installment"],next_due,
+                 "PENDING","AUTO" if approval_mode=="AUTO" else "BANK_REVIEW"),commit=True)
+            loan_id=rows[0][0]
+            if approval_mode=="AUTO":
+                result=disburse_loan(loan_id,session["minebank_client_id"])
+                create_notification(session["minebank_client_id"],"LOAN_APPROVED","Loan automatically approved",
+                                    f"Your {loan_number} Loan for {amount} Emerald has been approved and deposited into your selected account.",
+                                    destination_id)
+                flash(f"Loan approved automatically and deposited: {result['amount']} Emerald.","success")
+            else:
+                create_request(session["minebank_client_id"],"LOAN_REQUEST",destination_id,
+                               {"loan_id":loan_id,"loan_number":loan_number,"amount":amount,"term_days":term,
+                                "annual_interest_bps":terms["annual_bps"],"total_interest":terms["interest"],
+                                "request_fee":terms["request_fee"],"destination_account_id":destination_id})
+                flash("Loan request submitted for Bank review.","success")
+            return redirect(url_for("minebank_loans_page"))
+        except Exception as exc:
+            error=str(exc)
+    loans=execute_query_dict("SELECT l.*,a.account_number destination_number FROM minebank_loans l JOIN bank_accounts a ON a.id=l.destination_account_id WHERE l.client_id=%s ORDER BY l.requested_at DESC LIMIT 50",(session["minebank_client_id"],))
+    return render_template("minebank_portal.html",mode="loans",loan_profile=profile,loan_error=error,loans=loans,
+                           portal_active="loans")
+
+@app.route("/portal/loans/<int:loan_id>/agreement")
+@require_login
+def minebank_loan_agreement(loan_id):
+    if not ensure_loan_schema(): return "MineBank Loans are temporarily unavailable.",503
+    rows=execute_query_dict("""SELECT l.*,a.account_number destination_number,t.display_name,
+                                      c.email
+                               FROM minebank_loans l
+                               JOIN bank_accounts a ON a.id=l.destination_account_id
+                               JOIN account_tiers_v2 t ON t.id=a.tier_id
+                               JOIN bank_clients c ON c.id=l.client_id
+                               WHERE l.id=%s AND l.client_id=%s""",(loan_id,session["minebank_client_id"]))
+    if not rows: return "Loan not found",404
+    loan=rows[0]
+    start=loan["approved_at"].date() if loan.get("approved_at") else datetime.now(timezone.utc).date()
+    schedule=[]
+    for day in range(1,int(loan["term_days"])+1):
+        amount=int(loan["installment_amount"])
+        if day==int(loan["term_days"]):
+            amount=int(loan["total_cost"])-int(loan["installment_amount"])*(day-1)
+        schedule.append((f"Day {day}",f"{start+timedelta(days=day)} · {amount} Emerald"))
+    return _pdf_response("Loan Agreement",[
+        ("Loan number",loan["loan_number"]),("Customer",loan["email"]),("Destination account",loan["destination_number"]),
+        ("Principal",f"{loan['principal']} Emerald"),("Term",f"{loan['term_days']} days"),
+        ("Annual interest rate",f"{loan['annual_interest_bps']/100:.2f}%"),("Interest",f"{loan['total_interest']} Emerald"),
+        ("Loan request fee",f"{loan['request_fee']} Emerald"),("Total repayment",f"{loan['total_cost']} Emerald"),
+        ("Daily installment",f"{loan['installment_amount']} Emerald"),("Status",loan["status"])
+    ],f"minebank-loan-agreement-{loan['loan_number']}.pdf",sections=[
+        ("Loan summary",[
+            ("Loan number",loan["loan_number"]),("Principal",f"{loan['principal']} Emerald"),
+            ("Term",f"{loan['term_days']} days"),("Interest",f"{loan['total_interest']} Emerald"),
+            ("Request fee",f"{loan['request_fee']} Emerald"),("Total repayment",f"{loan['total_cost']} Emerald"),
+            ("Daily installment",f"{loan['installment_amount']} Emerald")
+        ]),
+        ("Repayment schedule",schedule)
+    ])
+
 @app.route("/portal/credit", methods=["GET","POST"])
 @require_login
 def minebank_credit_page():
@@ -1366,6 +1521,11 @@ def review_request(request_id):
     if not row: return jsonify(error="Request not found or already reviewed."),404
     r=row[0]
     try:
+        if approve and r["request_type"]=="LOAN_REQUEST":
+            p=r["payload"] or {}
+            create_notification(r["client_id"],"LOAN_APPROVED","Loan approved",
+                                f"Your Loan {p.get('loan_number')} for {p.get('amount')} Emerald has been approved and deposited.",
+                                r["account_id"])
         if approve and r["request_type"]=="CREDIT_LINE":
             requested=int((r["payload"] or {}).get("requested_limit",0))
             limit=int(data.get("approved_limit") or requested)
@@ -1385,6 +1545,16 @@ def review_request(request_id):
             tier=execute_query_dict("SELECT id FROM account_tiers_v2 WHERE code=%s AND active=TRUE",(code,))
             if not tier: raise ValueError("Requested tier is unavailable.")
             execute_query("UPDATE bank_accounts SET tier_id=%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(tier[0]["id"],r["account_id"]),commit=True)
+        elif approve and r["request_type"]=="LOAN_REQUEST":
+            p=r["payload"] or {}
+            loan_id=int(p.get("loan_id") or 0)
+            loan=execute_query_dict("SELECT * FROM minebank_loans WHERE id=%s AND status='PENDING' AND client_id=%s",(loan_id,r["client_id"]))
+            if not loan: raise ValueError("Loan request no longer exists or has already been reviewed.")
+            disburse_loan(loan_id,session["minebank_client_id"])
+        elif not approve and r["request_type"]=="LOAN_REQUEST":
+            p=r["payload"] or {}
+            loan_id=int(p.get("loan_id") or 0)
+            execute_query("UPDATE minebank_loans SET status='REJECTED',notes=%s WHERE id=%s AND status='PENDING'",(str(data.get("reason","")).strip()[:1000],loan_id),commit=True)
         elif approve and r["request_type"]=="REFUND":
             p=r["payload"] or {}
             tx=execute_query_dict("SELECT status FROM ledger_transactions WHERE transaction_id=%s",(p.get("transaction_id"),))
