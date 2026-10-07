@@ -18,7 +18,7 @@ from bank_lib.minebank_auth import (
     set_wallet_pin, verify_wallet_pin,
 )
 from bank_lib.minebank_core import (
-    approve_transfer, chargeback, deposit, draw_credit, process_monthly_billing,
+    approve_transfer, chargeback, deposit, draw_credit,
     reject_transfer, repay_credit, transfer, cancel_transfer,
 )
 from bank_lib.minebank_requests import create_request, list_requests
@@ -52,6 +52,9 @@ def inject_bank_context():
     }
 
 def current_client():
+    cached = getattr(__import__("flask").g, "_minebank_client", None)
+    if cached is not None:
+        return cached
     cid = session.get("minebank_client_id")
     if not cid:
         return None
@@ -59,10 +62,15 @@ def current_client():
         "SELECT id,email,role,status,date_of_birth,password_hash,password_changed_at,last_login,"
         "wallet_pin_hash,wallet_pin_failed_attempts,wallet_pin_locked_until,admin_reauth_at FROM bank_clients WHERE id=%s", (cid,)
     )
-    return rows[0] if rows else None
+    client = rows[0] if rows else None
+    __import__("flask").g._minebank_client = client
+    return client
 
 def get_accounts(client_id):
-    return execute_query_dict(
+    cache = getattr(__import__("flask").g, "_minebank_accounts", None)
+    if cache is not None and cache[0] == client_id:
+        return cache[1]
+    accounts = execute_query_dict(
         """SELECT a.id,a.account_number,a.account_type,a.balance,a.status,
                   a.monthly_outgoing_used,a.monthly_outgoing_period,a.last_outgoing_at,a.freeze_type,
                   t.code,t.display_name,t.monthly_fee,t.max_balance,t.monthly_outgoing_limit,
@@ -71,10 +79,17 @@ def get_accounts(client_id):
            WHERE a.status<>'CLOSED' AND (a.client_id=%s OR EXISTS (SELECT 1 FROM minebank_business_members bm WHERE bm.account_id=a.id AND bm.client_id=%s))
            ORDER BY a.account_type,a.id""", (client_id,client_id,)
     )
+    __import__("flask").g._minebank_accounts = (client_id, accounts)
+    return accounts
 
 def pending_count(client_id):
+    cache = getattr(__import__("flask").g, "_minebank_pending_requests", None)
+    if cache is not None and cache[0] == client_id:
+        return cache[1]
     rows = execute_query("SELECT COUNT(*) FROM bank_requests_v2 WHERE client_id=%s AND status='PENDING'", (client_id,))
-    return int(rows[0][0]) if rows else 0
+    value = int(rows[0][0]) if rows else 0
+    __import__("flask").g._minebank_pending_requests = (client_id, value)
+    return value
 
 def require_login(fn):
     @wraps(fn)
@@ -118,22 +133,27 @@ def csrf_check():
 def prepare_request():
     if request.endpoint == "static":
         return None
-    try:
-        ensure_security_schema()
-    except Exception:
-        pass
-    if session.get('minebank_client_id') and not validate_session():
-        return redirect(url_for('minebank_login', next=request.path))
+
+    # Schema creation/migrations are deliberately not run on every request.
+    # ensure_minebank_schema() is internally cached for the lifetime of a warm
+    # serverless worker, while the login route initializes it when needed.
+    if session.get("minebank_client_id"):
+        # Session validation is security-critical, but updating the database on
+        # every page/resource request was unnecessarily expensive. Validate at
+        # most once per minute per browser session.
+        now_ts = datetime.now(timezone.utc).timestamp()
+        last_check = float(session.get("_session_validated_at", 0) or 0)
+        if now_ts - last_check >= 60:
+            try:
+                if not validate_session():
+                    return redirect(url_for("minebank_login", next=request.path))
+                session["_session_validated_at"] = now_ts
+            except Exception:
+                return redirect(url_for("minebank_login", next=request.path))
+
     failed = csrf_check()
     if failed:
         return failed
-    if session.get("minebank_client_id"):
-        try:
-            ensure_minebank_schema()
-            process_monthly_billing()
-        except Exception:
-            # Billing must never make the login/portal unavailable.
-            pass
     return None
 
 @app.route("/")
