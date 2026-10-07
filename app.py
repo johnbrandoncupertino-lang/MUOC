@@ -292,8 +292,7 @@ def recent_transactions(account, limit=10):
 @app.route("/portal/account")
 @require_login
 def minebank_account_page():
-    return render_template("minebank_portal.html", mode="account", account=selected_account(),
-                           accounts=get_accounts(session["minebank_client_id"]), portal_active="account")
+    return redirect(url_for("minebank_accounts_page"))
 
 @app.route("/portal/accounts", methods=["GET","POST"])
 @require_login
@@ -311,8 +310,7 @@ def minebank_accounts_page():
             account_id,number=create_account(session["minebank_client_id"],"BUSINESS",tier)
             execute_query("""INSERT INTO minebank_business_profiles(account_id,legal_name,trading_name,registration_number,address,contact_email)
                              VALUES(%s,%s,%s,%s,%s,%s)""",
-                          (account_id,legal,trading,request.form.get("registration_number","")[:100],
-                           request.form.get("address","")[:300],session.get("minebank_email","")),commit=True)
+                          (account_id,legal,trading,request.form.get("address","")[:300],session.get("minebank_email","")),commit=True)
             flash(f"Business account {number} created.","success")
             return redirect(url_for("minebank_accounts_page"))
         except Exception as exc:
@@ -390,6 +388,7 @@ def minebank_transfer_page():
                 preview = preview_transfer(session["minebank_client_id"],account["id"],recipient,amount)
                 preview["description"] = request.form.get("description","")[:500]
                 preview["reference"] = request.form.get("reference","")[:100]
+                preview["causal"] = request.form.get("causal","").strip()[:500]
                 session["transfer_preview"] = preview
             except Exception as exc:
                 error = str(exc)
@@ -415,6 +414,7 @@ def minebank_transfer_page():
                         amount=int(preview["amount"]),
                         description=preview.get("description"),
                         reference=preview.get("reference"),
+                        causal=preview.get("causal"),
                         actor_client_id=session["minebank_client_id"],
                         ip_address=request.remote_addr,
                     )
