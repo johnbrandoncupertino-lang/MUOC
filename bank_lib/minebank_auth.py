@@ -45,9 +45,17 @@ def login_client(email, password, captcha_answer=None):
     try:
         with conn:
             with conn.cursor() as cur:
+                normalized_email = email.strip().lower()
+                # Normal registrations store lowercase emails, so use the
+                # unique email index first. Only legacy mixed-case records
+                # need the slower case-insensitive fallback.
                 cur.execute("""SELECT id,email,password_hash,role,status,login_failed_attempts,login_blocked_until,login_captcha_required,password_changed_at
-                               FROM bank_clients WHERE LOWER(email)=LOWER(%s)""",(email.strip(),))
+                               FROM bank_clients WHERE email=%s""",(normalized_email,))
                 row=cur.fetchone()
+                if not row:
+                    cur.execute("""SELECT id,email,password_hash,role,status,login_failed_attempts,login_blocked_until,login_captcha_required,password_changed_at
+                                   FROM bank_clients WHERE LOWER(email)=LOWER(%s)""",(normalized_email,))
+                    row=cur.fetchone()
                 if not row:
                     record_login_failure(None,"UNKNOWN_ACCOUNT")
                     return False,"Invalid credentials."
