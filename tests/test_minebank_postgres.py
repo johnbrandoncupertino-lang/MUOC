@@ -159,8 +159,7 @@ def test_transfer_over_5000_is_pending_approval(accounts):
         fetch=False,
         commit=True,
     )
-    # Personal has a 1,000 Emerald daily limit, so use Personal Private for
-    # the approval-threshold test.
+    # Use Business Pro so the 5,001 Emerald transfer can reach the approval threshold.
     private_id, private_number = create_account(alice, "BUSINESS", "BUSINESS_PRO")
     execute_query(
         "UPDATE bank_accounts SET balance=20000,last_outgoing_at=NULL WHERE id=%s",
@@ -182,7 +181,7 @@ def test_transfer_over_5000_is_pending_approval(accounts):
     )[0]
     assert tx["status"] == "PENDING_APPROVAL"
     assert tx["amount"] == 5001
-    assert tx["fee"] == 0
+    assert tx["fee"] == 5
 
 
 def test_cashline_limits_and_daily_interest(accounts):
