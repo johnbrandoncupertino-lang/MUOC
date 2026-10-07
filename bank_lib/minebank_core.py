@@ -835,6 +835,16 @@ def process_monthly_billing():
                                                       amount=int(credit_fee),recipient_account_id=account_id,
                                                       description=f"Monthly credit activation fee {period}")
                             fees.append(int(credit_fee))
+                    cur.execute("""UPDATE credit_statements SET status='OVERDUE'
+                                   WHERE account_id=%s AND due_at<CURRENT_TIMESTAMP
+                                     AND amount_paid<minimum_due AND status IN ('OPEN','PARTIALLY_PAID')""",(account_id,))
+                    cur.execute("SELECT EXISTS(SELECT 1 FROM credit_statements WHERE account_id=%s AND status='OVERDUE')",(account_id,))
+                    statement_overdue=bool(cur.fetchone()[0])
+                    if statement_overdue:
+                        cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
+                                       VALUES(%s,%s,'CREDIT_STATEMENT_OVERDUE','CashLine payment overdue',
+                                       'Your CashLine minimum payment is overdue. Please make the required payment.')""",
+                                    (client_id,account_id))
                     cur.execute("SELECT balance FROM bank_accounts WHERE id=%s FOR UPDATE",(account_id,))
                     current_balance=int(cur.fetchone()[0])
                     if credit_status=="ACTIVE" and current_balance<0:
