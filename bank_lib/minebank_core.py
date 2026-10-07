@@ -614,6 +614,69 @@ def withdraw(account_id, amount, actor_user_id=None, description=None):
         release_db_connection(conn)
 
 
+
+def disburse_loan(loan_id, approved_by=None):
+    """Atomically approve and deposit a MineBank loan into its destination account."""
+    conn=get_db_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT id,client_id,destination_account_id,principal,status,loan_number,installment_amount,term_days FROM minebank_loans WHERE id=%s FOR UPDATE",(loan_id,))
+                loan=cur.fetchone()
+                if not loan: raise ValueError("Loan not found.")
+                if loan[4] not in ("PENDING","APPROVED"): raise ValueError("Loan is no longer awaiting disbursement.")
+                destination=_lock_account(cur,loan[2])
+                if not destination or destination[6] not in ("ACTIVE","LIMITED"):
+                    raise ValueError("Loan destination account is not active.")
+                txid=next_transaction_id(cur)
+                cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(loan[3],loan[2]))
+                create_ledger_transaction(cur,transaction_id=txid,transaction_type="LOAN_DISBURSEMENT",
+                                          amount=loan[3],recipient_account_id=loan[2],
+                                          description=f"Loan disbursement {loan[5]}",reference_id=loan[5])
+                cur.execute("""UPDATE minebank_loans
+                               SET status='ACTIVE',approved_at=COALESCE(approved_at,CURRENT_TIMESTAMP),
+                                   approved_by=COALESCE(%s,approved_by),
+                                   next_due_date=CURRENT_DATE+1
+                               WHERE id=%s""",(approved_by,loan_id))
+                return {"transaction_id":txid,"loan_number":loan[5],"amount":loan[3]}
+    finally:
+        release_db_connection(conn)
+
+def repay_loan_installment(loan_id, source_account_id, actor_client_id):
+    """Atomically collect one daily loan installment from another owned account."""
+    conn=get_db_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT id,client_id,account_id,destination_account_id,installment_amount,
+                                      installments_paid,term_days,principal,total_interest,total_cost,
+                                      status,loan_number
+                               FROM minebank_loans WHERE id=%s FOR UPDATE""",(loan_id,))
+                loan=cur.fetchone()
+                if not loan or loan[10]!="ACTIVE": raise ValueError("Loan is not active.")
+                if int(loan[1])!=int(actor_client_id): raise ValueError("Loan does not belong to this client.")
+                if int(loan[5])>=int(loan[6]):
+                    raise ValueError("All loan installments have already been paid.")
+                source=_lock_account(cur,source_account_id)
+                if not source or int(source[1])!=int(actor_client_id): raise ValueError("Repayment account does not belong to you.")
+                if source[6]!="ACTIVE": raise ValueError("Repayment account is not active.")
+                if int(source[5])<int(loan[4]): raise ValueError("Insufficient balance to pay today's loan installment.")
+                txid=next_transaction_id(cur)
+                cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(loan[4],source_account_id))
+                create_ledger_transaction(cur,transaction_id=txid,transaction_type="LOAN_REPAYMENT",
+                                          amount=loan[4],sender_account_id=source_account_id,
+                                          description=f"Loan repayment {loan[11]}",reference_id=loan[11])
+                paid=int(loan[5])+1
+                status="COMPLETED" if paid>=int(loan[6]) else "ACTIVE"
+                cur.execute("""UPDATE minebank_loans SET installments_paid=%s,status=%s,
+                                  next_due_date=CASE WHEN %s='ACTIVE' THEN CURRENT_DATE+1 ELSE NULL END,
+                                  completed_at=CASE WHEN %s='COMPLETED' THEN CURRENT_TIMESTAMP ELSE completed_at END
+                               WHERE id=%s""",(paid,status,status,status,loan_id))
+                return {"transaction_id":txid,"amount":loan[4],"status":status,"installments_paid":paid,"term_days":loan[6]}
+    finally:
+        release_db_connection(conn)
+
+
 def repay_credit(account_id, amount, source_account_id):
     if not isinstance(amount,int) or amount<=0: raise ValueError("Repayment must be a positive integer Emerald amount.")
     conn=get_db_connection()
