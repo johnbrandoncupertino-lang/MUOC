@@ -454,6 +454,14 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                     transfer_kind="DYNAMIC_CASHLINE"
                 elif transfer_kind is None:
                     transfer_kind = "OWN_TRANSFER" if sender[1] == recipient[1] else f"{sender[3]}_TO_{recipient[3]}"
+                # Re-check the recipient cap inside the write transaction. The
+                # earlier preview is informational and may be stale by authorisation.
+                cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
+                max_balance_row = cur.fetchone()
+                max_balance = max_balance_row[0] if max_balance_row else None
+                if max_balance is not None and int(recipient[5]) + amount > int(max_balance):
+                    raise ValueError("Recipient account balance limit exceeded.")
+
                 txid = next_transaction_id(cur)
                 if funding_source=="BALANCE":
                     cur.execute("""UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
@@ -464,10 +472,6 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                                last_outgoing_at=CURRENT_TIMESTAMP,monthly_outgoing_period=%s,
                                updated_at=CURRENT_TIMESTAMP WHERE id=%s""",(used+amount,period,sender[0]))
                 if status == "COMPLETED":
-                    cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
-                    max_balance=cur.fetchone()[0]
-                    if max_balance is not None and int(recipient[5])+amount>int(max_balance):
-                        raise ValueError("Recipient account balance limit exceeded.")
                     cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
                                 (amount,recipient[0]))
                     _cashline_repayment_suggestion(cur,recipient[0],amount)
