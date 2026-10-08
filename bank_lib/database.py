@@ -108,6 +108,11 @@ def ensure_minebank_schema():
                 AND to_regclass('public.bank_notifications') IS NOT NULL
         """)
         if rows and rows[0][0]:
+            try:
+                from .credicheck import ensure_credicheck_schema
+                ensure_credicheck_schema()
+            except Exception as exc:
+                print(f"CrediCheck schema probe warning: {type(exc).__name__}: {exc}")
             _SCHEMA_READY = True
             return True
     except Exception as exc:
