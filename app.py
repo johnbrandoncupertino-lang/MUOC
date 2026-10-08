@@ -1441,6 +1441,12 @@ def minebank_scheduled_page():
             recipient=execute_query_dict("SELECT id FROM bank_accounts WHERE account_number=%s AND status<>'CLOSED'",(number,))
             if not recipient:
                 raise ValueError("Recipient account not found.")
+            funding_source=(request.form.get("funding_source") or "BALANCE").upper()
+            if funding_source not in {"BALANCE","CASHLINE"}:
+                funding_source="BALANCE"
+            if funding_source=="CASHLINE":
+                if not account.get("dynamic_cashline_active") and account.get("credit_status")!="ACTIVE":
+                    raise ValueError("CashLine is not active on this account.")
             if int(account["balance"]) < 2:
                 raise ValueError("2 Emerald are required to set up a scheduled payment.")
             execute_query("UPDATE bank_accounts SET balance=balance-2,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(account["id"],),commit=True)
@@ -1449,11 +1455,11 @@ def minebank_scheduled_page():
                              VALUES(%s,'SCHEDULED_PAYMENT_SETUP',2,0,'Emerald',%s,'COMPLETED','Scheduled payment setup fee')""",
                           (f"MB-SCHED-{secrets.token_hex(6)}",account["id"]),commit=True)
             execute_query("""INSERT INTO minebank_scheduled_transfers
-                             (client_id,account_id,recipient_account_number,amount,schedule_type,next_run_at,end_at,description,reference,recurrence_config)
-                             VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)""",
+                             (client_id,account_id,recipient_account_number,amount,schedule_type,next_run_at,end_at,description,reference,recurrence_config,funding_source)
+                             VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)""",
                           (session["minebank_client_id"],account["id"],number,amount,schedule,next_run,
                            request.form.get("end_at") or None,request.form.get("description","")[:500],
-                           request.form.get("reference","")[:100],recurrence),commit=True)
+                           request.form.get("reference","")[:100],recurrence,funding_source),commit=True)
             flash("Scheduled payment created. Setup fee: 2 Emerald.","success")
         except Exception as exc:
             flash(str(exc),"error")
@@ -1530,9 +1536,11 @@ def minebank_payment_requests_page():
             flash("Payment request sent. It expires in 30 days.","success")
         except Exception as exc:
             error=str(exc)
-    incoming=execute_query_dict("""SELECT p.*,a.account_number requester_account_number,c.email requester_email
+    incoming=execute_query_dict("""SELECT p.*,a.account_number requester_account_number,c.email requester_email,
+                                    pa.id payer_account_id
                                     FROM minebank_payment_requests p
                                     JOIN bank_accounts a ON a.id=p.requester_account_id
+                                    JOIN bank_accounts pa ON pa.account_number=p.payer_account_number AND pa.client_id=p.payer_client_id
                                     JOIN bank_clients c ON c.id=p.requester_client_id
                                     WHERE p.payer_client_id=%s AND p.status='PENDING' AND p.expires_at>CURRENT_TIMESTAMP
                                     ORDER BY p.created_at DESC""",(cid,))
