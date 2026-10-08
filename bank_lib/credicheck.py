@@ -97,8 +97,19 @@ def ensure_credicheck_schema():
         print(f"CrediCheck schema warning: {type(exc).__name__}: {exc}")
         return False
 
+def _score_value(value, default=5):
+    """Parse a stored CrediCheck score without allowing blank legacy values to crash banking flows."""
+    try:
+        raw = str(value).strip() if value is not None else ""
+        if not raw:
+            return default
+        parsed = int(raw)
+        return max(MIN_SCORE, parsed)
+    except (TypeError, ValueError, OverflowError):
+        return default
+
 def _risk(score):
-    score = int(score)
+    score = _score_value(score)
     if score <= 5: return 'GOOD'
     if score <= 10: return 'STANDARD'
     if score <= 15: return 'MODERATE'
@@ -106,20 +117,39 @@ def _risk(score):
     return 'NO_CREDIT'
 
 def get_profile(client_id):
+    """Return a usable profile and repair blank/invalid scores left by older schemas."""
     ensure_credicheck_schema()
     rows = execute_query_dict("SELECT * FROM credicheck_profiles WHERE client_id=%s", (client_id,))
-    if rows:
-        return rows[0]
-    execute_query("""INSERT INTO credicheck_profiles(client_id,score,risk_level,credit_status)
-                     VALUES(%s,5,'GOOD','ACTIVE') ON CONFLICT(client_id) DO NOTHING""",
-                  (client_id,), commit=True)
-    return execute_query_dict("SELECT * FROM credicheck_profiles WHERE client_id=%s", (client_id,))[0]
+    if not rows:
+        execute_query("""INSERT INTO credicheck_profiles(client_id,score,risk_level,credit_status)
+                         VALUES(%s,5,'GOOD','ACTIVE') ON CONFLICT(client_id) DO NOTHING""",
+                      (client_id,), commit=True)
+        rows = execute_query_dict("SELECT * FROM credicheck_profiles WHERE client_id=%s", (client_id,))
+    if not rows:
+        raise RuntimeError("CrediCheck profile could not be created or loaded.")
+    profile = rows[0]
+    raw_score = profile.get("score")
+    score = _score_value(raw_score)
+    try:
+        valid_score = raw_score is not None and str(raw_score).strip() != "" and int(str(raw_score).strip()) >= MIN_SCORE
+    except (TypeError, ValueError, OverflowError):
+        valid_score = False
+    if not valid_score:
+        print(f"CrediCheck warning: repairing invalid score for client {client_id}; using default score {score}.")
+        execute_query("""UPDATE credicheck_profiles
+                         SET score=%s,risk_level=%s,updated_at=CURRENT_TIMESTAMP
+                         WHERE client_id=%s""", (score,_risk(score),client_id), commit=True)
+        profile["score"] = score
+        profile["risk_level"] = _risk(score)
+    else:
+        profile["score"] = score
+    return profile
 
 def add_event(client_id, event_type, points, description='', reference_type=None,
               reference_id=None, source='SYSTEM'):
     ensure_credicheck_schema()
     current = get_profile(client_id)
-    previous = int(current['score'])
+    previous = _score_value(current.get('score'))
     new_score = max(MIN_SCORE, previous + int(points))
     execute_query("""UPDATE credicheck_profiles
                      SET score=%s,risk_level=%s,last_evaluated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
@@ -182,7 +212,7 @@ def automatic_credit_eligibility(client_id, account, product_type, requested_amo
             reasons.append("The account is not active.")
 
     # CrediCheck access boundary: Good/Standard customers (0-10) only.
-    if int(profile.get("score") or 0) > 10:
+    if _score_value(profile.get("score")) > 10:
         reasons.append("CrediCheck credit eligibility is currently restricted.")
     if str(profile.get("credit_status") or "").upper() != "ACTIVE":
         reasons.append("Credit access is not currently active.")
@@ -231,12 +261,12 @@ def automatic_credit_eligibility(client_id, account, product_type, requested_amo
     else:
         reasons.append("This product is not eligible for automatic approval.")
 
-    return {"eligible": not reasons, "reasons": reasons, "score": int(profile.get("score") or 0)}
+    return {"eligible": not reasons, "reasons": reasons, "score": _score_value(profile.get("score"))}
 
 def assess(client_id, account, product_type, requested_amount=0):
     """Create a transparent internal assessment snapshot for Admin review."""
     profile = get_profile(client_id)
-    score = int(profile['score'])
+    score = _score_value(profile.get('score'))
     risk = _risk(score)
     debt = debt_snapshot(account['id']) if account else 0
     base = base_capacity(account or {})
@@ -266,7 +296,14 @@ def assess(client_id, account, product_type, requested_amount=0):
 def set_score(client_id, admin_id, new_score, reason):
     ensure_credicheck_schema()
     current = get_profile(client_id)
-    value=max(MIN_SCORE,int(new_score))
+    
+    try:
+        raw_score = str(new_score).strip() if new_score is not None else ""
+        if not raw_score:
+            raise ValueError
+        value = max(MIN_SCORE, int(raw_score))
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("CrediCheck score must be a whole number.")
     execute_query("""UPDATE credicheck_profiles SET score=%s,risk_level=%s,updated_at=CURRENT_TIMESTAMP
                      WHERE client_id=%s""",(value,_risk(value),client_id),commit=True)
     execute_query("""INSERT INTO credicheck_overrides
@@ -286,7 +323,7 @@ def set_product_access(client_id, admin_id, product_type, status, reason):
 def activate_dynamic_cashline(client_id, account_id, admin_id):
     ensure_credicheck_schema()
     profile=get_profile(client_id)
-    if int(profile['score']) > 10 or profile['credit_status'] != 'ACTIVE':
+    if _score_value(profile.get('score')) > 10 or profile.get('credit_status') != 'ACTIVE':
         raise ValueError('Customer is not currently eligible for Dynamic CashLine review.')
     existing=execute_query_dict("SELECT * FROM credit_facilities WHERE account_id=%s AND status='ACTIVE'",(account_id,))
     if existing and debt_snapshot(account_id)>0:
