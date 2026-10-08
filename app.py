@@ -277,6 +277,36 @@ def minebank_dashboard():
     transactions = recent_transactions(account)
     total_balance = sum(int(a.get("balance") or 0) for a in accounts)
     balance_breakdown = accounts
+    # Dashboard CashLine summary is customer-wide: show total active credit
+    # across all accounts, while retaining per-account product/type details.
+    cashline_accounts = []
+    total_cashline_credit = 0
+    for a in accounts:
+        static_limit = int(a.get("facility_credit_limit") or 0) if str(a.get("credit_status") or "").upper()=="ACTIVE" else 0
+        dynamic_rows = execute_query_dict(
+            "SELECT status FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE' LIMIT 1",
+            (a["id"],)
+        )
+        dynamic_active = bool(dynamic_rows)
+        if dynamic_active:
+            product_type = "Dynamic"
+            display_amount = None
+            detail = "No pre-set Credit Limit"
+        elif static_limit > 0:
+            product_type = "Static"
+            display_amount = static_limit
+            detail = f"{static_limit} Emerald"
+            total_cashline_credit += static_limit
+        else:
+            product_type = "None"
+            display_amount = 0
+            detail = "Not active"
+        cashline_accounts.append({
+            "account": a,
+            "type": product_type,
+            "amount": display_amount,
+            "detail": detail,
+        })
     messages = execute_query_dict(
         "SELECT title,message,created_at FROM bank_notifications WHERE client_id=%s ORDER BY created_at DESC LIMIT 5",
         (session["minebank_client_id"],)
@@ -291,6 +321,7 @@ def minebank_dashboard():
     """,(account["id"],account["id"])) if account else []
     return render_template("minebank_portal.html", mode="dashboard", account=account,
                            accounts=accounts, total_balance=total_balance, balance_breakdown=balance_breakdown,
+                           cashline_accounts=cashline_accounts, total_cashline_credit=total_cashline_credit,
                            transactions=transactions, messages=messages, chart_rows=chart_rows,
                            portal_active="dashboard")
 
