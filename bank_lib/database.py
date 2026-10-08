@@ -146,6 +146,8 @@ def ensure_minebank_schema():
         # Security tables/columns are part of the base login system.
         from .minebank_security import ensure_security_schema
         ensure_security_schema()
+        from .credicheck import ensure_credicheck_schema
+        ensure_credicheck_schema()
 
         _SCHEMA_READY = True
         return True
