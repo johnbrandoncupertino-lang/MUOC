@@ -550,6 +550,12 @@ def approve_transfer(transaction_id, actor_user_id, ip_address=None):
                             (tx[3],tx[2]))
                 cur.execute("""UPDATE ledger_transactions SET status='COMPLETED',approved_by=%s,
                                approved_at=CURRENT_TIMESTAMP WHERE id=%s""", (actor_user_id,tx[0]))
+                cur.execute("""UPDATE minebank_payment_requests
+                               SET status='PAID',paid_transaction_id=%s
+                               WHERE id=(SELECT split_part(idempotency_key,'-',2)::BIGINT
+                                         FROM transfer_idempotency WHERE transaction_id=%s
+                                           AND idempotency_key LIKE 'PAYREQ-%')
+                                 AND status='PENDING'""",(transaction_id,transaction_id))
                 audit_event(cur,actor_client_id=actor_user_id,action="TRANSFER_APPROVED",target_type="TRANSACTION",target_id=transaction_id,account_id=tx[2],transaction_id=transaction_id,ip_address=ip_address)
                 return transaction_id
     finally:
