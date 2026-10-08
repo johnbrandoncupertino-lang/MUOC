@@ -157,6 +157,77 @@ def base_capacity(account):
     }
     return values.get(str(account.get('tier_code') or '').upper(), 0)
 
+def automatic_credit_eligibility(client_id, account, product_type, requested_amount=0):
+    """Return whether a request satisfies MineBank's automatic-credit rules.
+
+    Automatic approval is limited to fixed Standard CashLine requests up to
+    5,000 Emerald and Loans up to 20,000 Emerald.  Dynamic CashLine is never
+    auto-approved by this helper.
+    """
+    ensure_credicheck_schema()
+    amount = int(requested_amount or 0)
+    product = str(product_type or "").upper()
+    profile = get_profile(client_id)
+    reasons = []
+
+    if not account:
+        reasons.append("No account was selected.")
+    else:
+        if str(account.get("status") or "").upper() not in {"ACTIVE", "ENABLED"}:
+            reasons.append("The account is not active.")
+
+    # CrediCheck access boundary: Good/Standard customers (0-10) only.
+    if int(profile.get("score") or 0) > 10:
+        reasons.append("CrediCheck credit eligibility is currently restricted.")
+    if str(profile.get("credit_status") or "").upper() != "ACTIVE":
+        reasons.append("Credit access is not currently active.")
+
+    # Explicit product blocks/overrides always win over automatic approval.
+    access = execute_query_dict(
+        "SELECT status FROM credicheck_product_access WHERE client_id=%s AND product_type=%s",
+        (client_id, product),
+    )
+    if access and str(access[0].get("status") or "").upper() not in {"AVAILABLE", "ACTIVE"}:
+        reasons.append("This credit product is currently restricted.")
+
+    if product == "CASHLINE":
+        if amount < 300 or amount > 5000:
+            reasons.append("Automatic Standard CashLine approval is limited to 300-5,000 Emerald.")
+        if account:
+            dynamic = execute_query_dict(
+                "SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE'",
+                (account["id"],),
+            )
+            if dynamic:
+                reasons.append("Dynamic CashLine is active on this account.")
+            facility = execute_query_dict(
+                "SELECT status FROM credit_facilities WHERE account_id=%s AND status='ACTIVE'",
+                (account["id"],),
+            )
+            if facility:
+                reasons.append("An active Standard CashLine already exists on this account.")
+    elif product == "LOAN":
+        if amount <= 0 or amount > 20000:
+            reasons.append("Automatic Loan approval is limited to Loans up to 20,000 Emerald.")
+        # Any overdue active Loan blocks automatic approval.
+        overdue = execute_query(
+            "SELECT COUNT(*) FROM minebank_loans WHERE client_id=%s AND status='ACTIVE' AND next_due_date < CURRENT_DATE",
+            (client_id,),
+        )
+        if overdue and int(overdue[0][0] or 0) > 0:
+            reasons.append("There is an overdue Loan repayment.")
+        # A defaulted Loan is a permanent block until administration restores access.
+        defaulted = execute_query(
+            "SELECT COUNT(*) FROM minebank_loans WHERE client_id=%s AND status='DEFAULTED'",
+            (client_id,),
+        )
+        if defaulted and int(defaulted[0][0] or 0) > 0:
+            reasons.append("A previous Loan is in default.")
+    else:
+        reasons.append("This product is not eligible for automatic approval.")
+
+    return {"eligible": not reasons, "reasons": reasons, "score": int(profile.get("score") or 0)}
+
 def assess(client_id, account, product_type, requested_amount=0):
     """Create a transparent internal assessment snapshot for Admin review."""
     profile = get_profile(client_id)
