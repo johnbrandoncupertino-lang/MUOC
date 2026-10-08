@@ -1033,6 +1033,7 @@ def minebank_loan_agreement(loan_id):
 @require_login
 def minebank_credit_page():
     ensure_transaction_schema()
+    ensure_credicheck_schema()
     account=selected_account()
     if not account:
         flash("No bank account exists for this client yet.","error")
