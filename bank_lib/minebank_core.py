@@ -366,7 +366,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 if monthly_limit is not None and used + amount > int(monthly_limit):
                     raise ValueError("Monthly outgoing transfer limit exceeded.")
                 cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions
-                               WHERE sender_account_id=%s AND status IN ('COMPLETED','PENDING_APPROVAL')
+                               WHERE sender_account_id=%s AND status IN ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL')
                                  AND created_at>=CURRENT_TIMESTAMP-INTERVAL '1 day'""",(sender[0],))
                 daily_used=int(cur.fetchone()[0] or 0)
                 if daily_limit is not None and daily_used + amount > int(daily_limit):
