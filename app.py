@@ -714,7 +714,7 @@ def minebank_transfer_page():
                         ip_address=request.remote_addr,
                     )
                     session.pop("transfer_preview", None)
-                    flash({"transaction_id": result["transaction_id"], "status": result["status"]}, "success")
+                    flash((f"Transfer {result['transaction_id']} completed successfully." if result["status"] == "COMPLETED" else f"Transfer {result['transaction_id']} was submitted and is awaiting approval."), "success")
                     return redirect(url_for("minebank_transactions_page"))
                 except Exception as exc:
                     error = str(exc)
