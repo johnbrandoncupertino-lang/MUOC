@@ -652,64 +652,70 @@ def minebank_transfer_page():
     if account.get("status") in {"FROZEN", "CLOSED"}:
         flash("This account is suspended and cannot be used for transfers.", "error")
         return redirect(url_for("minebank_accounts_page", account_id=account["id"]))
+    client_id = session["minebank_client_id"]
+    if request.args.get("restart") == "1":
+        session.pop("transfer_preview", None)
     preview = session.get("transfer_preview")
+    if preview and (preview.get("client_id") != client_id or int(preview.get("sender_account_id") or 0) != int(account["id"])):
+        session.pop("transfer_preview", None)
+        preview = None
     error = None
     if request.method == "POST":
-        stage = request.form.get("stage","review")
+        stage = request.form.get("stage", "review")
         if stage == "review":
+            session.pop("transfer_preview", None)
+            preview = None
             try:
                 raw_amount = (request.form.get("amount") or "").strip()
-                if not raw_amount:
-                    raise ValueError("Enter a transfer amount in whole Emeralds greater than zero.")
-                if not raw_amount.isascii() or not raw_amount.isdigit():
-                    raise ValueError("Transfer amount must be a whole Emerald amount (digits only).")
+                if not raw_amount or not raw_amount.isascii() or not raw_amount.isdigit():
+                    raise ValueError("Enter a whole-Emerald transfer amount greater than zero.")
                 amount = int(raw_amount)
                 if amount <= 0:
-                    raise ValueError("Enter a transfer amount in whole Emeralds greater than zero.")
-                recipient = request.form.get("recipient_account_number","").strip().upper()
-                # preview_transfer is deliberately kept in the core library; no duplicate fee logic in the web layer.
+                    raise ValueError("Enter a whole-Emerald transfer amount greater than zero.")
+                recipient = (request.form.get("recipient_account_number") or "").strip().upper()
+                funding_source = (request.form.get("funding_source") or "BALANCE").strip().upper()
                 from bank_lib.minebank_core import preview_transfer
-                funding_source=request.form.get("funding_source","BALANCE").upper()
-                session.pop("transfer_preview", None)
-                preview = preview_transfer(session["minebank_client_id"],account["id"],recipient,amount,funding_source=funding_source)
+                preview = preview_transfer(client_id, account["id"], recipient, amount, funding_source=funding_source)
                 preview["sender_account_id"] = int(account["id"])
-                preview["description"] = request.form.get("description","")[:500]
-                preview["reference"] = request.form.get("reference","")[:100]
-                preview["causal"] = request.form.get("causal","").strip()[:500]
+                preview["client_id"] = client_id
+                preview["description"] = (request.form.get("description") or "")[:500]
+                preview["reference"] = (request.form.get("reference") or "")[:100]
+                preview["causal"] = (request.form.get("causal") or "").strip()[:500]
                 session["transfer_preview"] = preview
             except Exception as exc:
                 error = str(exc)
-        else:
+        elif stage == "confirm":
             preview = session.get("transfer_preview")
             if not preview:
-                error = "Transfer review expired. Please start again."
+                error = "Transfer review expired. Please enter the details and calculate the payment again."
+            elif preview.get("client_id") != client_id or int(preview.get("sender_account_id") or 0) != int(account["id"]):
+                session.pop("transfer_preview", None)
+                preview = None
+                error = "The source account changed. Please review the transfer again."
             else:
                 try:
-                    # Transfers are authorised exclusively by the Wallet PIN.
-                    # The Wallet PIN verifier owns the 3-attempt/5-minute lockout state.
-                    def pin_work(cur):
-                        ok, msg = verify_wallet_pin(session["minebank_client_id"],request.form.get("wallet_pin",""))
-                        return ok, msg
-                    ok, msg = pin_work(None)
+                    ok, msg = verify_wallet_pin(client_id, request.form.get("wallet_pin", ""))
                     if not ok:
                         raise ValueError(msg)
                     result = transfer(
-                        sender_account_id=int(preview.get("sender_account_id") or account["id"]),
+                        sender_account_id=int(preview["sender_account_id"]),
                         recipient_account_number=preview["recipient_account_number"],
                         amount=int(preview["amount"]),
                         description=preview.get("description"),
                         reference=preview.get("reference"),
                         causal=preview.get("causal"),
-                        funding_source=preview.get("funding_source","BALANCE"),
-                        actor_client_id=session["minebank_client_id"],
+                        funding_source=preview.get("funding_source", "BALANCE"),
+                        actor_client_id=client_id,
                         ip_address=request.remote_addr,
                     )
-                    session.pop("transfer_preview",None)
-                    flash({"transaction_id":result["transaction_id"],"status":result["status"]},"success")
+                    session.pop("transfer_preview", None)
+                    flash({"transaction_id": result["transaction_id"], "status": result["status"]}, "success")
                     return redirect(url_for("minebank_transactions_page"))
                 except Exception as exc:
                     error = str(exc)
-    return render_template("minebank_portal.html", mode="transfer", account=account, accounts=get_accounts(session["minebank_client_id"]),
+        else:
+            error = "Unknown transfer step. Please restart the transfer."
+    return render_template("minebank_portal.html", mode="transfer", account=account, accounts=get_accounts(client_id),
                            preview=preview, error=error, portal_active="transfer")
 
 @app.route("/portal/transactions")
