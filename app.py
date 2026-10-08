@@ -952,6 +952,7 @@ def minebank_loans_page():
                 raise ValueError("The destination account is not active.")
             if any(int(a["id"])==source_id and a["status"]!="ACTIVE" for a in profile["accounts"]):
                 raise ValueError("The fee source account is not active.")
+            terms=loan_terms(amount,term)
             if approval_mode=="AUTO":
                 auto_account=next(a for a in profile["accounts"] if int(a["id"])==destination_id)
                 auto_check=automatic_credit_eligibility(session["minebank_client_id"],auto_account,"LOAN",amount)
@@ -961,9 +962,11 @@ def minebank_loans_page():
                     raise ValueError("This Loan does not qualify for automatic approval. Choose Bank review.")
             else:
                 approval_mode="BANK_REVIEW"
+            source_account=next(a for a in profile["accounts"] if int(a["id"])==source_id)
+            if int(source_account.get("balance") or 0) < int(terms["request_fee"]):
+                raise ValueError(f"At least {terms['request_fee']} Emerald are required in the fee source account for the Loan request fee.")
             ok,msg=verify_wallet_pin(session["minebank_client_id"],pin)
             if not ok: raise ValueError(msg)
-            terms=loan_terms(amount,term)
             withdraw(source_id,terms["request_fee"],description=f"Loan request fee")
             loan_number="LN-"+secrets.token_hex(8).upper()
             next_due=(datetime.now(timezone.utc).date()+timedelta(days=1))
@@ -1029,6 +1032,61 @@ def minebank_loan_agreement(loan_id):
         ("Repayment schedule",schedule)
     ])
 
+@app.route("/portal/credit/dynamic/activate", methods=["POST"])
+@require_login
+def minebank_dynamic_cashline_activate():
+    try:
+        ensure_transaction_schema()
+        ensure_credicheck_schema()
+        account=selected_account()
+        if not account:
+            raise ValueError("No bank account is available.")
+        profile=get_credicheck_profile(session["minebank_client_id"])
+        if str(account.get("status") or "").upper() not in {"ACTIVE","ENABLED"}:
+            raise ValueError("Dynamic CashLine is only available on an active account.")
+        if int(profile.get("score") or 0)>10 or str(profile.get("credit_status") or "").upper()!="ACTIVE":
+            raise ValueError("Dynamic CashLine is not currently available for your account.")
+        access=execute_query_dict("SELECT status FROM credicheck_product_access WHERE client_id=%s AND product_type='DYNAMIC_CASHLINE'",(session["minebank_client_id"],))
+        if access and str(access[0].get("status") or "").upper() not in {"AVAILABLE","ACTIVE"}:
+            raise ValueError("Dynamic CashLine is currently restricted for your account.")
+        if not ensure_loan_schema():
+            raise ValueError("Loan status could not be verified.")
+        overdue=execute_query("SELECT COUNT(*) FROM minebank_loans WHERE client_id=%s AND status='ACTIVE' AND next_due_date < CURRENT_DATE",(session["minebank_client_id"],))
+        if overdue and int(overdue[0][0] or 0)>0:
+            raise ValueError("Repay your overdue Loan before switching to Dynamic CashLine.")
+        defaulted=execute_query("SELECT COUNT(*) FROM minebank_loans WHERE client_id=%s AND status='DEFAULTED'",(session["minebank_client_id"],))
+        if defaulted and int(defaulted[0][0] or 0)>0:
+            raise ValueError("Dynamic CashLine is unavailable while a Loan is in default.")
+        if execute_query_dict("SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE'",(account["id"],)):
+            raise ValueError("Dynamic CashLine is already active on this account.")
+        if cashline_outstanding_for_app(account["id"])>0:
+            raise ValueError("Repay your outstanding Standard CashLine balance before switching to Dynamic CashLine.")
+        activate_dynamic_cashline(session["minebank_client_id"],account["id"],session["minebank_client_id"])
+        create_notification(session["minebank_client_id"],"DYNAMIC_CASHLINE_ELIGIBLE","Dynamic CashLine activated","Your Dynamic CashLine is now active on this account.",account["id"])
+        flash("Dynamic CashLine activated successfully.","success")
+    except Exception as exc:
+        flash(str(exc),"error")
+    return redirect(url_for("minebank_credit_page",account_id=request.form.get("account_id") or session.get("minebank_account_id")))
+
+@app.route("/portal/credit/dynamic/close", methods=["POST"])
+@require_login
+def minebank_dynamic_cashline_close():
+    try:
+        ensure_transaction_schema()
+        ensure_credicheck_schema()
+        account=selected_account()
+        if not account:
+            raise ValueError("No bank account is available.")
+        if not execute_query_dict("SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE'",(account["id"],)):
+            raise ValueError("Dynamic CashLine is not active on this account.")
+        if cashline_outstanding_for_app(account["id"])>0:
+            raise ValueError("Repay your outstanding Dynamic CashLine balance before closing it.")
+        close_dynamic_cashline(session["minebank_client_id"],account["id"],session["minebank_client_id"])
+        flash("Dynamic CashLine closed.","success")
+    except Exception as exc:
+        flash(str(exc),"error")
+    return redirect(url_for("minebank_credit_page",account_id=request.form.get("account_id") or session.get("minebank_account_id")))
+
 @app.route("/portal/credit", methods=["GET","POST"])
 @require_login
 def minebank_credit_page():
@@ -1042,7 +1100,7 @@ def minebank_credit_page():
     if request.method=="POST":
         action=request.form.get("action","request")
         try:
-            if action=="activate_dynamic":
+            if action in {"activate_dynamic","activate_dynamic_cashline"}:
                 profile=get_credicheck_profile(session["minebank_client_id"])
                 if str(account.get("status") or "").upper() not in {"ACTIVE","ENABLED"}:
                     raise ValueError("Dynamic CashLine is only available on an active account.")
@@ -1065,7 +1123,7 @@ def minebank_credit_page():
                 activate_dynamic_cashline(session["minebank_client_id"],account["id"],session["minebank_client_id"])
                 create_notification(session["minebank_client_id"],"DYNAMIC_CASHLINE_ELIGIBLE","Dynamic CashLine activated","Your Dynamic CashLine is now active on this account.",account["id"])
                 flash("Dynamic CashLine activated successfully.","success")
-            elif action=="close_dynamic":
+            elif action in {"close_dynamic","close_dynamic_cashline"}:
                 if not execute_query_dict("SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE'",(account["id"],)):
                     raise ValueError("Dynamic CashLine is not active on this account.")
                 if cashline_outstanding_for_app(account["id"])>0:
@@ -1104,11 +1162,20 @@ def minebank_credit_page():
                     raise ValueError(f"CashLine request must be between 300 and {maximum} Emerald.")
                 approval_mode=request.form.get("approval_mode","AUTO").upper()
                 if approval_mode not in {"AUTO","BANK_REVIEW"}: approval_mode="AUTO"
-                auto_check=automatic_credit_eligibility(session["minebank_client_id"],account,"CASHLINE",amount)
-                assessment=credicheck_assess(session["minebank_client_id"],account,"CASHLINE",amount)
-                preview["credicheck_assessment"]=assessment["decision"]
-                preview["credicheck_reason"]=assessment["reason"]
-                if approval_mode=="AUTO" and amount<=5000 and auto_check["eligible"]:
+                if approval_mode=="BANK_REVIEW":
+                    initial_fee=20 if amount>5000 else 10
+                    if int(account.get("balance") or 0) < initial_fee:
+                        raise ValueError(f"At least {initial_fee} Emerald must be available for the CashLine monthly fee before requesting Bank review.")
+                    preview["approval_mode"]="BANK_REVIEW"
+                    create_request(session["minebank_client_id"],"CREDIT_LINE",account["id"],preview)
+                    session.pop("cashline_request_preview",None)
+                    flash("CashLine request submitted for Bank review. CrediCheck eligibility was not used for this manual request.","success")
+                else:
+                    auto_check=automatic_credit_eligibility(session["minebank_client_id"],account,"CASHLINE",amount)
+                    assessment=credicheck_assess(session["minebank_client_id"],account,"CASHLINE",amount)
+                    preview["credicheck_assessment"]=assessment["decision"]
+                    preview["credicheck_reason"]=assessment["reason"]
+                    if amount<=5000 and auto_check["eligible"]:
                     execute_query("""INSERT INTO credit_facilities
                         (account_id,credit_limit,interest_monthly_bps,interest_annual_bps,activation_fee_monthly,status)
                         VALUES(%s,%s,CASE WHEN (SELECT account_type FROM bank_accounts WHERE id=%s)='PERSONAL' THEN 1830 ELSE 2370 END,
@@ -1819,6 +1886,12 @@ def admin_minebank_profiles():
 @require_role("ADMIN","OPERATOR")
 def admin_minebank_profile(client_id):
     ensure_credicheck_schema()
+    def safe_rows(sql, params=()):
+        try:
+            return execute_query_dict(sql, params)
+        except Exception as exc:
+            print(f"MineBank profile optional data warning: {type(exc).__name__}: {exc}")
+            return []
     profile_rows=execute_query_dict("""SELECT c.*,
         COUNT(DISTINCT a.id) FILTER (WHERE a.status<>'CLOSED') AS account_count,
         COALESCE(SUM(a.balance) FILTER (WHERE a.status<>'CLOSED'),0) AS total_balance
@@ -1828,50 +1901,50 @@ def admin_minebank_profile(client_id):
         flash("Customer profile not found.","error")
         return redirect(url_for("admin_minebank_profiles"))
     profile=profile_rows[0]
-    accounts=execute_query_dict("""SELECT a.*,t.display_name,t.code AS tier_code,
+    accounts=safe_rows("""SELECT a.*,t.display_name,t.code AS tier_code,
         COALESCE(cf.status,'NONE') AS credit_status,COALESCE(cf.credit_limit,0) AS credit_limit,
         COALESCE(cf.interest_annual_bps,0) AS interest_annual_bps
         FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
         LEFT JOIN credit_facilities cf ON cf.account_id=a.id
         WHERE a.client_id=%s ORDER BY a.id""",(client_id,))
-    credit=execute_query_dict("""SELECT cf.*,a.account_number
+    credit=safe_rows("""SELECT cf.*,a.account_number
         FROM credit_facilities cf JOIN bank_accounts a ON a.id=cf.account_id
         WHERE a.client_id=%s ORDER BY cf.id DESC""",(client_id,))
-    transactions=execute_query_dict("""SELECT l.*,s.account_number sender_number,r.account_number recipient_number
+    transactions=safe_rows("""SELECT l.*,s.account_number sender_number,r.account_number recipient_number
         FROM ledger_transactions l
         LEFT JOIN bank_accounts s ON s.id=l.sender_account_id
         LEFT JOIN bank_accounts r ON r.id=l.recipient_account_id
         WHERE s.client_id=%s OR r.client_id=%s ORDER BY l.created_at DESC LIMIT 250""",(client_id,client_id))
-    statements=execute_query_dict("""SELECT cs.*,a.account_number
+    statements=safe_rows("""SELECT cs.*,a.account_number
         FROM credit_statements cs JOIN bank_accounts a ON a.id=cs.account_id
         WHERE a.client_id=%s ORDER BY cs.period_end DESC LIMIT 100""",(client_id,))
-    requests=execute_query_dict("""SELECT r.*,a.account_number,rv.email reviewer_email
+    requests=safe_rows("""SELECT r.*,a.account_number,rv.email reviewer_email
         FROM bank_requests_v2 r LEFT JOIN bank_accounts a ON a.id=r.account_id
         LEFT JOIN bank_clients rv ON rv.id=r.reviewed_by
         WHERE r.client_id=%s ORDER BY r.created_at DESC LIMIT 150""",(client_id,))
-    security=execute_query_dict("""SELECT * FROM minebank_security_events WHERE client_id=%s
+    security=safe_rows("""SELECT * FROM minebank_security_events WHERE client_id=%s
         ORDER BY created_at DESC LIMIT 150""",(client_id,))
-    risk=execute_query_dict("""SELECT r.*,a.account_number FROM minebank_risk_events r
+    risk=safe_rows("""SELECT r.*,a.account_number FROM minebank_risk_events r
         LEFT JOIN bank_accounts a ON a.id=r.account_id WHERE r.client_id=%s
         ORDER BY r.created_at DESC LIMIT 150""",(client_id,))
-    notifications=execute_query_dict("""SELECT n.*,a.account_number FROM bank_notifications n
+    notifications=safe_rows("""SELECT n.*,a.account_number FROM bank_notifications n
         LEFT JOIN bank_accounts a ON a.id=n.account_id WHERE n.client_id=%s
         ORDER BY n.created_at DESC LIMIT 150""",(client_id,))
-    audits=execute_query_dict("""SELECT ae.*,c.email actor_email FROM audit_events ae
+    audits=safe_rows("""SELECT ae.*,c.email actor_email FROM audit_events ae
         LEFT JOIN bank_clients c ON c.id=ae.actor_client_id
         WHERE ae.target_id=%s OR ae.actor_client_id=%s ORDER BY ae.created_at DESC LIMIT 200""",(client_id,client_id))
-    business=execute_query_dict("""SELECT bm.*,a.account_number,bp.trading_name,bp.legal_name
+    business=safe_rows("""SELECT bm.*,a.account_number,bp.trading_name,bp.legal_name
         FROM minebank_business_members bm
         LEFT JOIN bank_accounts a ON a.id=bm.account_id
         LEFT JOIN minebank_business_profiles bp ON bp.account_id=bm.account_id
         WHERE bm.client_id=%s ORDER BY bm.created_at DESC""",(client_id,))
     cc=get_credicheck_profile(client_id)
     cc_events=__import__("bank_lib.credicheck",fromlist=["list_events"]).list_events(client_id,150)
-    cc_decisions=execute_query_dict("SELECT * FROM credicheck_decisions WHERE client_id=%s ORDER BY created_at DESC LIMIT 100",(client_id,))
-    cc_overrides=execute_query_dict("""SELECT o.*,a.email admin_email FROM credicheck_overrides o
+    cc_decisions=safe_rows("SELECT * FROM credicheck_decisions WHERE client_id=%s ORDER BY created_at DESC LIMIT 100",(client_id,))
+    cc_overrides=safe_rows("""SELECT o.*,a.email admin_email FROM credicheck_overrides o
         LEFT JOIN bank_clients a ON a.id=o.admin_id WHERE o.client_id=%s ORDER BY o.created_at DESC LIMIT 100""",(client_id,))
-    product_access=execute_query_dict("SELECT * FROM credicheck_product_access WHERE client_id=%s ORDER BY product_type",(client_id,))
-    dynamic=execute_query_dict("""SELECT d.*,a.account_number FROM dynamic_cashlines d
+    product_access=safe_rows("SELECT * FROM credicheck_product_access WHERE client_id=%s ORDER BY product_type",(client_id,))
+    dynamic=safe_rows("""SELECT d.*,a.account_number FROM dynamic_cashlines d
         JOIN bank_accounts a ON a.id=d.account_id WHERE d.client_id=%s ORDER BY d.id DESC""",(client_id,))
     return render_template("minebank_admin_new.html",mode="profile",profile=profile,accounts=accounts,credit=credit,
         transactions=transactions,statements=statements,requests=requests,security=security,risk=risk,
