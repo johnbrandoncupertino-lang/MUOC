@@ -688,7 +688,8 @@ def minebank_transfer_page():
                 preview["causal"] = (request.form.get("causal") or "").strip()[:500]
                 session["transfer_preview"] = preview
             except Exception as exc:
-                error = str(exc)
+                print(f"MineBank transfer preview failed: {type(exc).__name__}: {exc}")
+                error = str(exc).strip() or "The transfer could not be reviewed. Check the details and try again."
         elif stage == "confirm":
             preview = session.get("transfer_preview")
             if not preview:
@@ -717,7 +718,8 @@ def minebank_transfer_page():
                     flash((f"Transfer {result['transaction_id']} completed successfully." if result["status"] == "COMPLETED" else f"Transfer {result['transaction_id']} was submitted and is awaiting approval."), "success")
                     return redirect(url_for("minebank_transactions_page"))
                 except Exception as exc:
-                    error = str(exc)
+                    print(f"MineBank transfer authorisation failed: {type(exc).__name__}: {exc}")
+                    error = str(exc).strip() or "The transfer could not be completed. Check the details and try again."
         else:
             error = "Unknown transfer step. Please restart the transfer."
     return render_template("minebank_portal.html", mode="transfer", account=account, accounts=get_accounts(client_id),
