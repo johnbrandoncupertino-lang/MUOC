@@ -157,7 +157,7 @@ def _cashline_repayment_suggestion(cur, account_id, incoming_amount):
                  f"You have {outstanding} Emerald outstanding on CashLine and just received {int(incoming_amount)} Emerald. You have enough available funds to repay the CashLine balance if you wish. No automatic repayment has been made."))
 
 
-def _dynamic_cashline_capacity(cur, account_id):
+def _dynamic_cashline_capacity(cur, account_id, requested_amount=0):
     """Return the current transaction-by-transaction Dynamic CashLine capacity."""
     cur.execute("""SELECT d.client_id,a.tier_id,t.code
                    FROM dynamic_cashlines d
@@ -168,6 +168,8 @@ def _dynamic_cashline_capacity(cur, account_id):
     if not row:
         return None
     client_id, tier_id, tier_code = row
+    if int(requested_amount or 0) < 300:
+        raise ValueError("Dynamic CashLine payments must be at least 300 Emerald.")
     cur.execute("SELECT score,credit_status FROM credicheck_profiles WHERE client_id=%s",(client_id,))
     profile=cur.fetchone()
     if not profile or int(profile[0] or 0)>10 or str(profile[1] or '').upper()!="ACTIVE":
@@ -261,7 +263,7 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
                 if int(sender[5]) < total: raise ValueError("Insufficient MineBank Balance.")
                 available_after=int(sender[5])-total
             else:
-                dynamic_capacity=_dynamic_cashline_capacity(cur,sender[0])
+                dynamic_capacity=_dynamic_cashline_capacity(cur,sender[0],amount)
                 if dynamic_capacity is not None:
                     if total>dynamic_capacity:
                         raise ValueError(f"Dynamic CashLine assessment declined this payment. Current assessed capacity: {dynamic_capacity} Emerald.")
