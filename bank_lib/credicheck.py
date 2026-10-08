@@ -74,6 +74,7 @@ def ensure_credicheck_schema():
             monthly_fee INTEGER NOT NULL DEFAULT 20,
             interest_annual_bps INTEGER NOT NULL DEFAULT 1830,
             activated_at TIMESTAMPTZ,
+            last_interest_at TIMESTAMPTZ,
             closed_at TIMESTAMPTZ,
             activated_by BIGINT REFERENCES bank_clients(id),
             closed_by BIGINT REFERENCES bank_clients(id),
@@ -295,6 +296,7 @@ def activate_dynamic_cashline(client_id, account_id, admin_id):
                   (client_id,account_id,account_id,admin_id,admin_id),commit=True)
     if existing:
         execute_query("UPDATE credit_facilities SET status='CLOSED' WHERE account_id=%s AND status='ACTIVE'",(account_id,),commit=True)
+    execute_query("ALTER TABLE dynamic_cashlines ADD COLUMN IF NOT EXISTS last_interest_at TIMESTAMPTZ",fetch=False,commit=True)
     set_product_access(client_id,admin_id,'DYNAMIC_CASHLINE','ACTIVE','Activated by MineBank administration.')
     
 def close_dynamic_cashline(client_id, account_id, admin_id):
