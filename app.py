@@ -1149,7 +1149,11 @@ def minebank_credit_page():
     if not account:
         flash("No bank account exists for this client yet.","error")
         return redirect(url_for("minebank_account_page"))
-    facility=execute_query_dict("SELECT * FROM credit_facilities WHERE account_id=%s",(account["id"],))
+    try:
+        facility=execute_query_dict("SELECT * FROM credit_facilities WHERE account_id=%s",(account["id"],))
+    except Exception as exc:
+        print(f"MineBank CashLine facility query warning: {type(exc).__name__}: {exc}")
+        facility=[]
     if request.method=="POST":
         action=request.form.get("action","request")
         try:
@@ -1257,17 +1261,33 @@ def minebank_credit_page():
             return redirect(url_for("minebank_credit_page"))
         except Exception as exc:
             flash(str(exc),"error")
-    statements=execute_query_dict("""SELECT * FROM credit_statements WHERE account_id=%s ORDER BY period_end DESC LIMIT 12""",(account["id"],))
-    outstanding=cashline_outstanding_for_app(account["id"])
-    cashline_transactions=execute_query_dict("""SELECT l.transaction_id,l.transaction_type,l.amount,l.fee,l.status,l.description,l.created_at,
-                                                       l.transfer_kind,s.account_number sender_number,r.account_number recipient_number
-                                                FROM ledger_transactions l
-                                                LEFT JOIN bank_accounts s ON s.id=l.sender_account_id
-                                                LEFT JOIN bank_accounts r ON r.id=l.recipient_account_id
-                                                WHERE (l.sender_account_id=%s AND l.transfer_kind='CASHLINE')
-                                                   OR (l.recipient_account_id=%s AND l.transaction_type IN ('CREDIT_INTEREST','CREDIT_FEE','CREDIT_REPAYMENT'))
-                                                ORDER BY l.created_at DESC LIMIT 100""",(account["id"],account["id"]))
-    dynamic_cashline=execute_query_dict("SELECT * FROM dynamic_cashlines WHERE account_id=%s",(account["id"],))
+    try:
+        statements=execute_query_dict("""SELECT * FROM credit_statements WHERE account_id=%s ORDER BY period_end DESC LIMIT 12""",(account["id"],))
+    except Exception as exc:
+        print(f"MineBank CashLine statements warning: {type(exc).__name__}: {exc}")
+        statements=[]
+    try:
+        outstanding=cashline_outstanding_for_app(account["id"])
+    except Exception as exc:
+        print(f"MineBank CashLine balance warning: {type(exc).__name__}: {exc}")
+        outstanding=0
+    try:
+        cashline_transactions=execute_query_dict("""SELECT l.transaction_id,l.transaction_type,l.amount,l.fee,l.status,l.description,l.created_at,
+                                                           l.transfer_kind,s.account_number sender_number,r.account_number recipient_number
+                                                    FROM ledger_transactions l
+                                                    LEFT JOIN bank_accounts s ON s.id=l.sender_account_id
+                                                    LEFT JOIN bank_accounts r ON r.id=l.recipient_account_id
+                                                    WHERE (l.sender_account_id=%s AND l.transfer_kind='CASHLINE')
+                                                       OR (l.recipient_account_id=%s AND l.transaction_type IN ('CREDIT_INTEREST','CREDIT_FEE','CREDIT_REPAYMENT'))
+                                                    ORDER BY l.created_at DESC LIMIT 100""",(account["id"],account["id"]))
+    except Exception as exc:
+        print(f"MineBank CashLine transaction history warning: {type(exc).__name__}: {exc}")
+        cashline_transactions=[]
+    try:
+        dynamic_cashline=execute_query_dict("SELECT * FROM dynamic_cashlines WHERE account_id=%s",(account["id"],))
+    except Exception as exc:
+        print(f"MineBank Dynamic CashLine warning: {type(exc).__name__}: {exc}")
+        dynamic_cashline=[]
     dynamic_cashline=dynamic_cashline[0] if dynamic_cashline else None
     return render_template("minebank_portal.html",mode="credit",account=account,
                            facility=facility[0] if facility else None,statements=statements,
@@ -1911,6 +1931,10 @@ def admin_minebank_messages():
 @app.route("/admin/minebank/profiles")
 @require_role("ADMIN","OPERATOR")
 def admin_minebank_profiles():
+    # Profiles must remain usable even if an older production database is
+    # missing an optional CashLine/CrediCheck table or column.
+    ensure_minebank_schema()
+    ensure_transaction_schema()
     ensure_credicheck_schema()
     q=request.args.get("q","").strip()
     params=[]
@@ -1922,16 +1946,29 @@ def admin_minebank_profiles():
                   OR EXISTS (SELECT 1 FROM bank_accounts ax WHERE ax.client_id=c.id AND ax.account_number ILIKE %s)"""
         like=f"%{q}%"
         params=[like,like,like,like]
-    profiles=execute_query_dict(f"""SELECT c.id,c.email,c.first_name,c.last_name,c.status,c.role,c.last_login,
-        COUNT(DISTINCT a.id) FILTER (WHERE a.status<>'CLOSED') AS account_count,
-        COALESCE(SUM(a.balance) FILTER (WHERE a.status<>'CLOSED'),0) AS total_balance,
-        COUNT(DISTINCT cf.id) FILTER (WHERE cf.status IN ('ACTIVE','SUSPENDED')) AS credit_facilities,
-        COALESCE(SUM(cf.credit_limit) FILTER (WHERE cf.status IN ('ACTIVE','SUSPENDED')),0) AS credit_limit
-        FROM bank_clients c
-        LEFT JOIN bank_accounts a ON a.client_id=c.id
-        LEFT JOIN credit_facilities cf ON cf.account_id=a.id
-        {where}
-        GROUP BY c.id ORDER BY c.id DESC LIMIT 250""",tuple(params))
+    try:
+        # Correlated aggregates avoid the old multi-join/GROUP BY failure mode
+        # and prevent account/CashLine rows from multiplying each other.
+        profiles=execute_query_dict(f"""SELECT c.id,c.email,c.first_name,c.last_name,c.status,c.role,c.last_login,
+            (SELECT COUNT(*) FROM bank_accounts a WHERE a.client_id=c.id AND a.status<>'CLOSED') AS account_count,
+            COALESCE((SELECT SUM(a.balance) FROM bank_accounts a WHERE a.client_id=c.id AND a.status<>'CLOSED'),0) AS total_balance,
+            (SELECT COUNT(*) FROM credit_facilities cf JOIN bank_accounts ca ON ca.id=cf.account_id
+             WHERE ca.client_id=c.id AND cf.status IN ('ACTIVE','SUSPENDED')) AS credit_facilities,
+            COALESCE((SELECT SUM(cf.credit_limit) FROM credit_facilities cf JOIN bank_accounts ca ON ca.id=cf.account_id
+             WHERE ca.client_id=c.id AND cf.status IN ('ACTIVE','SUSPENDED')),0) AS credit_limit
+            FROM bank_clients c
+            {where}
+            ORDER BY c.id DESC LIMIT 250""",tuple(params))
+    except Exception as exc:
+        # Fall back to the customer/account view if a legacy CashLine table is
+        # unavailable. Profiles themselves must never become inaccessible.
+        print(f"MineBank profiles CashLine data warning: {type(exc).__name__}: {exc}")
+        profiles=execute_query_dict(f"""SELECT c.id,c.email,c.first_name,c.last_name,c.status,c.role,c.last_login,
+            (SELECT COUNT(*) FROM bank_accounts a WHERE a.client_id=c.id AND a.status<>'CLOSED') AS account_count,
+            COALESCE((SELECT SUM(a.balance) FROM bank_accounts a WHERE a.client_id=c.id AND a.status<>'CLOSED'),0) AS total_balance,
+            0 AS credit_facilities,0 AS credit_limit
+            FROM bank_clients c {where}
+            ORDER BY c.id DESC LIMIT 250""",tuple(params))
     return render_template("minebank_admin_new.html",mode="profiles",profiles=profiles)
 
 @app.route("/admin/minebank/profile/<int:client_id>")
