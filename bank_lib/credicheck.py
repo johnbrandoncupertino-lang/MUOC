@@ -6,7 +6,7 @@ MineBank administration; this module supplies the scoring, capacity snapshots,
 product-state rules and history used by the portal.
 """
 from datetime import datetime, timezone
-from .database import execute_query, execute_query_dict
+from .database import execute_query, execute_query_dict, ensure_transaction_schema
 
 _READY = False
 MIN_SCORE = 0
@@ -16,6 +16,9 @@ def ensure_credicheck_schema():
     if _READY:
         return True
     try:
+        # CrediCheck operates on ledger/CashLine fields that were added over
+        # time. Bring those lightweight transaction extensions up first.
+        ensure_transaction_schema()
         execute_query("""CREATE TABLE IF NOT EXISTS credicheck_profiles (
             id BIGSERIAL PRIMARY KEY,
             client_id BIGINT UNIQUE NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
