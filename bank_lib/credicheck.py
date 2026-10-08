@@ -80,6 +80,7 @@ def ensure_credicheck_schema():
             closed_by BIGINT REFERENCES bank_clients(id),
             UNIQUE(account_id)
         )""", fetch=False, commit=True)
+        execute_query("ALTER TABLE dynamic_cashlines ADD COLUMN IF NOT EXISTS last_interest_at TIMESTAMPTZ", fetch=False, commit=True)
         execute_query("""CREATE TABLE IF NOT EXISTS credicheck_product_access (
             id BIGSERIAL PRIMARY KEY,
             client_id BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
