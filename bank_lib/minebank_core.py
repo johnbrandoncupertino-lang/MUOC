@@ -728,27 +728,40 @@ def auto_pay_due_loans():
         return results
     finally: release_db_connection(conn)
 
-def repay_loan_full(loan_id, source_account_id, actor_client_id):
-    """Manually repay the entire remaining loan balance."""
+def repay_loan_fraction(loan_id, source_account_id, actor_client_id, numerator=1, denominator=4):
+    """Repay a selected fraction of the remaining Loan from MineBank Balance only."""
+    numerator=int(numerator); denominator=int(denominator)
+    if denominator != 4 or numerator not in (1,2,3,4):
+        raise ValueError("Choose 1/4, 1/2, 3/4, or the full remaining balance.")
     conn=get_db_connection()
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT id,client_id,installment_amount,installments_paid,term_days,total_cost,status,loan_number FROM minebank_loans WHERE id=%s FOR UPDATE""",(loan_id,))
+                cur.execute("""SELECT id,client_id,installment_amount,installments_paid,term_days,total_cost,status,loan_number,principal FROM minebank_loans WHERE id=%s FOR UPDATE""",(loan_id,))
                 loan=cur.fetchone()
                 if not loan or loan[6]!="ACTIVE": raise ValueError("Loan is not active.")
                 if int(loan[1])!=int(actor_client_id): raise ValueError("Loan does not belong to this client.")
                 remaining=max(0,int(loan[5])-int(loan[2])*int(loan[3]))
                 if remaining<=0: raise ValueError("This Loan has already been fully repaid.")
+                amount=remaining if numerator==4 else max(1,remaining*numerator//denominator)
                 source=_lock_account(cur,source_account_id)
                 if not source or int(source[1])!=int(actor_client_id): raise ValueError("Repayment account does not belong to you.")
                 if source[6]!="ACTIVE": raise ValueError("Repayment account is not active.")
-                if int(source[5])<remaining: raise ValueError(f"Insufficient balance for full repayment. Required: {remaining} Emerald.")
+                if int(source[5])<amount: raise ValueError(f"Insufficient MineBank Balance. Required: {amount} Emerald. CashLine cannot be used.")
                 txid=next_transaction_id(cur)
-                cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(remaining,source[0]))
-                create_ledger_transaction(cur,transaction_id=txid,transaction_type="LOAN_REPAYMENT",amount=remaining,sender_account_id=source[0],description=f"Full loan repayment {loan[7]}",reference_id=loan[7])
-                cur.execute("UPDATE minebank_loans SET installments_paid=term_days,status='COMPLETED',next_due_date=NULL,completed_at=CURRENT_TIMESTAMP WHERE id=%s",(loan_id,))
-                return {"transaction_id":txid,"amount":remaining,"status":"COMPLETED"}
+                cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(amount,source[0]))
+                create_ledger_transaction(cur,transaction_id=txid,transaction_type="LOAN_REPAYMENT",amount=amount,sender_account_id=source[0],description=f"Loan repayment {loan[7]} ({numerator}/4)",reference_id=loan[7])
+                if numerator==4 or amount>=remaining:
+                    cur.execute("UPDATE minebank_loans SET installments_paid=term_days,status='COMPLETED',total_cost=0,principal=0,next_due_date=NULL,completed_at=CURRENT_TIMESTAMP WHERE id=%s",(loan_id,))
+                    status="COMPLETED"
+                else:
+                    new_total=max(0,int(loan[5])-amount)
+                    new_principal=max(0,int(loan[8] or 0)-amount)
+                    remaining_days=max(1,int(loan[4])-int(loan[3]))
+                    new_installment=max(1,(new_total+remaining_days-1)//remaining_days)
+                    cur.execute("UPDATE minebank_loans SET total_cost=%s,principal=%s,installment_amount=%s WHERE id=%s",(new_total,new_principal,new_installment,loan_id))
+                    status="ACTIVE"
+                return {"transaction_id":txid,"amount":amount,"status":status,"remaining":max(0,remaining-amount)}
     finally: release_db_connection(conn)
 
 def repay_loan_installment(loan_id, source_account_id, actor_client_id):
