@@ -123,10 +123,22 @@ def current_client():
     cid = session.get("minebank_client_id")
     if not cid:
         return None
-    rows = execute_query_dict(
-        "SELECT id,email,role,status,date_of_birth,first_name,last_name,phone,address,city,postal_code,country,occupation,password_hash,password_changed_at,last_login,"
-        "wallet_pin_hash,wallet_pin_failed_attempts,wallet_pin_locked_until,admin_reauth_at FROM bank_clients WHERE id=%s", (cid,)
-    )
+    try:
+        rows = execute_query_dict(
+            "SELECT id,email,role,status,date_of_birth,first_name,last_name,phone,address,city,postal_code,country,occupation,password_hash,password_changed_at,last_login,"
+            "wallet_pin_hash,wallet_pin_failed_attempts,wallet_pin_locked_until,admin_reauth_at FROM bank_clients WHERE id=%s", (cid,)
+        )
+    except Exception as exc:
+        print(f"MineBank client compatibility query warning: {type(exc).__name__}: {exc}")
+        rows = execute_query_dict(
+            "SELECT id,email,role,status,date_of_birth,first_name,last_name,phone,address,city,postal_code,country,occupation,password_hash,last_login,"
+            "wallet_pin_hash FROM bank_clients WHERE id=%s", (cid,)
+        )
+        if rows:
+            rows[0]["password_changed_at"] = None
+            rows[0]["wallet_pin_failed_attempts"] = 0
+            rows[0]["wallet_pin_locked_until"] = None
+            rows[0]["admin_reauth_at"] = None
     client = rows[0] if rows else None
     __import__("flask").g._minebank_client = client
     return client
