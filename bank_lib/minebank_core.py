@@ -642,6 +642,62 @@ def disburse_loan(loan_id, approved_by=None):
     finally:
         release_db_connection(conn)
 
+def auto_pay_due_loans():
+    """Collect due daily loan installments automatically when the repayment account has enough balance."""
+    conn=get_db_connection(); results=[]
+    if conn is None: return results
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT id FROM minebank_loans WHERE status='ACTIVE' AND installments_paid < term_days AND next_due_date IS NOT NULL AND next_due_date <= CURRENT_DATE ORDER BY next_due_date,id FOR UPDATE SKIP LOCKED""")
+                for row in cur.fetchall():
+                    loan_id=row[0]
+                    cur.execute("""SELECT id,client_id,destination_account_id,installment_amount,installments_paid,term_days,total_cost,loan_number,next_due_date FROM minebank_loans WHERE id=%s FOR UPDATE""",(loan_id,))
+                    loan=cur.fetchone()
+                    if not loan: continue
+                    source=_lock_account(cur,loan[2])
+                    if not source or source[6]!="ACTIVE": continue
+                    paid=int(loan[4]); term=int(loan[5]); total_cost=int(loan[6]); due_date=loan[8]
+                    while paid < term and due_date and due_date <= _now().date():
+                        remaining=max(0,total_cost-paid*int(loan[3]))
+                        installment=min(int(loan[3]),remaining) if paid+1 < term else remaining
+                        if installment <= 0 or int(source[5]) < installment: break
+                        txid=next_transaction_id(cur)
+                        cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(installment,source[0]))
+                        create_ledger_transaction(cur,transaction_id=txid,transaction_type="LOAN_REPAYMENT",amount=installment,sender_account_id=source[0],description=f"Automatic loan repayment {loan[7]}",reference_id=loan[7])
+                        paid += 1
+                        if paid >= term:
+                            cur.execute("UPDATE minebank_loans SET installments_paid=%s,status='COMPLETED',next_due_date=NULL,completed_at=CURRENT_TIMESTAMP WHERE id=%s",(paid,loan_id))
+                            results.append({"loan_number":loan[7],"amount":installment,"status":"COMPLETED"}); break
+                        cur.execute("UPDATE minebank_loans SET installments_paid=%s,next_due_date=next_due_date+1 WHERE id=%s RETURNING next_due_date",(paid,loan_id))
+                        due_date=cur.fetchone()[0]
+                        results.append({"loan_number":loan[7],"amount":installment,"status":"ACTIVE"})
+        return results
+    finally: release_db_connection(conn)
+
+def repay_loan_full(loan_id, source_account_id, actor_client_id):
+    """Manually repay the entire remaining loan balance."""
+    conn=get_db_connection()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT id,client_id,installment_amount,installments_paid,term_days,total_cost,status,loan_number FROM minebank_loans WHERE id=%s FOR UPDATE""",(loan_id,))
+                loan=cur.fetchone()
+                if not loan or loan[6]!="ACTIVE": raise ValueError("Loan is not active.")
+                if int(loan[1])!=int(actor_client_id): raise ValueError("Loan does not belong to this client.")
+                remaining=max(0,int(loan[5])-int(loan[2])*int(loan[3]))
+                if remaining<=0: raise ValueError("This Loan has already been fully repaid.")
+                source=_lock_account(cur,source_account_id)
+                if not source or int(source[1])!=int(actor_client_id): raise ValueError("Repayment account does not belong to you.")
+                if source[6]!="ACTIVE": raise ValueError("Repayment account is not active.")
+                if int(source[5])<remaining: raise ValueError(f"Insufficient balance for full repayment. Required: {remaining} Emerald.")
+                txid=next_transaction_id(cur)
+                cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(remaining,source[0]))
+                create_ledger_transaction(cur,transaction_id=txid,transaction_type="LOAN_REPAYMENT",amount=remaining,sender_account_id=source[0],description=f"Full loan repayment {loan[7]}",reference_id=loan[7])
+                cur.execute("UPDATE minebank_loans SET installments_paid=term_days,status='COMPLETED',next_due_date=NULL,completed_at=CURRENT_TIMESTAMP WHERE id=%s",(loan_id,))
+                return {"transaction_id":txid,"amount":remaining,"status":"COMPLETED"}
+    finally: release_db_connection(conn)
+
 def repay_loan_installment(loan_id, source_account_id, actor_client_id):
     """Atomically collect one daily loan installment from another owned account."""
     conn=get_db_connection()
