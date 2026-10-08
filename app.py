@@ -1044,8 +1044,19 @@ def minebank_credit_page():
         try:
             if action=="activate_dynamic":
                 profile=get_credicheck_profile(session["minebank_client_id"])
+                if str(account.get("status") or "").upper() not in {"ACTIVE","ENABLED"}:
+                    raise ValueError("Dynamic CashLine is only available on an active account.")
                 if int(profile.get("score") or 0)>10 or str(profile.get("credit_status") or "").upper()!="ACTIVE":
                     raise ValueError("Dynamic CashLine is not currently available for your account.")
+                access=execute_query_dict("SELECT status FROM credicheck_product_access WHERE client_id=%s AND product_type='DYNAMIC_CASHLINE'",(session["minebank_client_id"],))
+                if access and str(access[0].get("status") or "").upper() not in {"AVAILABLE","ACTIVE"}:
+                    raise ValueError("Dynamic CashLine is currently restricted for your account.")
+                overdue=execute_query("SELECT COUNT(*) FROM minebank_loans WHERE client_id=%s AND status='ACTIVE' AND next_due_date < CURRENT_DATE",(session["minebank_client_id"],))
+                if overdue and int(overdue[0][0] or 0)>0:
+                    raise ValueError("Repay your overdue Loan before switching to Dynamic CashLine.")
+                defaulted=execute_query("SELECT COUNT(*) FROM minebank_loans WHERE client_id=%s AND status='DEFAULTED'",(session["minebank_client_id"],))
+                if defaulted and int(defaulted[0][0] or 0)>0:
+                    raise ValueError("Dynamic CashLine is unavailable while a Loan is in default.")
                 if execute_query_dict("SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE'",(account["id"],)):
                     raise ValueError("Dynamic CashLine is already active on this account.")
                 active_facility=execute_query_dict("SELECT id FROM credit_facilities WHERE account_id=%s AND status='ACTIVE'",(account["id"],))
