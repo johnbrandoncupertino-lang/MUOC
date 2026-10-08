@@ -125,13 +125,13 @@ def current_client():
         return None
     try:
         rows = execute_query_dict(
-            "SELECT id,email,role,status,date_of_birth,first_name,last_name,phone,address,city,postal_code,country,occupation,password_hash,password_changed_at,last_login,"
+            "SELECT id,email,role,status,date_of_birth,first_name,last_name,phone,address,city,postal_code,country,occupation,discord_username,state,main_language,password_hash,password_changed_at,last_login,"
             "wallet_pin_hash,wallet_pin_failed_attempts,wallet_pin_locked_until,admin_reauth_at FROM bank_clients WHERE id=%s", (cid,)
         )
     except Exception as exc:
         print(f"MineBank client compatibility query warning: {type(exc).__name__}: {exc}")
         rows = execute_query_dict(
-            "SELECT id,email,role,status,date_of_birth,first_name,last_name,phone,address,city,postal_code,country,occupation,password_hash,last_login,"
+            "SELECT id,email,role,status,date_of_birth,first_name,last_name,phone,address,city,postal_code,country,occupation,discord_username,state,main_language,password_hash,last_login,"
             "wallet_pin_hash FROM bank_clients WHERE id=%s", (cid,)
         )
         if rows:
@@ -804,7 +804,7 @@ def _pdf_response(title, rows, filename, sections=None, customer=None, account=N
         story.append(t); story.append(Spacer(1,7))
     customer=customer or {}; account=account or {}
     story=[Paragraph(title,heading),Paragraph("The New Bank · Official customer document",small),Spacer(1,8)]
-    identity=[("Customer name",customer.get("full_name") or customer.get("name")),("Customer email",customer.get("email")),("Customer ID",customer.get("id") or customer.get("client_id")),("Account number",account.get("account_number")),("Account type",account.get("account_type")),("Account tier",account.get("tier_name") or account.get("tier_code")),("Account status",account.get("status")),("Document reference",document_reference or filename.replace(".pdf",""))]
+    identity=[("Customer name",customer.get("full_name") or customer.get("name")),("Customer email",customer.get("email")),("Date of birth",customer.get("date_of_birth")),("Occupation",customer.get("occupation")),("Discord username",customer.get("discord_username")),("State",customer.get("state")),("Main language",customer.get("main_language")),("Customer ID",customer.get("id") or customer.get("client_id")),("Account number",account.get("account_number")),("Account type",account.get("account_type")),("Account tier",account.get("tier_name") or account.get("tier_code")),("Account status",account.get("status")),("Document reference",document_reference or filename.replace(".pdf",""))]
     story.append(Paragraph("Customer & Account",section)); table([[p(k,label),p(v)] for k,v in identity],[45*mm,125*mm])
     if sections:
         for h,rs in sections:
@@ -837,7 +837,7 @@ def minebank_transaction_receipt(transaction_id):
                             (transaction_id,session["minebank_client_id"],session["minebank_client_id"]))
     if not rows: return "Transaction not found",404
     tx=rows[0]
-    customer_rows=execute_query_dict("SELECT id,email,TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) AS full_name FROM bank_clients WHERE id=%s",(session["minebank_client_id"],))
+    customer_rows=execute_query_dict("SELECT id,email,date_of_birth,occupation,discord_username,state,main_language,TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) AS full_name FROM bank_clients WHERE id=%s",(session["minebank_client_id"],))
     preferred_account=tx["sender_account_id"] or tx["recipient_account_id"]
     account_rows=execute_query_dict("SELECT a.*,t.display_name AS tier_name FROM bank_accounts a LEFT JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE a.id=%s AND a.client_id=%s",(preferred_account,session["minebank_client_id"]))
     customer=customer_rows[0] if customer_rows else {}
@@ -928,8 +928,10 @@ def minebank_statements_print():
         direction="Incoming" if tx["recipient_account_id"]==account["id"] else "Outgoing"
         detail.append((f'{tx["created_at"]} · {tx["transaction_id"]}',
                        f'{direction} · {tx["transaction_type"]} · {tx["status"]} · {tx["amount"]} Emerald · Fee {tx["fee"]} · {tx["description"] or tx["causal"] or "No description"}'))
+    customer_rows=execute_query_dict("SELECT id,email,date_of_birth,occupation,discord_username,state,main_language,TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) AS full_name FROM bank_clients WHERE id=%s",(session["minebank_client_id"],))
+    customer=customer_rows[0] if customer_rows else {}
     return _pdf_response("Account Statement",rows,f"minebank-statement-{account['account_number']}.pdf",
-                         sections=[("Statement overview",rows),("Transaction register",detail)])
+                         sections=[("Statement overview",rows),("Transaction register",detail)],customer=customer,account=account,document_reference=f"MB-STMT-{account['account_number']}")
 
 @app.route("/portal/statements/csv")
 @require_login
@@ -1123,7 +1125,7 @@ def minebank_loan_agreement(loan_id):
     if not ensure_loan_schema(): return "MineBank Loans are temporarily unavailable.",503
     rows=execute_query_dict("""SELECT l.*,a.account_number destination_number,t.display_name,
                                       c.email,c.first_name,c.last_name,c.phone,c.address,c.city,c.postal_code,
-                                      c.country,c.date_of_birth,c.occupation
+                                      c.country,c.date_of_birth,c.occupation,c.discord_username,c.state,c.main_language
                                FROM minebank_loans l
                                JOIN bank_accounts a ON a.id=l.destination_account_id
                                JOIN account_tiers_v2 t ON t.id=a.tier_id
@@ -1138,10 +1140,11 @@ def minebank_loan_agreement(loan_id):
     customer_details=[
         ("Full name",customer_name),
         ("Email",loan.get("email") or "—"),
-        ("Phone",loan.get("phone") or "—"),
         ("Date of birth",str(customer_dob) if customer_dob else "—"),
-        ("Address",customer_address or "—"),
         ("Occupation",loan.get("occupation") or "—"),
+        ("Discord username",loan.get("discord_username") or "—"),
+        ("State",loan.get("state") or "—"),
+        ("Main language",loan.get("main_language") or "—"),
         ("Destination account",loan["destination_number"]),
         ("Account plan",loan["display_name"]),
     ]
@@ -1556,6 +1559,7 @@ def pay_payment_request(request_id):
         result=transfer(sender_account_id=payer[0]["id"],recipient_account_number=row[0]["requester_account_number"],
                         amount=int(row[0]["amount"]),description=row[0]["description"],actor_client_id=session["minebank_client_id"],
                         ip_address=request.remote_addr,transfer_kind="PAYMENT_REQUEST",
+                        funding_source=(request.form.get("funding_source") or "BALANCE").upper(),
                         idempotency_key=f"PAYREQ-{request_id}")
         if result["status"]=="COMPLETED":
             execute_query("UPDATE minebank_payment_requests SET status='PAID',paid_transaction_id=%s WHERE id=%s AND status='PENDING'",
@@ -1572,17 +1576,16 @@ def pay_payment_request(request_id):
 def minebank_profile_page():
     if request.method=="POST":
         execute_query("""UPDATE bank_clients
-                         SET date_of_birth=%s,first_name=%s,last_name=%s,phone=%s,address=%s,city=%s,postal_code=%s,country=%s,occupation=%s,updated_at=CURRENT_TIMESTAMP
+                         SET date_of_birth=%s,first_name=%s,last_name=%s,occupation=%s,
+                             discord_username=%s,state=%s,main_language=%s,updated_at=CURRENT_TIMESTAMP
                          WHERE id=%s""",
                       (request.form.get("date_of_birth") or None,
                        request.form.get("first_name","").strip()[:100],
                        request.form.get("last_name","").strip()[:100],
-                       request.form.get("phone","").strip()[:40],
-                       request.form.get("address","").strip()[:300],
-                       request.form.get("city","").strip()[:120],
-                       request.form.get("postal_code","").strip()[:20],
-                       request.form.get("country","").strip()[:80],
                        request.form.get("occupation","").strip()[:120],
+                       request.form.get("discord_username","").strip()[:100],
+                       request.form.get("state","").strip()[:120],
+                       request.form.get("main_language","").strip()[:80],
                        session["minebank_client_id"]),commit=True)
         flash("Profile updated.","success")
     return render_template("minebank_portal.html",mode="profile",client=current_client(),portal_active="profile")
@@ -2082,7 +2085,7 @@ def admin_minebank_profile(client_id):
             return []
     try:
         profile_rows=execute_query_dict("""SELECT c.id,c.email,c.role,c.status,c.created_at,c.date_of_birth,c.first_name,c.last_name,
-            c.phone,c.address,c.city,c.postal_code,c.country,c.occupation,c.last_login,
+            c.phone,c.address,c.city,c.postal_code,c.country,c.occupation,c.discord_username,c.state,c.main_language,c.last_login,
             (SELECT COUNT(*) FROM bank_accounts a WHERE a.client_id=c.id AND a.status<>'CLOSED') AS account_count,
             COALESCE((SELECT SUM(a.balance) FROM bank_accounts a WHERE a.client_id=c.id AND a.status<>'CLOSED'),0) AS total_balance
             FROM bank_clients c WHERE c.id=%s""",(client_id,))
@@ -2090,7 +2093,7 @@ def admin_minebank_profile(client_id):
         print(f"MineBank profile core query warning: {type(exc).__name__}: {exc}")
         profile_rows=execute_query_dict("""SELECT c.id,c.email,c.role,c.status,c.created_at,
             NULL AS date_of_birth,c.first_name,c.last_name,NULL AS phone,NULL AS address,
-            NULL AS city,NULL AS postal_code,NULL AS country,NULL AS occupation,NULL AS last_login,
+            NULL AS city,NULL AS postal_code,NULL AS country,NULL AS occupation,NULL AS discord_username,NULL AS state,NULL AS main_language,NULL AS last_login,
             (SELECT COUNT(*) FROM bank_accounts a WHERE a.client_id=c.id AND a.status<>'CLOSED') AS account_count,
             COALESCE((SELECT SUM(a.balance) FROM bank_accounts a WHERE a.client_id=c.id AND a.status<>'CLOSED'),0) AS total_balance
             FROM bank_clients c WHERE c.id=%s""",(client_id,))
@@ -2151,9 +2154,12 @@ def admin_minebank_profile(client_id):
     product_access=safe_rows("SELECT * FROM credicheck_product_access WHERE client_id=%s ORDER BY product_type",(client_id,))
     dynamic=safe_rows("""SELECT d.*,a.account_number FROM dynamic_cashlines d
         JOIN bank_accounts a ON a.id=d.account_id WHERE d.client_id=%s ORDER BY d.id DESC""",(client_id,))
+    loans=safe_rows("""SELECT l.*,a.account_number destination_number
+        FROM minebank_loans l JOIN bank_accounts a ON a.id=l.destination_account_id
+        WHERE l.client_id=%s ORDER BY l.requested_at DESC LIMIT 100""",(client_id,))
     return render_template("minebank_admin_new.html",mode="profile",profile=profile,accounts=accounts,credit=credit,
         transactions=transactions,statements=statements,requests=requests,security=security,risk=risk,
-        notifications=notifications,audits=audits,business=business,credicheck_available=True,
+        notifications=notifications,audits=audits,business=business,loans=loans,credicheck_available=True,
         credicheck=[cc],credicheck_events=cc_events,credicheck_decisions=cc_decisions,
         credicheck_overrides=cc_overrides,product_access=product_access,dynamic=dynamic)
 
