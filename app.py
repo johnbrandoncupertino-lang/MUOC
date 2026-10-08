@@ -1672,8 +1672,10 @@ def minebank_transfer_page():
             else:
                 try:
                     client = current_client()
-                    if not check_password_hash(client["password_hash"],request.form.get("account_password","")):
-                        raise ValueError("MineBank password is incorrect.")
+                    transfer_amount=int(preview.get("amount") or 0)
+                    if transfer_amount >= 10000:
+                        if not check_password_hash(client["password_hash"],request.form.get("account_password","")):
+                            raise ValueError("MineBank password is required for transfers of 10,000 Emerald or more.")
                     # Wallet PIN verification owns the 3-attempt/5-minute lockout state.
                     def pin_work(cur):
                         ok, msg = verify_wallet_pin(session["minebank_client_id"],request.form.get("wallet_pin",""))
@@ -1727,9 +1729,7 @@ def minebank_transactions_page():
     if direction=="INCOMING":
         where.append("l.recipient_account_id=%s"); params.append(account["id"])
     elif direction=="OUTGOING":
-        where.append("l.sender_account_id=%s"); params.append(account["id"])
-    if category:
-        where.append("EXISTS (SELECT 1 FROM minebank_transaction_categories f WHERE f.transaction_id=l.transaction_id AND f.account_id=%s AND f.category=%s)")
+        where.append("ltion_id=l.transaction_id AND f.account_id=%s AND f.category=%s)")
         params.extend([account["id"],category])
     if date_from:
         where.append("l.created_at::date>=%s"); params.append(date_from)
@@ -2166,6 +2166,7 @@ def minebank_loan_agreement(loan_id):
 @require_login
 def minebank_credit_page():
     ensure_transaction_schema()
+    ensure_credicheck_schema()
     account=selected_account()
     if not account:
         flash("No bank account exists for this client yet.","error")
