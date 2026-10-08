@@ -25,6 +25,16 @@ from bank_lib.minebank_core import (
     auto_pay_due_loans, repay_loan_full,
 )
 from bank_lib.minebank_requests import create_request, list_requests, create_notification
+from bank_lib.credicheck import (
+    ensure_credicheck_schema,
+    get_profile as get_credicheck_profile,
+    automatic_credit_eligibility,
+    assess as credicheck_assess,
+    set_score as credicheck_set_score,
+    set_product_access as credicheck_set_product_access,
+    activate_dynamic_cashline,
+    close_dynamic_cashline,
+)
 from bank_lib.minebank_security import ensure_security_schema, validate_session, list_active_sessions, terminate_session, terminate_other_sessions, security_event
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
@@ -638,12 +648,8 @@ def minebank_transfer_page():
                 error = "Transfer review expired. Please start again."
             else:
                 try:
-                    client = current_client()
-                    transfer_amount=int(preview.get("amount") or 0)
-                    if transfer_amount >= 10000:
-                        if not check_password_hash(client["password_hash"],request.form.get("account_password","")):
-                            raise ValueError("MineBank password is required for transfers of 10,000 Emerald or more.")
-                    # Wallet PIN verification owns the 3-attempt/5-minute lockout state.
+                    # Transfers are authorised exclusively by the Wallet PIN.
+                    # The Wallet PIN verifier owns the 3-attempt/5-minute lockout state.
                     def pin_work(cur):
                         ok, msg = verify_wallet_pin(session["minebank_client_id"],request.form.get("wallet_pin",""))
                         return ok, msg
