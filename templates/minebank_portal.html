@@ -115,6 +115,7 @@ document.querySelectorAll('[data-range]').forEach(b=>b.addEventListener('click',
  back.addEventListener('click',()=>{if(step===4&&hasPreview){setStep(3);return;}setStep(step-1);});
  review.addEventListener('click',e=>{if(!validCurrent()){e.preventDefault();return;}});
  submit.addEventListener('click',e=>{if(!validCurrent()){e.preventDefault();return;}});
+ form.addEventListener('submit',e=>{const stage=e.submitter&&e.submitter.value;if(stage==='review'&&step!==2){e.preventDefault();setStep(2);return;}if(stage==='confirm'&&step!==4){e.preventDefault();setStep(4);return;}if(stage==='review'&&!validCurrent()){e.preventDefault();return;}if(stage==='confirm'&&!validCurrent()){e.preventDefault();return;}});
  if(amount&&range){const syncRange=()=>{const v=Number(amount.value);if(Number.isFinite(v)&&v>=Number(range.min)){range.value=String(Math.min(v,Number(range.max)));}};const syncAmount=()=>{amount.value=range.value;amount.setCustomValidity('');};amount.addEventListener('input',syncRange);range.addEventListener('input',syncAmount);}
  const accountSelect=document.getElementById('transferAccount');if(accountSelect){accountSelect.addEventListener('change',()=>{const u=new URL(window.location.href);u.searchParams.set('account_id',accountSelect.value);u.searchParams.set('restart','1');window.location.assign(u.toString());});}
  setStep(step);
