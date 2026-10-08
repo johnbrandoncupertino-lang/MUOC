@@ -131,7 +131,7 @@ def current_client():
     except Exception as exc:
         print(f"MineBank client compatibility query warning: {type(exc).__name__}: {exc}")
         rows = execute_query_dict(
-            "SELECT id,email,role,status,date_of_birth,first_name,last_name,phone,address,city,postal_code,country,occupation,discord_username,state,main_language,password_hash,last_login,"
+            "SELECT id,email,role,status,date_of_birth,first_name,last_name,phone,address,city,postal_code,country,occupation,password_hash,last_login,"
             "wallet_pin_hash FROM bank_clients WHERE id=%s", (cid,)
         )
         if rows:
@@ -176,6 +176,7 @@ def get_accounts(client_id):
             "facility_credit_limit": 0,
             "credit_status": "NONE",
             "available_credit": 0,
+            "dynamic_cashline_active": False,
         })
         try:
             rows = execute_query_dict(
@@ -207,6 +208,13 @@ def get_accounts(client_id):
                         account["available_credit"] = account["facility_credit_limit"]
         except Exception as exc:
             print(f"MineBank account CashLine enrichment warning: {type(exc).__name__}: {exc}")
+        try:
+            dynamic = execute_query_dict("SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE' LIMIT 1",(account["id"],))
+            account["dynamic_cashline_active"] = bool(dynamic)
+            if dynamic:
+                account["credit_status"] = "DYNAMIC"
+        except Exception as exc:
+            print(f"MineBank account Dynamic CashLine enrichment warning: {type(exc).__name__}: {exc}")
 
     __import__("flask").g._minebank_accounts = (client_id, accounts)
     return accounts
@@ -632,7 +640,12 @@ def approve_business_payment(account_id,transaction_id):
 def minebank_transfer_page():
     ensure_minebank_schema()
     ensure_transaction_schema()
+    ensure_loan_schema()
     ensure_security_schema()
+    try:
+        ensure_credicheck_schema()
+    except Exception as exc:
+        print(f"MineBank transfer CrediCheck schema warning: {type(exc).__name__}: {exc}")
     account = selected_account(request.args.get("account_id") or request.form.get("account_id"))
     if not account:
         return redirect(url_for("minebank_accounts_page"))
@@ -2076,6 +2089,7 @@ def admin_minebank_profile(client_id):
     # Customer 360 must initialise every core dependency before optional sections.
     ensure_minebank_schema()
     ensure_transaction_schema()
+    ensure_loan_schema()
     ensure_credicheck_schema()
     def safe_rows(sql, params=()):
         try:
