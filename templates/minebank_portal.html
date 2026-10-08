@@ -49,8 +49,8 @@ document.querySelectorAll('[data-range]').forEach(b=>b.addEventListener('click',
 {% else %}
 <div class="notice"><b>Dynamic CashLine</b> is a separate credit product with no predefined credit limit. Each transaction is assessed under MineBank's CrediCheck rules.</div>
 <p>Monthly fee: <b>20 Emerald</b> · Minimum transaction: <b>300 Emerald</b> · No unused-credit interest.</p>
-{% if facility and standard_cashline_debt|int > 0 %}
-<p class="muted">You currently have <b>{{ standard_cashline_debt }} Emerald</b> outstanding on Standard CashLine. Repay it in full before switching to Dynamic CashLine.</p>
+{% if facility and cashline_outstanding|int > 0 %}
+<p class="muted">You currently have <b>{{ cashline_outstanding }} Emerald</b> outstanding on Standard CashLine. Repay it in full before switching to Dynamic CashLine.</p>
 <button class="button small" disabled>Switch to Dynamic CashLine</button>
 {% else %}
 <p class="muted">Your Standard CashLine has no outstanding balance. You can switch products after confirmation.</p>
