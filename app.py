@@ -22,7 +22,7 @@ from bank_lib.minebank_core import (
     reject_transfer, reject_business_transfer, approve_business_transfer,
     repay_credit, transfer, cancel_transfer,
     accrue_daily_credit_interest, generate_cashline_statement, disburse_loan, repay_loan_installment,
-    auto_pay_due_loans, repay_loan_full, repay_loan_fraction,
+    auto_pay_due_loans, repay_loan_fraction,
 )
 from bank_lib.minebank_requests import create_request, list_requests, create_notification
 from bank_lib.credicheck import (
@@ -1078,10 +1078,16 @@ def minebank_loans_page():
                 if action=="repay":
                     result=repay_loan_installment(loan_id,source_id,session["minebank_client_id"])
                 else:
-                    fraction=request.form.get("repayment_fraction","1/4")
-                    try: numerator,denominator=[int(x) for x in fraction.split("/",1)]
-                    except Exception: raise ValueError("Choose a valid Loan repayment fraction.")
-                    result=repay_loan_fraction(loan_id,source_id,session["minebank_client_id"],numerator,denominator)
+                    # The core exposes one atomic fraction-based repayment
+                    # function; 4/4 represents repayment of the full balance.
+                    fraction = "4/4" if action == "repay_full" else request.form.get("repayment_fraction", "1/4")
+                    try:
+                        numerator, denominator = [int(x) for x in fraction.split("/", 1)]
+                    except Exception:
+                        raise ValueError("Choose a valid Loan repayment fraction.")
+                    result = repay_loan_fraction(
+                        loan_id, source_id, session["minebank_client_id"], numerator, denominator
+                    )
                 flash(f"Loan repayment processed: {result['amount']} Emerald. Status: {result['status']}.","success")
                 return redirect(url_for("minebank_loans_page"))
             if action!="request":
