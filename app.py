@@ -658,7 +658,7 @@ def minebank_transfer_page():
         stage = request.form.get("stage","review")
         if stage == "review":
             try:
-                amount = int(request.form.get("amount","0"))
+                amount = int((request.form.get("amount") or "0").strip() or "0")
                 recipient = request.form.get("recipient_account_number","").strip().upper()
                 # preview_transfer is deliberately kept in the core library; no duplicate fee logic in the web layer.
                 from bank_lib.minebank_core import preview_transfer
@@ -1073,8 +1073,8 @@ def minebank_loans_page():
         action=request.form.get("action","request")
         try:
             if action in ("repay","repay_fraction","repay_full"):
-                loan_id=int(request.form.get("loan_id","0"))
-                source_id=int(request.form.get("source_account_id","0"))
+                loan_id=int((request.form.get("loan_id") or "0").strip() or "0")
+                source_id=int((request.form.get("source_account_id") or "0").strip() or "0")
                 ok,msg=verify_wallet_pin(session["minebank_client_id"],request.form.get("wallet_pin",""))
                 if not ok: raise ValueError(msg)
                 if action=="repay":
@@ -1094,10 +1094,10 @@ def minebank_loans_page():
                 return redirect(url_for("minebank_loans_page"))
             if action!="request":
                 raise ValueError("Invalid Loan operation.")
-            amount=int(request.form.get("amount","0"))
-            term=int(request.form.get("term_days","0"))
-            source_id=int(request.form.get("source_account_id","0"))
-            destination_id=int(request.form.get("destination_account_id","0"))
+            amount=int((request.form.get("amount") or "0").strip() or "0")
+            term=int((request.form.get("term_days") or "0").strip() or "0")
+            source_id=int((request.form.get("source_account_id") or "0").strip() or "0")
+            destination_id=int((request.form.get("destination_account_id") or "0").strip() or "0")
             approval_mode=request.form.get("approval_mode","BANK_REVIEW").upper()
             pin=request.form.get("wallet_pin","")
             if not profile.get("request_enabled"):
@@ -1459,7 +1459,7 @@ def minebank_scheduled_page():
         try:
             from datetime import datetime
             number=request.form.get("account_number","").strip().upper()
-            amount=int(request.form.get("amount","0"))
+            amount=int((request.form.get("amount") or "0").strip() or "0")
             import json
             schedule=request.form.get("schedule_type","MONTHLY")
             next_run=request.form.get("next_run_at","")
@@ -1545,7 +1545,7 @@ def minebank_payment_requests_page():
     if request.method=="POST":
         try:
             payer_number=request.form.get("payer_account_number","").strip().upper()
-            amount=int(request.form.get("amount","0"))
+            amount=int((request.form.get("amount") or "0").strip() or "0")
             if amount<=0: raise ValueError("Requested amount must be positive.")
             count=execute_query("SELECT COUNT(*) FROM minebank_payment_requests WHERE requester_client_id=%s AND created_at::date=CURRENT_DATE",(cid,))
             if count and int(count[0][0]) >= 5:
@@ -2226,7 +2226,7 @@ def admin_minebank_credicheck(client_id):
         if not reason:
             raise ValueError("A reason is required for every CrediCheck administrative change.")
         if action=="SET_SCORE":
-            credicheck_set_score(client_id,session["minebank_client_id"],int(request.form.get("score",5)),reason)
+            credicheck_set_score(client_id,session["minebank_client_id"],int((request.form.get("score") or "5").strip() or "5"),reason)
             flash("CrediCheck score updated and audit recorded.","success")
         elif action=="SET_ACCESS":
             product=request.form.get("product_type","").strip().upper()
@@ -2234,18 +2234,18 @@ def admin_minebank_credicheck(client_id):
             credicheck_set_product_access(client_id,session["minebank_client_id"],product,status,reason)
             flash("Credit-product access updated.","success")
         elif action=="ASSESS":
-            account_id=int(request.form.get("account_id"))
+            account_id=int((request.form.get("account_id") or "0").strip() or "0")
             rows=execute_query_dict("""SELECT a.*,t.code AS tier_code,t.display_name FROM bank_accounts a
                 JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE a.id=%s AND a.client_id=%s""",(account_id,client_id))
             if not rows: raise ValueError("Account not found.")
             result=credicheck_assess(client_id,rows[0],request.form.get("product_type","CASHLINE"),int(request.form.get("amount",0) or 0))
             flash(f"CrediCheck assessment: {result['decision']} — {result['reason']}","success")
         elif action=="ACTIVATE_DYNAMIC":
-            account_id=int(request.form.get("account_id"))
+            account_id=int((request.form.get("account_id") or "0").strip() or "0")
             activate_dynamic_cashline(client_id,account_id,session["minebank_client_id"])
             flash("Dynamic CashLine activated.","success")
         elif action=="CLOSE_DYNAMIC":
-            account_id=int(request.form.get("account_id"))
+            account_id=int((request.form.get("account_id") or "0").strip() or "0")
             close_dynamic_cashline(client_id,account_id,session["minebank_client_id"])
             flash("Dynamic CashLine closed.","success")
         else:
