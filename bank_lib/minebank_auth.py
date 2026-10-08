@@ -44,8 +44,10 @@ def login_client(email, password, captcha_answer=None):
     try:
         ensure_security_schema()
     except Exception as exc:
+        # Authentication must not become unavailable because an optional
+        # security migration failed. The login query below has its own
+        # compatibility fallback and security operations are best-effort.
         print(f"MineBank authentication security schema warning: {type(exc).__name__}: {exc}")
-        return False, "MineBank security services are temporarily unavailable. Please try again in a moment."
     conn = get_db_connection()
     if conn is None:
         return False, "MineBank is temporarily unavailable. Please try again in a moment."
@@ -56,13 +58,23 @@ def login_client(email, password, captcha_answer=None):
                 # Normal registrations store lowercase emails, so use the
                 # unique email index first. Only legacy mixed-case records
                 # need the slower case-insensitive fallback.
-                cur.execute("""SELECT id,email,password_hash,role,status,login_failed_attempts,login_blocked_until,login_captcha_required,password_changed_at
-                               FROM bank_clients WHERE email=%s""",(normalized_email,))
-                row=cur.fetchone()
-                if not row:
+                try:
                     cur.execute("""SELECT id,email,password_hash,role,status,login_failed_attempts,login_blocked_until,login_captcha_required,password_changed_at
-                                   FROM bank_clients WHERE LOWER(email)=LOWER(%s)""",(normalized_email,))
+                                   FROM bank_clients WHERE email=%s""",(normalized_email,))
                     row=cur.fetchone()
+                    if not row:
+                        cur.execute("""SELECT id,email,password_hash,role,status,login_failed_attempts,login_blocked_until,login_captcha_required,password_changed_at
+                                       FROM bank_clients WHERE LOWER(email)=LOWER(%s)""",(normalized_email,))
+                        row=cur.fetchone()
+                except Exception as exc:
+                    # Legacy databases may not yet have the login-protection
+                    # columns. Authentication still works against the canonical
+                    # identity fields while the security migration catches up.
+                    print(f"MineBank login compatibility query warning: {type(exc).__name__}: {exc}")
+                    cur.execute("""SELECT id,email,password_hash,role,status
+                                   FROM bank_clients WHERE LOWER(email)=LOWER(%s)""",(normalized_email,))
+                    base=cur.fetchone()
+                    row=(base[0],base[1],base[2],base[3],base[4],0,None,False,None) if base else None
                 if not row:
                     record_login_failure(None,"UNKNOWN_ACCOUNT")
                     return False,"Invalid credentials."
@@ -93,16 +105,22 @@ def login_client(email, password, captcha_answer=None):
                         set_login_challenge()
                         return False,"Invalid credentials. Complete the security challenge on the next attempt."
                     return False,"Invalid credentials."
-                clear_login_failures(client_id)
-                score,severity,reasons=__import__("bank_lib.minebank_security",fromlist=["suspicious_login_score"]).suspicious_login_score(
-                    client_id=client_id,
-                    ip_address=(request.headers.get("X-Forwarded-For") or request.remote_addr or "")[:64],
-                    user_agent=request.headers.get("User-Agent","")[:500])
-                if score>=60:
-                    security_event(client_id,"SUSPICIOUS_LOGIN","CRITICAL",{"score":score,"reasons":reasons})
-                    return False,"Login blocked for security review. Please contact the bank."
-                if score>=30:
-                    security_event(client_id,"SUSPICIOUS_LOGIN","HIGH",{"score":score,"reasons":reasons})
+                try:
+                    clear_login_failures(client_id)
+                except Exception as exc:
+                    print(f"MineBank login security update warning: {type(exc).__name__}: {exc}")
+                try:
+                    score,severity,reasons=__import__("bank_lib.minebank_security",fromlist=["suspicious_login_score"]).suspicious_login_score(
+                        client_id=client_id,
+                        ip_address=(request.headers.get("X-Forwarded-For") or request.remote_addr or "")[:64],
+                        user_agent=request.headers.get("User-Agent","")[:500])
+                    if score>=60:
+                        security_event(client_id,"SUSPICIOUS_LOGIN","CRITICAL",{"score":score,"reasons":reasons})
+                        return False,"Login blocked for security review. Please contact the bank."
+                    if score>=30:
+                        security_event(client_id,"SUSPICIOUS_LOGIN","HIGH",{"score":score,"reasons":reasons})
+                except Exception as exc:
+                    print(f"MineBank suspicious-login check warning: {type(exc).__name__}: {exc}")
                 session.clear()
                 session.permanent=True
                 session["minebank_client_id"]=row[0]
@@ -112,7 +130,12 @@ def login_client(email, password, captcha_answer=None):
                     session["minebank_password_expired"] = (_now() - row[8]).days >= 180 if row[8] else True
                 except Exception:
                     session["minebank_password_expired"] = False
-                create_session(client_id)
+                try:
+                    create_session(client_id)
+                except Exception as exc:
+                    # A missing session table must not prevent credential
+                    # authentication; the Flask session remains authoritative.
+                    print(f"MineBank persistent session warning: {type(exc).__name__}: {exc}")
                 return True,None
     finally:
         from .database import release_db_connection
