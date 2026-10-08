@@ -267,12 +267,17 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
                         raise ValueError(f"Dynamic CashLine assessment declined this payment. Current assessed capacity: {dynamic_capacity} Emerald.")
                     available_after=dynamic_capacity-total
                 else:
-                    cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(sender[0],))
-                    facility=cur.fetchone()
-                    if not facility or facility[1]!="ACTIVE": raise ValueError("CashLine is not active for this account.")
-                    outstanding=cashline_outstanding(cur,sender[0])
-                    available_credit=max(0,int(facility[0])-outstanding)
-                    if total>available_credit: raise ValueError(f"Insufficient CashLine availability. Available: {available_credit} Emerald.")
+                    dynamic_capacity=_dynamic_cashline_capacity(cur,sender[0])
+                    if dynamic_capacity is not None:
+                        if total>dynamic_capacity:
+                            raise ValueError(f"Dynamic CashLine assessment declined this payment. Current assessed capacity: {dynamic_capacity} Emerald.")
+                    else:
+                        cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(sender[0],))
+                        facility=cur.fetchone()
+                        if not facility or facility[1]!="ACTIVE": raise ValueError("CashLine is not active for this account.")
+                        outstanding=cashline_outstanding(cur,sender[0])
+                        available_credit=max(0,int(facility[0])-outstanding)
+                        if total>available_credit: raise ValueError(f"Insufficient CashLine availability. Available: {available_credit} Emerald.")
                     available_after=available_credit-total
             cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
             max_balance_row = cur.fetchone()
