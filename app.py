@@ -658,7 +658,14 @@ def minebank_transfer_page():
         stage = request.form.get("stage","review")
         if stage == "review":
             try:
-                amount = int((request.form.get("amount") or "0").strip() or "0")
+                raw_amount = (request.form.get("amount") or "").strip()
+                if not raw_amount:
+                    raise ValueError("Enter a transfer amount in whole Emeralds greater than zero.")
+                if not raw_amount.isascii() or not raw_amount.isdigit():
+                    raise ValueError("Transfer amount must be a whole Emerald amount (digits only).")
+                amount = int(raw_amount)
+                if amount <= 0:
+                    raise ValueError("Enter a transfer amount in whole Emeralds greater than zero.")
                 recipient = request.form.get("recipient_account_number","").strip().upper()
                 # preview_transfer is deliberately kept in the core library; no duplicate fee logic in the web layer.
                 from bank_lib.minebank_core import preview_transfer
