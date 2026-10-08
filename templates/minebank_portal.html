@@ -60,7 +60,9 @@ syncAmount(range?range.value:min);show(1);
 <div class="notice success"><b>Dynamic CashLine is active.</b> There is no predefined credit limit. Each transaction is assessed under MineBank's CrediCheck rules.</div>
 <p>Monthly fee: <b>20 Emerald</b> · Interest: <b>{{ '18.3%' if account.account_type=='PERSONAL' else '23.7%' }}</b> annual, calculated daily.</p>
 <p class="muted">Standard CashLine and Dynamic CashLine are mutually exclusive. Any outstanding Dynamic CashLine balance must be repaid before it can be closed.</p>
-<form method="post" action="{{ url_for('minebank_dynamic_cashline_close') }}"><input type="hidden" name="account_id" value="{{ account.id }}"><button class="button small">Close Dynamic CashLine</button></form>
+{% if cashline_outstanding|int > 0 %}<div class="notice">Outstanding Dynamic CashLine balance: <b>{{ cashline_outstanding }} Emerald</b>.</div>
+<form method="post"><input type="hidden" name="action" value="repay"><label>Repayment source account</label><select name="source_account_id" required>{% for a in repayment_sources %}<option value="{{ a.id }}">{{ a.account_number }} — {{ a.balance }} Emerald</option>{% endfor %}</select><label>Amount</label><input type="number" name="amount" min="1" max="{{ cashline_outstanding }}" required><button class="button primary full">Repay Dynamic CashLine</button></form>{% endif %}
+<form method="post" action="{{ url_for('minebank_dynamic_cashline_close') }}" style="margin-top:10px"><input type="hidden" name="account_id" value="{{ account.id }}"><button class="button small" {% if cashline_outstanding|int > 0 %}disabled{% endif %}>Close Dynamic CashLine</button></form>
 {% else %}
 <div class="notice"><b>Dynamic CashLine</b> is a separate credit product with no predefined credit limit. Each transaction is assessed under MineBank's CrediCheck rules.</div>
 <p>Monthly fee: <b>20 Emerald</b> · Minimum transaction: <b>300 Emerald</b> · No unused-credit interest.</p>
