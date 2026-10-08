@@ -213,10 +213,10 @@ def get_accounts(client_id):
         try:
             dynamic = execute_query_dict("SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE' LIMIT 1",(account["id"],))
             account["dynamic_cashline_active"] = bool(dynamic)
-            # Keep static and dynamic facilities independent: both can be active
-            # on the same account, and the transfer wizard must offer both.
-            # Do not overwrite credit_status because other pages use it for the
-            # standard facility status; the separate flag represents Dynamic.
+            # Legacy pages use credit_status to display a dynamic-only facility.
+            # Keep ACTIVE when Standard CashLine is also active.
+            if dynamic and not account["standard_cashline_active"]:
+                account["credit_status"] = "DYNAMIC"
 
         except Exception as exc:
             print(f"MineBank account Dynamic CashLine enrichment warning: {type(exc).__name__}: {exc}")
