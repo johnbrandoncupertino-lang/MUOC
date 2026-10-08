@@ -1081,12 +1081,15 @@ def minebank_credit_page():
                 maximum=int(account.get("default_credit_limit") or 0)
                 if amount < 300 or (maximum and amount > maximum):
                     raise ValueError(f"CashLine request must be between 300 and {maximum} Emerald.")
+                approval_mode=request.form.get("approval_mode","AUTO").upper()
+                if approval_mode not in {"AUTO","BANK_REVIEW"}:
+                    approval_mode="AUTO"
                 auto_check=automatic_credit_eligibility(session["minebank_client_id"],account,"CASHLINE",amount)
                 assessment=credicheck_assess(session["minebank_client_id"],account,"CASHLINE",amount)
                 preview["credicheck_assessment"]=assessment["decision"]
                 preview["credicheck_reason"]=assessment["reason"]
 
-                if amount<=5000 and auto_check["eligible"]:
+                if approval_mode=="AUTO" and amount<=5000 and auto_check["eligible"]:
                     # Standard CashLine requests up to 5,000 Emerald are activated
                     # immediately when every automatic-credit condition is satisfied.
                     execute_query("""INSERT INTO credit_facilities
