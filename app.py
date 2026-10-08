@@ -732,7 +732,9 @@ def minebank_transactions_page():
     if direction=="INCOMING":
         where.append("l.recipient_account_id=%s"); params.append(account["id"])
     elif direction=="OUTGOING":
-        where.append("ltion_id=l.transaction_id AND f.account_id=%s AND f.category=%s)")
+        where.append("l.sender_account_id=%s"); params.append(account["id"])
+    if category:
+        where.append("EXISTS (SELECT 1 FROM minebank_transaction_categories f WHERE f.transaction_id=l.transaction_id AND f.account_id=%s AND f.category=%s)")
         params.extend([account["id"],category])
     if date_from:
         where.append("l.created_at::date>=%s"); params.append(date_from)
