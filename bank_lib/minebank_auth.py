@@ -37,8 +37,15 @@ def client_from_session(cur):
 
 
 def login_client(email, password, captcha_answer=None):
-    # Schema/migration work is intentionally kept out of authentication.
-    # Login should only perform the queries required to authenticate the client.
+    # Authentication depends on the security/session tables and login-protection
+    # columns. Initialize that compatibility layer before the first login so
+    # an older production database cannot turn session creation into a 500.
+    from .minebank_security import ensure_security_schema
+    try:
+        ensure_security_schema()
+    except Exception as exc:
+        print(f"MineBank authentication security schema warning: {type(exc).__name__}: {exc}")
+        return False, "MineBank security services are temporarily unavailable. Please try again in a moment."
     conn = get_db_connection()
     if conn is None:
         return False, "MineBank is temporarily unavailable. Please try again in a moment."
