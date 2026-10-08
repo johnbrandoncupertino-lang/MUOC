@@ -787,7 +787,9 @@ def minebank_statements_page():
 @require_login
 def minebank_statements_print():
     account=selected_account()
-    if int(account["balance"]) < 1:
+    if not account:
+        return "No bank account is available for this client.", 404
+    if int(account.get("balance") or 0) < 1:
         flash("1 Emerald is required for a printed statement.","error")
         return redirect(url_for("minebank_statements_page"))
     execute_query("UPDATE bank_accounts SET balance=balance-1,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(account["id"],),commit=True)
@@ -1873,7 +1875,7 @@ def minebank_transaction_receipt(transaction_id):
                             (transaction_id,session["minebank_client_id"],session["minebank_client_id"]))
     if not rows: return "Transaction not found",404
     tx=rows[0]
-    customer_rows=execute_query_dict("SELECT id,email,COALESCE(full_name,email) AS full_name FROM bank_clients WHERE id=%s",(session["minebank_client_id"],))
+    customer_rows=execute_query_dict("SELECT id,email,TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) AS full_name FROM bank_clients WHERE id=%s",(session["minebank_client_id"],))
     preferred_account=tx["sender_account_id"] or tx["recipient_account_id"]
     account_rows=execute_query_dict("SELECT a.*,t.display_name AS tier_name FROM bank_accounts a LEFT JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE a.id=%s AND a.client_id=%s",(preferred_account,session["minebank_client_id"]))
     customer=customer_rows[0] if customer_rows else {}
