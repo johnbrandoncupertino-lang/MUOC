@@ -5,7 +5,7 @@ from .minebank_core import transfer
 
 def process_due_scheduled_transfers(limit=50):
     rows=execute_query_dict("""SELECT id,client_id,account_id,recipient_account_number,amount,schedule_type,
-                                      next_run_at,end_at,description,reference,recurrence_config
+                                      next_run_at,end_at,description,reference,recurrence_config,funding_source
                                FROM minebank_scheduled_transfers
                                WHERE status='ACTIVE' AND next_run_at<=CURRENT_TIMESTAMP
                                  AND (last_attempt_at IS NULL OR last_attempt_at<CURRENT_TIMESTAMP-INTERVAL '4 minutes')
@@ -21,7 +21,7 @@ def process_due_scheduled_transfers(limit=50):
                             description=row["description"],reference=row["reference"],
                             actor_client_id=row["client_id"],
                             idempotency_key=f"SCHEDULE-{sid}-{int(run_at.timestamp())}",
-                            transfer_kind="SCHEDULED",extra_fee=1)
+                            transfer_kind="SCHEDULED",extra_fee=1,funding_source=(row.get("funding_source") or "BALANCE"))
             if result["status"]=="COMPLETED":
                 if row["schedule_type"]=="ONCE":
                     execute_query("UPDATE minebank_scheduled_transfers SET status='COMPLETED',last_error=NULL WHERE id=%s",(sid,),commit=True)
