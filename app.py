@@ -663,7 +663,9 @@ def minebank_transfer_page():
                 # preview_transfer is deliberately kept in the core library; no duplicate fee logic in the web layer.
                 from bank_lib.minebank_core import preview_transfer
                 funding_source=request.form.get("funding_source","BALANCE").upper()
+                session.pop("transfer_preview", None)
                 preview = preview_transfer(session["minebank_client_id"],account["id"],recipient,amount,funding_source=funding_source)
+                preview["sender_account_id"] = int(account["id"])
                 preview["description"] = request.form.get("description","")[:500]
                 preview["reference"] = request.form.get("reference","")[:100]
                 preview["causal"] = request.form.get("causal","").strip()[:500]
@@ -685,7 +687,7 @@ def minebank_transfer_page():
                     if not ok:
                         raise ValueError(msg)
                     result = transfer(
-                        sender_account_id=account["id"],
+                        sender_account_id=int(preview.get("sender_account_id") or account["id"]),
                         recipient_account_number=preview["recipient_account_number"],
                         amount=int(preview["amount"]),
                         description=preview.get("description"),
@@ -1442,11 +1444,12 @@ def minebank_scheduled_page():
             if not recipient:
                 raise ValueError("Recipient account not found.")
             funding_source=(request.form.get("funding_source") or "BALANCE").upper()
-            if funding_source not in {"BALANCE","CASHLINE"}:
-                funding_source="BALANCE"
-            if funding_source=="CASHLINE":
-                if not account.get("dynamic_cashline_active") and account.get("credit_status")!="ACTIVE":
-                    raise ValueError("CashLine is not active on this account.")
+            if funding_source not in {"BALANCE","CASHLINE","DYNAMIC_CASHLINE"}:
+                raise ValueError("Choose a valid payment source.")
+            if funding_source=="CASHLINE" and account.get("credit_status")!="ACTIVE":
+                raise ValueError("Standard CashLine is not active on this account.")
+            if funding_source=="DYNAMIC_CASHLINE" and not account.get("dynamic_cashline_active"):
+                raise ValueError("Dynamic CashLine is not active on this account.")
             if int(account["balance"]) < 2:
                 raise ValueError("2 Emerald are required to set up a scheduled payment.")
             execute_query("UPDATE bank_accounts SET balance=balance-2,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(account["id"],),commit=True)
