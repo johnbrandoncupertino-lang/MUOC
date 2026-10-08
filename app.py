@@ -1001,7 +1001,8 @@ def minebank_loans_page():
 def minebank_loan_agreement(loan_id):
     if not ensure_loan_schema(): return "MineBank Loans are temporarily unavailable.",503
     rows=execute_query_dict("""SELECT l.*,a.account_number destination_number,t.display_name,
-                                      c.email
+                                      c.email,c.first_name,c.last_name,c.phone,c.address,c.city,c.postal_code,
+                                      c.country,c.date_of_birth,c.occupation
                                FROM minebank_loans l
                                JOIN bank_accounts a ON a.id=l.destination_account_id
                                JOIN account_tiers_v2 t ON t.id=a.tier_id
@@ -1009,6 +1010,20 @@ def minebank_loan_agreement(loan_id):
                                WHERE l.id=%s AND l.client_id=%s""",(loan_id,session["minebank_client_id"]))
     if not rows: return "Loan not found",404
     loan=rows[0]
+    customer_name=" ".join(x for x in [loan.get("first_name"),loan.get("last_name")] if x).strip() or loan.get("email","")
+    customer_address=", ".join(x for x in [loan.get("address"),loan.get("city"),loan.get("postal_code"),loan.get("country")] if x)
+    customer_dob=loan.get("date_of_birth")
+    if hasattr(customer_dob,"date"): customer_dob=customer_dob.date()
+    customer_details=[
+        ("Full name",customer_name),
+        ("Email",loan.get("email") or "—"),
+        ("Phone",loan.get("phone") or "—"),
+        ("Date of birth",str(customer_dob) if customer_dob else "—"),
+        ("Address",customer_address or "—"),
+        ("Occupation",loan.get("occupation") or "—"),
+        ("Destination account",loan["destination_number"]),
+        ("Account plan",loan["display_name"]),
+    ]
     start=loan["approved_at"].date() if loan.get("approved_at") else datetime.now(timezone.utc).date()
     schedule=[]
     for day in range(1,int(loan["term_days"])+1):
@@ -1016,13 +1031,13 @@ def minebank_loan_agreement(loan_id):
         if day==int(loan["term_days"]):
             amount=int(loan["total_cost"])-int(loan["installment_amount"])*(day-1)
         schedule.append((f"Day {day}",f"{start+timedelta(days=day)} · {amount} Emerald"))
-    return _pdf_response("Loan Agreement",[
-        ("Loan number",loan["loan_number"]),("Customer",loan["email"]),("Destination account",loan["destination_number"]),
-        ("Principal",f"{loan['principal']} Emerald"),("Term",f"{loan['term_days']} days"),
+    return _pdf_response("Loan Agreement",customer_details+[
+        ("Loan number",loan["loan_number"]),("Principal",f"{loan['principal']} Emerald"),("Term",f"{loan['term_days']} days"),
         ("Annual interest rate",f"{loan['annual_interest_bps']/100:.2f}%"),("Interest",f"{loan['total_interest']} Emerald"),
         ("Loan request fee",f"{loan['request_fee']} Emerald"),("Total repayment",f"{loan['total_cost']} Emerald"),
         ("Daily installment",f"{loan['installment_amount']} Emerald"),("Status",loan["status"])
     ],f"minebank-loan-agreement-{loan['loan_number']}.pdf",sections=[
+        ("Customer information",customer_details),
         ("Loan summary",[
             ("Loan number",loan["loan_number"]),("Principal",f"{loan['principal']} Emerald"),
             ("Term",f"{loan['term_days']} days"),("Interest",f"{loan['total_interest']} Emerald"),
