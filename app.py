@@ -1487,7 +1487,9 @@ def minebank_cron():
             first=today.replace(day=1)
             prev_end=first-timedelta(days=1)
             prev_start=prev_end.replace(day=1)
-            facilities=execute_query_dict("SELECT account_id FROM credit_facilities WHERE status IN ('ACTIVE','SUSPENDED')")
+            facilities=execute_query_dict("""SELECT account_id FROM credit_facilities WHERE status IN ('ACTIVE','SUSPENDED')
+                                                     UNION
+                                                     SELECT account_id FROM dynamic_cashlines WHERE status='ACTIVE'""")
             statements=[generate_cashline_statement(int(x["account_id"]),prev_start,prev_end) for x in facilities]
             from bank_lib.minebank_core import process_monthly_billing
             billing=process_monthly_billing()
