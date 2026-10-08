@@ -18,6 +18,11 @@ from bank_lib.minebank_auth import (
     create_account, get_client_accounts, login_client, logout_client,
     set_wallet_pin, verify_wallet_pin,
 )
+from bank_lib.credicheck import (
+    ensure_credicheck_schema, get_profile as get_credicheck_profile,
+    assess as credicheck_assess, automatic_credit_eligibility,
+    activate_dynamic_cashline, close_dynamic_cashline,
+)
 from bank_lib.minebank_core import (
     approve_transfer, chargeback, deposit, withdraw, draw_credit,
     reject_transfer, reject_business_transfer, approve_business_transfer,
@@ -1182,6 +1187,7 @@ from bank_lib.minebank_core import (
     reject_transfer, reject_business_transfer, approve_business_transfer,
     repay_credit, transfer, cancel_transfer,
     accrue_daily_credit_interest, generate_cashline_statement, disburse_loan, repay_loan_installment,
+    auto_pay_due_loans, repay_loan_full,
 )
 from bank_lib.minebank_requests import create_request, list_requests, create_notification
 from bank_lib.minebank_security import ensure_security_schema, validate_session, list_active_sessions, terminate_session, terminate_other_sessions, security_event
@@ -1460,7 +1466,7 @@ def selected_account(account_id=None):
         accounts = get_accounts(session["minebank_client_id"])
     if not accounts:
         return None
-    wanted = account_id or session.get("minebank_account_id") or request.args.get("account_id")
+    wanted = account_id or request.args.get("account_id") or session.get("minebank_account_id")
     for account in accounts:
         if wanted and int(account["id"]) == int(wanted):
             session["minebank_account_id"] = int(account["id"])
@@ -2201,15 +2207,26 @@ def minebank_credit_page():
     if request.method=="POST":
         action=request.form.get("action","request")
         try:
-            if action=="repay_full":
-                loan_id=int(request.form.get("loan_id","0"))
-                source_id=int(request.form.get("source_account_id","0"))
-                ok,msg=verify_wallet_pin(session["minebank_client_id"],request.form.get("wallet_pin",""))
-                if not ok: raise ValueError(msg)
-                result=repay_loan_full(loan_id,source_id,session["minebank_client_id"])
-                flash(f"Loan fully repaid: {result['amount']} Emerald.","success")
-                return redirect(url_for("minebank_loans_page"))
-            if action=="repay":
+            if action=="activate_dynamic":
+                profile=get_credicheck_profile(session["minebank_client_id"])
+                if int(profile.get("score") or 0)>10 or str(profile.get("credit_status") or "").upper()!="ACTIVE":
+                    raise ValueError("Dynamic CashLine is not currently available for your account.")
+                if execute_query_dict("SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE'",(account["id"],)):
+                    raise ValueError("Dynamic CashLine is already active on this account.")
+                active_facility=execute_query_dict("SELECT id FROM credit_facilities WHERE account_id=%s AND status='ACTIVE'",(account["id"],))
+                if active_facility and cashline_outstanding_for_app(account["id"])>0:
+                    raise ValueError("Repay your outstanding Standard CashLine balance before switching to Dynamic CashLine.")
+                activate_dynamic_cashline(session["minebank_client_id"],account["id"],session["minebank_client_id"])
+                create_notification(session["minebank_client_id"],"DYNAMIC_CASHLINE_ELIGIBLE","Dynamic CashLine activated","Your Dynamic CashLine is now active on this account.",account["id"])
+                flash("Dynamic CashLine activated successfully.","success")
+            elif action=="close_dynamic":
+                if not execute_query_dict("SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE'",(account["id"],)):
+                    raise ValueError("Dynamic CashLine is not active on this account.")
+                if cashline_outstanding_for_app(account["id"])>0:
+                    raise ValueError("Repay your outstanding Dynamic CashLine balance before closing it.")
+                close_dynamic_cashline(session["minebank_client_id"],account["id"],session["minebank_client_id"])
+                flash("Dynamic CashLine closed.","success")
+            elif action=="repay":
                 source_id=int(request.form.get("source_account_id","0"))
                 amount=int(request.form.get("amount","0"))
                 result=repay_credit(account["id"],amount,source_id)
@@ -2224,22 +2241,52 @@ def minebank_credit_page():
                 maximum=int(account.get("default_credit_limit") or 0)
                 if amount < 300 or (maximum and amount > maximum):
                     raise ValueError(f"CashLine request must be between 300 and {maximum} Emerald.")
-                reason=request.form.get("reason","")[:500]
-                session["cashline_request_preview"]={"requested_limit":amount,"reason":reason}
+                session["cashline_request_preview"]={"requested_limit":amount,"reason":request.form.get("reason","")[:500]}
             elif action=="request_confirm":
                 preview=session.get("cashline_request_preview")
                 if not preview:
-                    raise ValueError("CashLine review expired. Please start again.")
+                    amount=int(request.form.get("requested_limit","0"))
+                    maximum=int(account.get("default_credit_limit") or 0)
+                    if amount < 300 or (maximum and amount > maximum):
+                        raise ValueError(f"CashLine request must be between 300 and {maximum} Emerald.")
+                    preview={"requested_limit":amount,"reason":request.form.get("reason","")[:500]}
                 ok,msg=verify_wallet_pin(session["minebank_client_id"],request.form.get("wallet_pin",""))
-                if not ok:
-                    raise ValueError(msg)
+                if not ok: raise ValueError(msg)
                 amount=int(preview["requested_limit"])
                 maximum=int(account.get("default_credit_limit") or 0)
                 if amount < 300 or (maximum and amount > maximum):
                     raise ValueError(f"CashLine request must be between 300 and {maximum} Emerald.")
-                create_request(session["minebank_client_id"],"CREDIT_LINE",account["id"],preview)
-                session.pop("cashline_request_preview",None)
-                flash("CashLine request submitted for bank approval.","success")
+                approval_mode=request.form.get("approval_mode","AUTO").upper()
+                if approval_mode not in {"AUTO","BANK_REVIEW"}: approval_mode="AUTO"
+                auto_check=automatic_credit_eligibility(session["minebank_client_id"],account,"CASHLINE",amount)
+                assessment=credicheck_assess(session["minebank_client_id"],account,"CASHLINE",amount)
+                preview["credicheck_assessment"]=assessment["decision"]
+                preview["credicheck_reason"]=assessment["reason"]
+                if approval_mode=="AUTO" and amount<=5000 and auto_check["eligible"]:
+                    execute_query("""INSERT INTO credit_facilities
+                        (account_id,credit_limit,interest_monthly_bps,interest_annual_bps,activation_fee_monthly,status)
+                        VALUES(%s,%s,CASE WHEN (SELECT account_type FROM bank_accounts WHERE id=%s)='PERSONAL' THEN 1830 ELSE 2370 END,
+                               CASE WHEN (SELECT account_type FROM bank_accounts WHERE id=%s)='PERSONAL' THEN 1830 ELSE 2370 END,
+                               CASE WHEN %s>5000 THEN 20 ELSE 10 END,'ACTIVE')
+                        ON CONFLICT(account_id) DO UPDATE SET credit_limit=EXCLUDED.credit_limit,
+                          activation_fee_monthly=EXCLUDED.activation_fee_monthly,
+                          interest_annual_bps=EXCLUDED.interest_annual_bps,status='ACTIVE'""",
+                        (account["id"],amount,account["id"],account["id"],amount),commit=True)
+                    execute_query("""INSERT INTO credicheck_decisions
+                        (client_id,product_type,requested_amount,decision,score_snapshot,risk_snapshot,debt_snapshot,capacity_snapshot,decision_type,reason)
+                        VALUES(%s,'CASHLINE',%s,'AUTO_APPROVED',%s,
+                               (SELECT risk_level FROM credicheck_profiles WHERE client_id=%s),0,%s,'AUTO_APPROVAL',
+                               'Standard CashLine automatically approved under MineBank rules.')""",
+                        (session["minebank_client_id"],amount,assessment["score"],session["minebank_client_id"],assessment["capacity"]),commit=True)
+                    create_notification(session["minebank_client_id"],"CREDIT_APPROVED","CashLine automatically approved",
+                                        f"Your Standard CashLine for {amount} Emerald is now active.",account["id"])
+                    session.pop("cashline_request_preview",None)
+                    flash(f"CashLine approved automatically. Your {amount} Emerald Standard CashLine is now active.","success")
+                else:
+                    create_request(session["minebank_client_id"],"CREDIT_LINE",account["id"],preview)
+                    session.pop("cashline_request_preview",None)
+                    reason=" ".join(auto_check["reasons"]) if auto_check["reasons"] else "The request exceeds the automatic-approval threshold."
+                    flash(f"CashLine request submitted for Bank review. {reason}","success")
             else:
                 raise ValueError("Invalid CashLine operation.")
             return redirect(url_for("minebank_credit_page"))
@@ -2331,6 +2378,7 @@ def minebank_cron():
         if not ensure_minebank_schema():
             return jsonify(error="MineBank database is unavailable"),503
         interest=accrue_daily_credit_interest()
+        loan_auto_payments=auto_pay_due_loans()
         billing=[]
         statements=[]
         if datetime.now(timezone.utc).day == 1:
@@ -2343,7 +2391,7 @@ def minebank_cron():
             statements=[generate_cashline_statement(int(x["account_id"]),prev_start,prev_end) for x in facilities]
             from bank_lib.minebank_core import process_monthly_billing
             billing=process_monthly_billing()
-        return jsonify(interest=interest,billing=billing,statements=statements,scheduled=process_due_scheduled_transfers())
+        return jsonify(interest=interest,loan_auto_payments=loan_auto_payments,billing=billing,statements=statements,scheduled=process_due_scheduled_transfers())
     except Exception as exc:
         return jsonify(error=str(exc)),500
 
