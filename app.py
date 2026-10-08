@@ -13,6 +13,7 @@ from flask import Flask, Response, flash, jsonify, redirect, render_template, re
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from bank_lib.database import execute_query, execute_query_dict, ensure_minebank_schema, ensure_transaction_schema, ensure_message_schema, ensure_loan_schema
+from bank_lib.credicheck import ensure_credicheck_schema, get_profile as get_credicheck_profile, assess as credicheck_assess, set_score as credicheck_set_score, set_product_access as credicheck_set_product_access, activate_dynamic_cashline, close_dynamic_cashline
 from bank_lib.minebank_auth import (
     create_account, get_client_accounts, login_client, logout_client,
     set_wallet_pin, verify_wallet_pin,
@@ -2815,6 +2816,133 @@ def admin_minebank_messages():
     campaigns=execute_query_dict("""SELECT m.*,c.email created_by_email FROM minebank_message_campaigns m
                                     JOIN bank_clients c ON c.id=m.created_by ORDER BY m.created_at DESC LIMIT 50""")
     return render_template("minebank_admin_new.html",mode="messages",accounts=accounts,tiers=tiers,campaigns=campaigns,error=error)
+
+@app.route("/admin/minebank/profiles")
+@require_role("ADMIN","OPERATOR")
+def admin_minebank_profiles():
+    ensure_credicheck_schema()
+    q=request.args.get("q","").strip()
+    params=[]
+    where=""
+    if q:
+        where="""WHERE c.email ILIKE %s
+                  OR COALESCE(c.first_name,'') ILIKE %s
+                  OR COALESCE(c.last_name,'') ILIKE %s
+                  OR EXISTS (SELECT 1 FROM bank_accounts ax WHERE ax.client_id=c.id AND ax.account_number ILIKE %s)"""
+        like=f"%{q}%"
+        params=[like,like,like,like]
+    profiles=execute_query_dict(f"""SELECT c.id,c.email,c.first_name,c.last_name,c.status,c.role,c.last_login,
+        COUNT(DISTINCT a.id) FILTER (WHERE a.status<>'CLOSED') AS account_count,
+        COALESCE(SUM(a.balance) FILTER (WHERE a.status<>'CLOSED'),0) AS total_balance,
+        COUNT(DISTINCT cf.id) FILTER (WHERE cf.status IN ('ACTIVE','SUSPENDED')) AS credit_facilities,
+        COALESCE(SUM(cf.credit_limit) FILTER (WHERE cf.status IN ('ACTIVE','SUSPENDED')),0) AS credit_limit
+        FROM bank_clients c
+        LEFT JOIN bank_accounts a ON a.client_id=c.id
+        LEFT JOIN credit_facilities cf ON cf.account_id=a.id
+        {where}
+        GROUP BY c.id ORDER BY c.id DESC LIMIT 250""",tuple(params))
+    return render_template("minebank_admin_new.html",mode="profiles",profiles=profiles)
+
+@app.route("/admin/minebank/profile/<int:client_id>")
+@require_role("ADMIN","OPERATOR")
+def admin_minebank_profile(client_id):
+    ensure_credicheck_schema()
+    profile_rows=execute_query_dict("""SELECT c.*,
+        COUNT(DISTINCT a.id) FILTER (WHERE a.status<>'CLOSED') AS account_count,
+        COALESCE(SUM(a.balance) FILTER (WHERE a.status<>'CLOSED'),0) AS total_balance
+        FROM bank_clients c LEFT JOIN bank_accounts a ON a.client_id=c.id
+        WHERE c.id=%s GROUP BY c.id""",(client_id,))
+    if not profile_rows:
+        flash("Customer profile not found.","error")
+        return redirect(url_for("admin_minebank_profiles"))
+    profile=profile_rows[0]
+    accounts=execute_query_dict("""SELECT a.*,t.display_name,t.code AS tier_code,
+        COALESCE(cf.status,'NONE') AS credit_status,COALESCE(cf.credit_limit,0) AS credit_limit,
+        COALESCE(cf.interest_annual_bps,0) AS interest_annual_bps
+        FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
+        LEFT JOIN credit_facilities cf ON cf.account_id=a.id
+        WHERE a.client_id=%s ORDER BY a.id""",(client_id,))
+    credit=execute_query_dict("""SELECT cf.*,a.account_number
+        FROM credit_facilities cf JOIN bank_accounts a ON a.id=cf.account_id
+        WHERE a.client_id=%s ORDER BY cf.id DESC""",(client_id,))
+    transactions=execute_query_dict("""SELECT l.*,s.account_number sender_number,r.account_number recipient_number
+        FROM ledger_transactions l
+        LEFT JOIN bank_accounts s ON s.id=l.sender_account_id
+        LEFT JOIN bank_accounts r ON r.id=l.recipient_account_id
+        WHERE s.client_id=%s OR r.client_id=%s ORDER BY l.created_at DESC LIMIT 250""",(client_id,client_id))
+    statements=execute_query_dict("""SELECT cs.*,a.account_number
+        FROM credit_statements cs JOIN bank_accounts a ON a.id=cs.account_id
+        WHERE a.client_id=%s ORDER BY cs.period_end DESC LIMIT 100""",(client_id,))
+    requests=execute_query_dict("""SELECT r.*,a.account_number,rv.email reviewer_email
+        FROM bank_requests_v2 r LEFT JOIN bank_accounts a ON a.id=r.account_id
+        LEFT JOIN bank_clients rv ON rv.id=r.reviewed_by
+        WHERE r.client_id=%s ORDER BY r.created_at DESC LIMIT 150""",(client_id,))
+    security=execute_query_dict("""SELECT * FROM minebank_security_events WHERE client_id=%s
+        ORDER BY created_at DESC LIMIT 150""",(client_id,))
+    risk=execute_query_dict("""SELECT r.*,a.account_number FROM minebank_risk_events r
+        LEFT JOIN bank_accounts a ON a.id=r.account_id WHERE r.client_id=%s
+        ORDER BY r.created_at DESC LIMIT 150""",(client_id,))
+    notifications=execute_query_dict("""SELECT n.*,a.account_number FROM bank_notifications n
+        LEFT JOIN bank_accounts a ON a.id=n.account_id WHERE n.client_id=%s
+        ORDER BY n.created_at DESC LIMIT 150""",(client_id,))
+    audits=execute_query_dict("""SELECT ae.*,c.email actor_email FROM audit_events ae
+        LEFT JOIN bank_clients c ON c.id=ae.actor_client_id
+        WHERE ae.target_id=%s OR ae.actor_client_id=%s ORDER BY ae.created_at DESC LIMIT 200""",(client_id,client_id))
+    business=execute_query_dict("""SELECT bm.*,a.account_number,bp.trading_name,bp.legal_name
+        FROM minebank_business_members bm
+        LEFT JOIN bank_accounts a ON a.id=bm.account_id
+        LEFT JOIN minebank_business_profiles bp ON bp.account_id=bm.account_id
+        WHERE bm.client_id=%s ORDER BY bm.created_at DESC""",(client_id,))
+    cc=get_credicheck_profile(client_id)
+    cc_events=__import__("bank_lib.credicheck",fromlist=["list_events"]).list_events(client_id,150)
+    cc_decisions=execute_query_dict("SELECT * FROM credicheck_decisions WHERE client_id=%s ORDER BY created_at DESC LIMIT 100",(client_id,))
+    cc_overrides=execute_query_dict("""SELECT o.*,a.email admin_email FROM credicheck_overrides o
+        LEFT JOIN bank_clients a ON a.id=o.admin_id WHERE o.client_id=%s ORDER BY o.created_at DESC LIMIT 100""",(client_id,))
+    product_access=execute_query_dict("SELECT * FROM credicheck_product_access WHERE client_id=%s ORDER BY product_type",(client_id,))
+    dynamic=execute_query_dict("""SELECT d.*,a.account_number FROM dynamic_cashlines d
+        JOIN bank_accounts a ON a.id=d.account_id WHERE d.client_id=%s ORDER BY d.id DESC""",(client_id,))
+    return render_template("minebank_admin_new.html",mode="profile",profile=profile,accounts=accounts,credit=credit,
+        transactions=transactions,statements=statements,requests=requests,security=security,risk=risk,
+        notifications=notifications,audits=audits,business=business,credicheck_available=True,
+        credicheck=[cc],credicheck_events=cc_events,credicheck_decisions=cc_decisions,
+        credicheck_overrides=cc_overrides,product_access=product_access,dynamic=dynamic)
+
+@app.route("/admin/minebank/profile/<int:client_id>/credicheck",methods=["POST"])
+@require_role("ADMIN")
+def admin_minebank_credicheck(client_id):
+    action=request.form.get("action","").strip().upper()
+    reason=request.form.get("reason","").strip()
+    try:
+        if not reason:
+            raise ValueError("A reason is required for every CrediCheck administrative change.")
+        if action=="SET_SCORE":
+            credicheck_set_score(client_id,session["minebank_client_id"],int(request.form.get("score",5)),reason)
+            flash("CrediCheck score updated and audit recorded.","success")
+        elif action=="SET_ACCESS":
+            product=request.form.get("product_type","").strip().upper()
+            status=request.form.get("status","").strip().upper()
+            credicheck_set_product_access(client_id,session["minebank_client_id"],product,status,reason)
+            flash("Credit-product access updated.","success")
+        elif action=="ASSESS":
+            account_id=int(request.form.get("account_id"))
+            rows=execute_query_dict("""SELECT a.*,t.code AS tier_code,t.display_name FROM bank_accounts a
+                JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE a.id=%s AND a.client_id=%s""",(account_id,client_id))
+            if not rows: raise ValueError("Account not found.")
+            result=credicheck_assess(client_id,rows[0],request.form.get("product_type","CASHLINE"),int(request.form.get("amount",0) or 0))
+            flash(f"CrediCheck assessment: {result['decision']} — {result['reason']}","success")
+        elif action=="ACTIVATE_DYNAMIC":
+            account_id=int(request.form.get("account_id"))
+            activate_dynamic_cashline(client_id,account_id,session["minebank_client_id"])
+            flash("Dynamic CashLine activated.","success")
+        elif action=="CLOSE_DYNAMIC":
+            account_id=int(request.form.get("account_id"))
+            close_dynamic_cashline(client_id,account_id,session["minebank_client_id"])
+            flash("Dynamic CashLine closed.","success")
+        else:
+            raise ValueError("Unknown CrediCheck action.")
+    except Exception as exc:
+        flash(f"CrediCheck action failed: {exc}","error")
+    return redirect(url_for("admin_minebank_profile",client_id=client_id)+"#credit")
 
 @app.route("/setup", methods=["GET","POST"])
 @app.route("/admin/setup", methods=["GET","POST"])
