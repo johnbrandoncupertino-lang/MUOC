@@ -52,6 +52,44 @@
 <section class="panel"><div class="panel-title">Customer Details</div><dl class="review"><dt>Name</dt><dd>{{ (profile.first_name ~ ' ' ~ profile.last_name)|trim or '—' }}</dd><dt>Email</dt><dd>{{ profile.email }}</dd><dt>Phone</dt><dd>{{ profile.phone or '—' }}</dd><dt>Date of birth</dt><dd>{{ profile.date_of_birth or '—' }}</dd><dt>Address</dt><dd>{{ profile.address or '—' }}{% if profile.postal_code or profile.city %}<br>{{ profile.postal_code or '' }} {{ profile.city or '' }}{% endif %}</dd><dt>Occupation</dt><dd>{{ profile.occupation or '—' }}</dd><dt>Account created</dt><dd>{{ profile.created_at }}</dd></dl></section>
 <section class="panel"><div class="panel-title">Credit Situation</div>{% if credicheck_available and credicheck %}{% set cc=credicheck[0] %}<div class="info-strip"><div class="info-item"><span class="info-label">Score</span><span class="info-value">{{ cc.score }}</span></div><div class="info-item"><span class="info-label">Risk</span><span class="info-value">{{ cc.risk_level }}</span></div><div class="info-item"><span class="info-label">Credit Status</span><span class="info-value">{{ cc.credit_status }}</span></div></div>{% else %}<div class="notice">CrediCheck profile data is not active yet. Existing risk history is shown below.</div>{% endif %}<div class="message"><b>Risk events:</b> {{ risk|length }}</div><div class="message"><b>Active credit facilities:</b> {{ credit|selectattr('status','in',['ACTIVE','SUSPENDED'])|list|length }}</div><div class="message"><b>Credit statements:</b> {{ statements|length }}</div></section>
 </div>
+<section class="panel" id="credicheck-admin"><div class="panel-title">CrediCheck Administration</div>
+<p class="muted">Internal MineBank game-system assessment. Customers never see the score, formulas or internal events.</p>
+<div class="grid two">
+<form method="post" action="{{ url_for('admin_minebank_credicheck',client_id=profile.id) }}" class="form-panel">
+<input type="hidden" name="action" value="SET_SCORE">
+<label>Manual score</label><input type="number" name="score" min="0" value="{{ credicheck[0].score if credicheck else 5 }}" required>
+<label>Reason</label><input name="reason" maxlength="1000" required>
+<button class="button primary full">Update CrediCheck</button>
+</form>
+<form method="post" action="{{ url_for('admin_minebank_credicheck',client_id=profile.id) }}" class="form-panel">
+<input type="hidden" name="action" value="SET_ACCESS">
+<label>Product</label><select name="product_type"><option>LOAN</option><option>CASHLINE</option><option>DYNAMIC_CASHLINE</option></select>
+<label>Status</label><select name="status"><option>AVAILABLE</option><option>RESTRICTED</option><option>SUSPENDED</option></select>
+<label>Reason</label><input name="reason" maxlength="1000" required>
+<button class="button full">Set Product Access</button>
+</form>
+</div>
+<div class="grid two">
+<form method="post" action="{{ url_for('admin_minebank_credicheck',client_id=profile.id) }}" class="form-panel">
+<input type="hidden" name="action" value="ASSESS">
+<label>Assessment account</label><select name="account_id">{% for a in accounts %}<option value="{{ a.id }}">{{ a.account_number }} — {{ a.display_name }}</option>{% endfor %}</select>
+<label>Product</label><select name="product_type"><option>CASHLINE</option><option>LOAN</option><option>DYNAMIC_CASHLINE</option></select>
+<label>Requested amount</label><input type="number" name="amount" min="0" value="300" required>
+<label>Reason</label><input name="reason" value="Administrative assessment" maxlength="1000" required>
+<button class="button primary full">Run Assessment</button>
+</form>
+<div class="form-panel"><b>Dynamic CashLine</b><p class="muted">No predefined credit limit. Product activation is separate from Standard CashLine and requires the account to have no outstanding Standard CashLine debt.</p>
+{% for a in accounts %}
+<form method="post" action="{{ url_for('admin_minebank_credicheck',client_id=profile.id) }}" style="margin-top:8px">
+<input type="hidden" name="account_id" value="{{ a.id }}"><input type="hidden" name="reason" value="Dynamic CashLine product administration">
+{% set d=(dynamic|selectattr('account_id','equalto',a.id)|list|first) %}
+{% if d and d.status=='ACTIVE' %}<input type="hidden" name="action" value="CLOSE_DYNAMIC"><button class="button small">Close Dynamic · {{ a.account_number }}</button>
+{% else %}<input type="hidden" name="action" value="ACTIVATE_DYNAMIC"><button class="button small primary">Activate Dynamic · {{ a.account_number }}</button>{% endif %}
+</form>
+{% endfor %}</div>
+</div>
+{% if product_access %}<div class="table-scroll"><table><tr><th>Product</th><th>Status</th><th>Reason</th><th>Updated</th></tr>{% for p in product_access %}<tr><td>{{ p.product_type }}</td><td>{{ p.status }}</td><td>{{ p.reason or '—' }}</td><td>{{ p.updated_at }}</td></tr>{% endfor %}</table></div>{% endif %}
+</section>
 <section class="panel"><div class="panel-title">Accounts &amp; Products</div>{% for a in accounts %}<div class="account-card panel" style="margin-bottom:8px;padding:11px"><div><b>{{ a.account_number }}</b><div class="account-meta">{{ a.display_name }} · {{ a.account_type }} · Created {{ a.created_at }}</div><div class="account-meta">Status: <span class="status {% if a.status=='ACTIVE' %}active{% elif a.status=='FROZEN' %}frozen{% endif %}">{{ 'ENABLED' if a.status=='ACTIVE' else ('DISABLED' if a.status=='CLOSED' else a.status) }}</span>{% if a.freeze_type %} · {{ a.freeze_type }}{% endif %}</div></div><div class="account-balance">{{ a.balance }} <small>Emerald</small></div><div class="account-meta"><b>CashLine:</b> {{ a.credit_status }} · Limit {{ a.credit_limit }} · {{ '%.2f'|format(a.interest_annual_bps/100) }}% annual</div></div>{% else %}<div class="sub">No accounts found.</div>{% endfor %}</section>
 <div class="tabs" id="profileTabs"><a class="active" href="#activity">Activity</a><a href="#credit">Credit</a><a href="#statements">Statements</a><a href="#requests">Requests</a><a href="#security">Security</a><a href="#notifications">Inbox</a><a href="#audit">Audit</a></div>
 <section class="panel" id="activity"><div class="panel-title">Transactions <span class="sub">{{ transactions|length }} recent</span></div><div class="table-scroll"><table><tr><th>Date</th><th>Transaction</th><th>From</th><th>To</th><th>Amount</th><th>Fee</th><th>Status</th><th>Causal</th></tr>{% for t in transactions %}<tr><td>{{ t.created_at }}</td><td>{{ t.transaction_id }}</td><td>{{ t.sender_number or 'Bank' }}</td><td>{{ t.recipient_number or 'Bank' }}</td><td>{{ t.amount }} {{ t.currency }}</td><td>{{ t.fee }}</td><td><span class="status {{ t.status|lower }}">{{ t.status }}</span></td><td>{{ t.causal or t.description or '—' }}</td></tr>{% else %}<tr><td colspan="8">No transactions.</td></tr>{% endfor %}</table></div></section>
