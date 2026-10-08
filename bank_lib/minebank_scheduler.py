@@ -38,8 +38,9 @@ def process_due_scheduled_transfers(limit=50):
                         execute_query("UPDATE minebank_scheduled_transfers SET next_run_at=%s,last_error=NULL WHERE id=%s",(nxt,sid),commit=True)
                 results.append({"id":sid,"status":result["status"]})
             else:
-                execute_query("UPDATE minebank_scheduled_transfers SET last_error=%s WHERE id=%s",("Transfer requires bank approval.",sid),commit=True)
-                results.append({"id":sid,"status":result["status"]})
+                message=("Transfer "+str(result.get("transaction_id",""))+" requires bank approval.")
+                execute_query("UPDATE minebank_scheduled_transfers SET status='PAUSED',last_error=%s WHERE id=%s",(message,sid),commit=True)
+                results.append({"id":sid,"status":result["status"],"transaction_id":result.get("transaction_id")})
         except Exception as exc:
             message=str(exc)[:500]
             execute_query("UPDATE minebank_scheduled_transfers SET last_error=%s WHERE id=%s",(message,sid),commit=True)
