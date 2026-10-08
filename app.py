@@ -1118,9 +1118,10 @@ def minebank_dynamic_cashline_activate():
 @require_login
 def minebank_dynamic_cashline_close():
     try:
+        ensure_minebank_schema()
         ensure_transaction_schema()
         ensure_credicheck_schema()
-        account=selected_account()
+        account=selected_account(request.form.get("account_id"))
         if not account:
             raise ValueError("No bank account is available.")
         if not execute_query_dict("SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE'",(account["id"],)):
@@ -1136,7 +1137,13 @@ def minebank_dynamic_cashline_close():
 @app.route("/portal/credit", methods=["GET","POST"])
 @require_login
 def minebank_credit_page():
-    ensure_transaction_schema()
+    # CashLine depends on the base MineBank schema, transaction extensions and
+    # CrediCheck tables. Initialise all three before any CashLine query so the
+    # Services link cannot fail on a fresh or partially migrated deployment.
+    if not ensure_minebank_schema():
+        return "MineBank database is temporarily unavailable. Please try again in a moment.", 503
+    if not ensure_transaction_schema():
+        return "MineBank transaction services are temporarily unavailable. Please try again in a moment.", 503
     ensure_credicheck_schema()
     account=selected_account()
     if not account:
