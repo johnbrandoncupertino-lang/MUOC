@@ -1079,16 +1079,16 @@ def minebank_loans_page():
             loan_id=rows[0][0]
             if approval_mode=="AUTO":
                 result=disburse_loan(loan_id,session["minebank_client_id"])
-                create_notification(session["minebank_client_id"],"LOAN_APPROVED","Loan automatically approved",
+                create_notification(session["minebank_client_id"],"LOAN_APPROVED","CrediCheck approved your Loan request",
                                     f"Your {loan_number} Loan for {amount} Emerald has been approved and deposited into your selected account.",
                                     destination_id)
-                flash(f"Loan approved automatically and deposited: {result['amount']} Emerald.","success")
+                flash(f"CrediCheck approved your Loan and deposited: {result['amount']} Emerald.","success")
             else:
                 create_request(session["minebank_client_id"],"LOAN_REQUEST",destination_id,
                                {"loan_id":loan_id,"loan_number":loan_number,"amount":amount,"term_days":term,
                                 "annual_interest_bps":terms["annual_bps"],"total_interest":terms["interest"],
                                 "request_fee":terms["request_fee"],"destination_account_id":destination_id})
-                flash("Loan request submitted for Bank review.","success")
+                flash("CrediCheck completed the initial assessment. Your Loan request has been submitted for Bank review.","success")
             return redirect(url_for("minebank_loans_page"))
         except Exception as exc:
             error=str(exc)
@@ -1178,7 +1178,7 @@ def minebank_dynamic_cashline_activate():
             raise ValueError("Repay your outstanding Standard CashLine balance before switching to Dynamic CashLine.")
         activate_dynamic_cashline(session["minebank_client_id"],account["id"],session["minebank_client_id"])
         create_notification(session["minebank_client_id"],"DYNAMIC_CASHLINE_ELIGIBLE","Dynamic CashLine activated","Your Dynamic CashLine is now active on this account.",account["id"])
-        flash("Dynamic CashLine activated successfully.","success")
+        flash("Dynamic CrediCheck approved your CashLine and activated it successfully.","success")
     except Exception as exc:
         flash(str(exc),"error")
     return redirect(url_for("minebank_credit_page",account_id=request.form.get("account_id") or session.get("minebank_account_id")))
@@ -1251,7 +1251,7 @@ def minebank_credit_page():
                     raise ValueError("Repay your outstanding Standard CashLine balance before switching to Dynamic CashLine.")
                 activate_dynamic_cashline(session["minebank_client_id"],account["id"],session["minebank_client_id"])
                 create_notification(session["minebank_client_id"],"DYNAMIC_CASHLINE_ELIGIBLE","Dynamic CashLine activated","Your Dynamic CashLine is now active on this account.",account["id"])
-                flash("Dynamic CashLine activated successfully.","success")
+                flash("Dynamic CrediCheck approved your CashLine and activated it successfully.","success")
             elif action in {"close_dynamic","close_dynamic_cashline"}:
                 if not execute_query_dict("SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE'",(account["id"],)):
                     raise ValueError("Dynamic CashLine is not active on this account.")
@@ -1300,7 +1300,7 @@ def minebank_credit_page():
                     preview["approval_mode"]="BANK_REVIEW"
                     create_request(session["minebank_client_id"],"CREDIT_LINE",account["id"],preview)
                     session.pop("cashline_request_preview",None)
-                    flash("CashLine request submitted for Bank review. CrediCheck eligibility was not used for this manual request.","success")
+                    flash("CrediCheck: your CashLine request has been submitted for Bank review.","success")
                 else:
                     auto_check=automatic_credit_eligibility(session["minebank_client_id"],account,"CASHLINE",amount)
                     if amount>5000 or not auto_check["eligible"]:
