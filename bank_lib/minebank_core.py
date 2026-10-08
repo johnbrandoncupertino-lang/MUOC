@@ -954,7 +954,11 @@ def generate_cashline_statement(account_id, period_start=None, period_end=None):
             with conn.cursor() as cur:
                 cur.execute("SELECT minimum_due_percent_bps,minimum_due_floor,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(account_id,))
                 row=cur.fetchone()
-                if not row or row[2] not in ("ACTIVE","SUSPENDED"): return None
+                if not row or row[2] not in ("ACTIVE","SUSPENDED"):
+                    cur.execute("SELECT monthly_fee,status FROM dynamic_cashlines WHERE account_id=%s FOR UPDATE",(account_id,))
+                    dynamic=cur.fetchone()
+                    if not dynamic or dynamic[1]!="ACTIVE": return None
+                    row=(500,40,"ACTIVE")
                 end=period_end or _now().date(); start=period_start or end.replace(day=1)
                 principal=cashline_principal_outstanding(cur,account_id)
                 cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions WHERE recipient_account_id=%s AND transaction_type='CREDIT_INTEREST' AND created_at::date BETWEEN %s AND %s""",(account_id,start,end))
