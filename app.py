@@ -175,6 +175,7 @@ def get_accounts(client_id):
         account.update({
             "facility_credit_limit": 0,
             "credit_status": "NONE",
+            "standard_cashline_active": False,
             "available_credit": 0,
             "dynamic_cashline_active": False,
         })
@@ -188,6 +189,7 @@ def get_accounts(client_id):
                 account["facility_credit_limit"] = int(facility.get("credit_limit") or 0)
                 account["credit_status"] = str(facility.get("status") or "NONE").upper()
                 if account["credit_status"] == "ACTIVE":
+                    account["standard_cashline_active"] = True
                     # The core calculator owns CashLine accounting rules. If an
                     # older schema cannot calculate it, retain the facility limit
                     # rather than failing the entire account query.
@@ -211,8 +213,11 @@ def get_accounts(client_id):
         try:
             dynamic = execute_query_dict("SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE' LIMIT 1",(account["id"],))
             account["dynamic_cashline_active"] = bool(dynamic)
-            if dynamic:
-                account["credit_status"] = "DYNAMIC"
+            # Keep static and dynamic facilities independent: both can be active
+            # on the same account, and the transfer wizard must offer both.
+            # Do not overwrite credit_status because other pages use it for the
+            # standard facility status; the separate flag represents Dynamic.
+
         except Exception as exc:
             print(f"MineBank account Dynamic CashLine enrichment warning: {type(exc).__name__}: {exc}")
 
