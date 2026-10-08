@@ -17,6 +17,24 @@ CASHLINE_MINIMUM_DUE_BPS = 500
 CASHLINE_MINIMUM_DUE_FLOOR = 40
 
 
+def _positive_integer_amount(value):
+    """Normalize a whole-Emerald amount from trusted internal or form input."""
+    if isinstance(value, bool):
+        raise ValueError("Transfer amount must be a positive integer Emerald amount.")
+    if isinstance(value, int):
+        amount = value
+    elif isinstance(value, str):
+        raw = value.strip()
+        if not raw.isascii() or not raw.isdigit():
+            raise ValueError("Transfer amount must be a positive integer Emerald amount.")
+        amount = int(raw)
+    else:
+        raise ValueError("Transfer amount must be a positive integer Emerald amount.")
+    if amount <= 0:
+        raise ValueError("Transfer amount must be a positive integer Emerald amount.")
+    return amount
+
+
 def _now():
     return datetime.now(timezone.utc)
 
@@ -201,8 +219,7 @@ def _dynamic_cashline_capacity(cur, account_id, requested_amount=0):
 
 def preview_transfer(actor_client_id, sender_account_id, recipient_account_number, amount, extra_fee=0, funding_source="BALANCE"):
     """Validate a transfer and calculate its fee without changing the ledger."""
-    if not isinstance(amount, int) or amount <= 0:
-        raise ValueError("Transfer amount must be a positive integer Emerald amount.")
+    amount = _positive_integer_amount(amount)
     funding_source=(funding_source or "BALANCE").upper()
     if funding_source not in ("BALANCE","CASHLINE","DYNAMIC_CASHLINE"): raise ValueError("Invalid payment source.")
     recipient_account_number = (recipient_account_number or "").strip().upper()
@@ -308,8 +325,7 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
 def transfer(*, sender_account_id, recipient_account_number, amount,
              description=None, reference=None, causal=None, currency=CURRENCY, idempotency_key=None,
              actor_client_id=None, ip_address=None, transfer_kind=None, extra_fee=0, funding_source="BALANCE"):
-    if not isinstance(amount, int) or amount <= 0:
-        raise ValueError("Transfer amount must be a positive integer Emerald amount.")
+    amount = _positive_integer_amount(amount)
     funding_source=(funding_source or "BALANCE").upper()
     if funding_source not in ("BALANCE","CASHLINE","DYNAMIC_CASHLINE"): raise ValueError("Invalid payment source.")
     if not recipient_account_number:
