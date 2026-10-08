@@ -1326,8 +1326,8 @@ def minebank_credit_page():
                 close_dynamic_cashline(session["minebank_client_id"],account["id"],session["minebank_client_id"])
                 flash("Dynamic CashLine closed.","success")
             elif action=="repay":
-                source_id=int(request.form.get("source_account_id","0"))
-                amount=int(request.form.get("amount","0"))
+                source_id=int((request.form.get("source_account_id") or "0").strip() or "0")
+                amount=int((request.form.get("amount") or "0").strip() or "0")
                 result=repay_credit(account["id"],amount,source_id)
                 flash(f'Credit repayment completed: {result["transaction_id"]}.',"success")
             elif action=="cancel":
@@ -1336,7 +1336,7 @@ def minebank_credit_page():
                 create_request(session["minebank_client_id"],"CREDIT_CANCEL",account["id"],{"reason":request.form.get("reason","")[:500]})
                 flash("Credit cancellation request submitted for bank review.","success")
             elif action=="request_review":
-                amount=int(request.form.get("requested_limit","0"))
+                amount=int((request.form.get("requested_limit") or "0").strip() or "0")
                 maximum=int(account.get("default_credit_limit") or 0)
                 if amount < 300 or (maximum and amount > maximum):
                     raise ValueError(f"CashLine request must be between 300 and {maximum} Emerald.")
