@@ -110,7 +110,7 @@ def cashline_outstanding(cur, account_id, include_pending=True):
                         (sender_account_id=%s AND transaction_type='TRANSFER')
                         OR (recipient_account_id=%s AND transaction_type='CREDIT_DRAW')
                     )
-                      AND transfer_kind='CASHLINE' AND status IN {statuses}""",(account_id,account_id))
+                      AND transfer_kind IN ('CASHLINE','DYNAMIC_CASHLINE') AND status IN {statuses}""",(account_id,account_id))
     principal=int(cur.fetchone()[0] or 0)
     cur.execute("""SELECT COALESCE(SUM(amount),0)
                    FROM ledger_transactions
@@ -131,7 +131,7 @@ def cashline_principal_outstanding(cur, account_id, include_pending=True):
     cur.execute(f"""SELECT COALESCE(SUM(amount+fee),0) FROM ledger_transactions
                     WHERE ((sender_account_id=%s AND transaction_type='TRANSFER')
                            OR (recipient_account_id=%s AND transaction_type='CREDIT_DRAW'))
-                      AND transfer_kind='CASHLINE' AND status IN {statuses}""",(account_id,account_id))
+                      AND transfer_kind IN ('CASHLINE','DYNAMIC_CASHLINE') AND status IN {statuses}""",(account_id,account_id))
     principal=int(cur.fetchone()[0] or 0)
     cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions
                    WHERE transaction_type='CREDIT_REPAYMENT' AND status='COMPLETED'
@@ -194,7 +194,7 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
     if not isinstance(amount, int) or amount <= 0:
         raise ValueError("Transfer amount must be a positive integer Emerald amount.")
     funding_source=(funding_source or "BALANCE").upper()
-    if funding_source not in ("BALANCE","CASHLINE"): raise ValueError("Invalid payment source.")
+    if funding_source not in ("BALANCE","CASHLINE","DYNAMIC_CASHLINE"): raise ValueError("Invalid payment source.")
     recipient_account_number = (recipient_account_number or "").strip().upper()
     if not recipient_account_number:
         raise ValueError("Recipient account number is required.")
@@ -260,25 +260,21 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
             if funding_source=="BALANCE":
                 if int(sender[5]) < total: raise ValueError("Insufficient MineBank Balance.")
                 available_after=int(sender[5])-total
-            else:
+            elif funding_source=="DYNAMIC_CASHLINE":
                 dynamic_capacity=_dynamic_cashline_capacity(cur,sender[0],amount)
-                if dynamic_capacity is not None:
-                    if total>dynamic_capacity:
-                        raise ValueError(f"Dynamic CashLine assessment declined this payment. Current assessed capacity: {dynamic_capacity} Emerald.")
-                    available_after=dynamic_capacity-total
-                else:
-                    dynamic_capacity=_dynamic_cashline_capacity(cur,sender[0])
-                    if dynamic_capacity is not None:
-                        if total>dynamic_capacity:
-                            raise ValueError(f"Dynamic CashLine assessment declined this payment. Current assessed capacity: {dynamic_capacity} Emerald.")
-                    else:
-                        cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(sender[0],))
-                        facility=cur.fetchone()
-                        if not facility or facility[1]!="ACTIVE": raise ValueError("CashLine is not active for this account.")
-                        outstanding=cashline_outstanding(cur,sender[0])
-                        available_credit=max(0,int(facility[0])-outstanding)
-                        if total>available_credit: raise ValueError(f"Insufficient CashLine availability. Available: {available_credit} Emerald.")
-                    available_after=available_credit-total
+                if dynamic_capacity is None:
+                    raise ValueError("Dynamic CashLine is not active for this account.")
+                if total>dynamic_capacity:
+                    raise ValueError(f"Dynamic CashLine assessment declined this payment. Current assessed capacity: {dynamic_capacity} Emerald.")
+                available_after=dynamic_capacity-total
+            else:
+                cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(sender[0],))
+                facility=cur.fetchone()
+                if not facility or facility[1]!="ACTIVE": raise ValueError("Standard CashLine is not active for this account.")
+                outstanding=cashline_outstanding(cur,sender[0])
+                available_credit=max(0,int(facility[0])-outstanding)
+                if total>available_credit: raise ValueError(f"Insufficient Standard CashLine availability. Available: {available_credit} Emerald.")
+                available_after=available_credit-total
             cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
             max_balance_row = cur.fetchone()
             max_balance = max_balance_row[0] if max_balance_row else None
@@ -305,7 +301,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
     if not isinstance(amount, int) or amount <= 0:
         raise ValueError("Transfer amount must be a positive integer Emerald amount.")
     funding_source=(funding_source or "BALANCE").upper()
-    if funding_source not in ("BALANCE","CASHLINE"): raise ValueError("Invalid payment source.")
+    if funding_source not in ("BALANCE","CASHLINE","DYNAMIC_CASHLINE"): raise ValueError("Invalid payment source.")
     if not recipient_account_number:
         raise ValueError("Recipient account number is required.")
 
@@ -382,13 +378,19 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 total = amount + fee
                 if funding_source=="BALANCE":
                     if int(sender[5]) < total: raise ValueError("Insufficient MineBank Balance.")
+                elif funding_source=="DYNAMIC_CASHLINE":
+                    dynamic_capacity=_dynamic_cashline_capacity(cur,sender[0],amount)
+                    if dynamic_capacity is None:
+                        raise ValueError("Dynamic CashLine is not active for this account.")
+                    if total>dynamic_capacity:
+                        raise ValueError(f"Dynamic CashLine assessment declined this payment. Current assessed capacity: {dynamic_capacity} Emerald.")
                 else:
                     cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(sender[0],))
                     facility=cur.fetchone()
-                    if not facility or facility[1]!="ACTIVE": raise ValueError("CashLine is not active for this account.")
+                    if not facility or facility[1]!="ACTIVE": raise ValueError("Standard CashLine is not active for this account.")
                     outstanding=cashline_outstanding(cur,sender[0])
                     available_credit=max(0,int(facility[0])-outstanding)
-                    if total>available_credit: raise ValueError(f"Insufficient CashLine availability. Available: {available_credit} Emerald.")
+                    if total>available_credit: raise ValueError(f"Insufficient Standard CashLine availability. Available: {available_credit} Emerald.")
 
                 risk_score = 0
                 risk_reasons = []
@@ -422,6 +424,8 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 status = "PENDING_BUSINESS_APPROVAL" if requires_business_approval else ("PENDING_APPROVAL" if amount > PENDING_APPROVAL_THRESHOLD or risk_score >= 60 else "COMPLETED")
                 if funding_source=="CASHLINE":
                     transfer_kind="CASHLINE"
+                elif funding_source=="DYNAMIC_CASHLINE":
+                    transfer_kind="DYNAMIC_CASHLINE"
                 elif transfer_kind is None:
                     transfer_kind = "OWN_TRANSFER" if sender[1] == recipient[1] else f"{sender[3]}_TO_{recipient[3]}"
                 txid = next_transaction_id(cur)
@@ -507,7 +511,7 @@ def reject_business_transfer(transaction_id, approver_client_id, reason=None, ip
                     raise ValueError("Only an Owner, Business Admin or Finance Manager can reject this payment.")
                 if row[2]==approver_client_id:
                     raise ValueError("The payment creator cannot reject their own payment.")
-                if row[8]=="CASHLINE":
+                if row[8] in ("CASHLINE","DYNAMIC_CASHLINE"):
                     cur.execute("UPDATE bank_accounts SET monthly_outgoing_used=GREATEST(0,monthly_outgoing_used-%s),updated_at=CURRENT_TIMESTAMP WHERE id=%s",(row[5],row[4]))
                 else:
                     cur.execute("""UPDATE bank_accounts SET balance=balance+%s,
@@ -565,7 +569,7 @@ def reject_transfer(transaction_id, actor_user_id, reason=None, ip_address=None)
                 sender = _lock_account(cur, tx[1])
                 if not sender:
                     raise ValueError("Sender account not found.")
-                if tx[5]=="CASHLINE":
+                if tx[5] in ("CASHLINE","DYNAMIC_CASHLINE"):
                     cur.execute("UPDATE bank_accounts SET monthly_outgoing_used=GREATEST(0,monthly_outgoing_used-%s),updated_at=CURRENT_TIMESTAMP WHERE id=%s",(tx[2],tx[1]))
                 else:
                     cur.execute("UPDATE bank_accounts SET balance=balance+%s,monthly_outgoing_used=GREATEST(0,monthly_outgoing_used-%s),updated_at=CURRENT_TIMESTAMP WHERE id=%s",(tx[2]+tx[3],tx[2],tx[1]))
@@ -591,7 +595,7 @@ def cancel_transfer(transaction_id, actor_client_id, ip_address=None):
                 sender=_lock_account(cur,tx[1])
                 if not sender or sender[1]!=actor_client_id:
                     raise ValueError("You cannot cancel this transfer.")
-                if tx[5]=="CASHLINE":
+                if tx[5] in ("CASHLINE","DYNAMIC_CASHLINE"):
                     cur.execute("UPDATE bank_accounts SET monthly_outgoing_used=GREATEST(0,monthly_outgoing_used-%s),updated_at=CURRENT_TIMESTAMP WHERE id=%s",(tx[2],tx[1]))
                 else:
                     cur.execute("""UPDATE bank_accounts SET balance=balance+%s,
