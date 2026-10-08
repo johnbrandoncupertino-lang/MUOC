@@ -1073,9 +1073,12 @@ def minebank_credit_page():
                 maximum=int(account.get("default_credit_limit") or 0)
                 if amount < 300 or (maximum and amount > maximum):
                     raise ValueError(f"CashLine request must be between 300 and {maximum} Emerald.")
+                assessment=credicheck_assess(session["minebank_client_id"],account,"CASHLINE",amount)
+                preview["credicheck_assessment"]=assessment["decision"]
+                preview["credicheck_reason"]=assessment["reason"]
                 create_request(session["minebank_client_id"],"CREDIT_LINE",account["id"],preview)
                 session.pop("cashline_request_preview",None)
-                flash("CashLine request submitted for bank approval.","success")
+                flash("CashLine request submitted for bank review. CrediCheck assessment recorded.","success")
             else:
                 raise ValueError("Invalid CashLine operation.")
             return redirect(url_for("minebank_credit_page"))
@@ -2179,9 +2182,11 @@ def minebank_credit_page():
                                                 WHERE (l.sender_account_id=%s AND l.transfer_kind='CASHLINE')
                                                    OR (l.recipient_account_id=%s AND l.transaction_type IN ('CREDIT_INTEREST','CREDIT_FEE','CREDIT_REPAYMENT'))
                                                 ORDER BY l.created_at DESC LIMIT 100""",(account["id"],account["id"]))
+    dynamic_cashline=execute_query_dict("SELECT * FROM dynamic_cashlines WHERE account_id=%s",(account["id"],))
+    dynamic_cashline=dynamic_cashline[0] if dynamic_cashline else None
     return render_template("minebank_portal.html",mode="credit",account=account,
                            facility=facility[0] if facility else None,statements=statements,
-                           cashline_outstanding=outstanding,cashline_transactions=cashline_transactions,
+                           cashline_outstanding=outstanding,cashline_transactions=cashline_transactions,dynamic_cashline=dynamic_cashline,
                            repayment_sources=[a for a in get_accounts(session["minebank_client_id"]) if int(a["id"])!=int(account["id"])],
                            portal_active="credit")
 
