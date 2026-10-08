@@ -16,14 +16,14 @@ document.querySelectorAll('[data-range]').forEach(b=>b.addEventListener('click',
 <style>
 .transfer-shell{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(260px,.8fr);gap:18px;align-items:start}
 .transfer-panel{overflow:hidden}
-.transfer-hero{padding:18px 20px;margin:-2px -2px 18px;border-radius:14px;background:linear-gradient(120deg,rgba(50,115,180,.15),rgba(70,170,145,.08));border:1px solid var(--border-color,rgba(120,140,160,.2))}
+.transfer-hero{padding:18px 20px;margin:-2px -2px 18px;border-radius:5px;background:rgba(59,130,196,.07);border:1px solid var(--border-color,rgba(120,140,160,.2))}
 .transfer-kicker{font-size:11px;letter-spacing:.14em;text-transform:uppercase;font-weight:800;opacity:.72}
 .transfer-hero h2{margin:7px 0 5px;font-size:22px}.transfer-hero p{margin:0;opacity:.78}
 .transfer-progress{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px;margin:18px 0 22px}
-.transfer-progress span{height:4px;border-radius:99px;background:var(--border-color,rgba(120,140,160,.25));transition:background .2s}
+.transfer-progress span{height:4px;border-radius:99px;background:var(--border-color,rgba(120,140,160,.25));transition:background .12s}
 .transfer-progress span.active{background:var(--accent,#3b82c4)}
 .transfer-step-title{display:flex;gap:12px;align-items:center;margin:0 0 16px}
-.transfer-step-number{width:34px;height:34px;flex:0 0 34px;border-radius:10px;display:grid;place-items:center;font-weight:800;background:rgba(59,130,196,.13);color:var(--accent,#3b82c4)}
+.transfer-step-number{width:34px;height:34px;flex:0 0 34px;border-radius:4px;display:grid;place-items:center;font-weight:800;background:rgba(59,130,196,.13);color:var(--accent,#3b82c4)}
 .transfer-step h3{margin:0 0 4px;font-size:17px}.transfer-step .muted{margin:0}
 .transfer-field{margin:14px 0}.transfer-field label{display:block;font-weight:650;margin-bottom:7px}
 .transfer-field input,.transfer-field select{width:100%;box-sizing:border-box}
@@ -32,17 +32,17 @@ document.querySelectorAll('[data-range]').forEach(b=>b.addEventListener('click',
 .transfer-range{width:100%;margin:15px 0 4px;accent-color:var(--accent,#3b82c4)}
 .transfer-amount-meta{display:flex;justify-content:space-between;gap:12px;font-size:12px;opacity:.7}
 .transfer-source-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:9px;margin-top:8px}
-.transfer-source-option{display:block;border:1px solid var(--border-color,rgba(120,140,160,.25));border-radius:12px;padding:12px;cursor:pointer;transition:border-color .15s,background .15s}
+.transfer-source-option{display:block;border:1px solid var(--border-color,rgba(120,140,160,.25));border-radius:5px;padding:12px;cursor:pointer;transition:border-color .12s,background .12s}
 .transfer-source-option:has(input:checked){border-color:var(--accent,#3b82c4);background:rgba(59,130,196,.09)}
 .transfer-source-option input{margin-right:6px}.transfer-source-option b,.transfer-source-option small{display:block}.transfer-source-option small{margin:5px 0 0 22px;opacity:.72}
 .transfer-summary{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:11px;padding:13px 0;border-bottom:1px solid var(--border-color,rgba(120,140,160,.18))}
 .transfer-summary:last-child{border-bottom:0}.transfer-summary strong{text-align:right}
 .transfer-summary.total{font-size:17px;font-weight:800}
-.transfer-callout{padding:12px 14px;border-radius:10px;background:rgba(120,140,160,.09);font-size:13px;margin:14px 0}
+.transfer-callout{padding:12px 14px;border-radius:4px;background:rgba(120,140,160,.09);font-size:13px;margin:14px 0}
 .transfer-actions{display:flex;gap:9px;justify-content:space-between;align-items:center;margin-top:22px;padding-top:16px;border-top:1px solid var(--border-color,rgba(120,140,160,.2))}
 .transfer-actions .button{min-width:120px}
 .transfer-step{display:none}.transfer-step.active{display:block;animation:transferIn .18s ease-out}
-@keyframes transferIn{from{opacity:.45;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+@keyframes transferIn{from{opacity:.8}to{opacity:1}}
 .transfer-side-stat{padding:13px 0;border-bottom:1px solid var(--border-color,rgba(120,140,160,.18))}
 .transfer-side-stat:last-child{border-bottom:0}.transfer-side-stat b{display:block;margin-bottom:4px}
 .transfer-safe{display:flex;gap:10px;align-items:flex-start}.transfer-safe .symbol{font-size:20px}
