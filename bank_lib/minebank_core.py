@@ -172,9 +172,13 @@ def _dynamic_cashline_capacity(cur, account_id, requested_amount=0):
     profile=cur.fetchone()
     if not profile or str(profile[1] or '').upper()!="ACTIVE":
         raise ValueError("Dynamic CashLine is not currently available for this account.")
+    # Legacy databases may contain a blank score despite the current schema
+    # declaring this field INTEGER. Use the neutral default rather than leaking
+    # a low-level int('') exception into a customer transfer.
     try:
-        score=int(profile[0] or 0)
-    except (TypeError, ValueError):
+        raw_score = str(profile[0]).strip() if profile[0] is not None else ""
+        score = int(raw_score) if raw_score else 5
+    except (TypeError, ValueError, OverflowError):
         raise ValueError("Dynamic CashLine profile score is invalid. Please contact MineBank support.")
     if score < 0 or score > 10:
         raise ValueError("Dynamic CashLine profile score is outside the supported range.")
