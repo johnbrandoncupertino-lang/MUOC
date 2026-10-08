@@ -108,6 +108,16 @@ def ensure_minebank_schema():
                 AND to_regclass('public.bank_notifications') IS NOT NULL
         """)
         if rows and rows[0][0]:
+            # Existing deployments need lightweight profile/payment migrations too.
+            try:
+                execute_query("""ALTER TABLE bank_clients
+                    ADD COLUMN IF NOT EXISTS discord_username VARCHAR(100),
+                    ADD COLUMN IF NOT EXISTS state VARCHAR(120),
+                    ADD COLUMN IF NOT EXISTS main_language VARCHAR(80)""", fetch=False, commit=True)
+                execute_query("""ALTER TABLE minebank_scheduled_transfers
+                    ADD COLUMN IF NOT EXISTS funding_source VARCHAR(20) NOT NULL DEFAULT 'BALANCE'""", fetch=False, commit=True)
+            except Exception as exc:
+                print(f"MineBank profile/payment migration warning: {type(exc).__name__}: {exc}")
             try:
                 from .credicheck import ensure_credicheck_schema
                 ensure_credicheck_schema()
