@@ -755,11 +755,10 @@ def repay_loan_fraction(loan_id, source_account_id, actor_client_id, numerator=1
                     cur.execute("UPDATE minebank_loans SET installments_paid=term_days,status='COMPLETED',total_cost=0,principal=0,next_due_date=NULL,completed_at=CURRENT_TIMESTAMP WHERE id=%s",(loan_id,))
                     status="COMPLETED"
                 else:
-                    new_total=max(0,int(loan[5])-amount)
+                    new_remaining=max(0,remaining-amount)
+                    new_total=new_remaining + int(loan[2])*int(loan[3])
                     new_principal=max(0,int(loan[8] or 0)-amount)
-                    remaining_days=max(1,int(loan[4])-int(loan[3]))
-                    new_installment=max(1,(new_total+remaining_days-1)//remaining_days)
-                    cur.execute("UPDATE minebank_loans SET total_cost=%s,principal=%s,installment_amount=%s WHERE id=%s",(new_total,new_principal,new_installment,loan_id))
+                    cur.execute("UPDATE minebank_loans SET total_cost=%s,principal=%s WHERE id=%s",(new_total,new_principal,loan_id))
                     status="ACTIVE"
                 return {"transaction_id":txid,"amount":amount,"status":status,"remaining":max(0,remaining-amount)}
     finally: release_db_connection(conn)
