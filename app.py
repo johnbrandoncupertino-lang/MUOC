@@ -348,10 +348,14 @@ def minebank_dashboard():
     total_cashline_credit = 0
     for a in accounts:
         static_limit = int(a.get("facility_credit_limit") or 0) if str(a.get("credit_status") or "").upper()=="ACTIVE" else 0
-        dynamic_rows = execute_query_dict(
-            "SELECT status FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE' LIMIT 1",
-            (a["id"],)
-        )
+        try:
+            dynamic_rows = execute_query_dict(
+                "SELECT status FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE' LIMIT 1",
+                (a["id"],)
+            )
+        except Exception as exc:
+            print(f"MineBank dashboard Dynamic CashLine warning: {type(exc).__name__}: {exc}")
+            dynamic_rows = []
         dynamic_active = bool(dynamic_rows)
         if dynamic_active:
             product_type = "Dynamic"
@@ -1209,7 +1213,10 @@ def minebank_credit_page():
         return "MineBank database is temporarily unavailable. Please try again in a moment.", 503
     if not ensure_transaction_schema():
         return "MineBank transaction services are temporarily unavailable. Please try again in a moment.", 503
-    ensure_credicheck_schema()
+    try:
+        ensure_credicheck_schema()
+    except Exception as exc:
+        print(f"MineBank CashLine CrediCheck schema warning: {type(exc).__name__}: {exc}")
     account=selected_account()
     if not account:
         flash("No bank account exists for this client yet.","error")
