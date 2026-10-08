@@ -1038,7 +1038,7 @@ def minebank_dynamic_cashline_activate():
     try:
         ensure_transaction_schema()
         ensure_credicheck_schema()
-        account=selected_account()
+        account=selected_account(request.form.get("account_id"))
         if not account:
             raise ValueError("No bank account is available.")
         profile=get_credicheck_profile(session["minebank_client_id"])
