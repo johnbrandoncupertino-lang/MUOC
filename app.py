@@ -1937,11 +1937,14 @@ def admin_minebank_profile(client_id):
         except Exception as exc:
             print(f"MineBank profile optional data warning: {type(exc).__name__}: {exc}")
             return []
-    profile_rows=execute_query_dict("""SELECT c.*,
+    profile_rows=execute_query_dict("""SELECT c.id,c.email,c.role,c.status,c.created_at,c.date_of_birth,c.first_name,c.last_name,
+        c.phone,c.address,c.city,c.postal_code,c.country,c.occupation,c.last_login,
         COUNT(DISTINCT a.id) FILTER (WHERE a.status<>'CLOSED') AS account_count,
         COALESCE(SUM(a.balance) FILTER (WHERE a.status<>'CLOSED'),0) AS total_balance
         FROM bank_clients c LEFT JOIN bank_accounts a ON a.client_id=c.id
-        WHERE c.id=%s GROUP BY c.id""",(client_id,))
+        WHERE c.id=%s
+        GROUP BY c.id,c.email,c.role,c.status,c.created_at,c.date_of_birth,c.first_name,c.last_name,
+                 c.phone,c.address,c.city,c.postal_code,c.country,c.occupation,c.last_login""",(client_id,))
     if not profile_rows:
         flash("Customer profile not found.","error")
         return redirect(url_for("admin_minebank_profiles"))
