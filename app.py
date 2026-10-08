@@ -1147,21 +1147,23 @@ def minebank_credit_page():
                     raise ValueError(f"CashLine request must be between 300 and {maximum} Emerald.")
                 session["cashline_request_preview"]={"requested_limit":amount,"reason":request.form.get("reason","")[:500]}
             elif action=="request_confirm":
-                preview=session.get("cashline_request_preview")
-                if not preview:
-                    amount=int(request.form.get("requested_limit","0"))
-                    maximum=int(account.get("default_credit_limit") or 0)
-                    if amount < 300 or (maximum and amount > maximum):
-                        raise ValueError(f"CashLine request must be between 300 and {maximum} Emerald.")
-                    preview={"requested_limit":amount,"reason":request.form.get("reason","")[:500]}
+                # The browser submits the complete request directly. Do not depend
+                # on a session preview surviving between wizard steps.
+                preview=session.get("cashline_request_preview") or {
+                    "requested_limit":request.form.get("requested_limit","0"),
+                    "reason":request.form.get("reason","")[:500],
+                }
                 ok,msg=verify_wallet_pin(session["minebank_client_id"],request.form.get("wallet_pin",""))
-                if not ok: raise ValueError(msg)
-                amount=int(preview["requested_limit"])
+                if not ok:
+                    raise ValueError(msg)
+                amount=int(preview.get("requested_limit") or 0)
                 maximum=int(account.get("default_credit_limit") or 0)
                 if amount < 300 or (maximum and amount > maximum):
                     raise ValueError(f"CashLine request must be between 300 and {maximum} Emerald.")
                 approval_mode=request.form.get("approval_mode","AUTO").upper()
-                if approval_mode not in {"AUTO","BANK_REVIEW"}: approval_mode="AUTO"
+                if approval_mode not in {"AUTO","BANK_REVIEW"}:
+                    approval_mode="AUTO"
+
                 if approval_mode=="BANK_REVIEW":
                     initial_fee=20 if amount>5000 else 10
                     if int(account.get("balance") or 0) < initial_fee:
@@ -1172,10 +1174,12 @@ def minebank_credit_page():
                     flash("CashLine request submitted for Bank review. CrediCheck eligibility was not used for this manual request.","success")
                 else:
                     auto_check=automatic_credit_eligibility(session["minebank_client_id"],account,"CASHLINE",amount)
+                    if amount>5000 or not auto_check["eligible"]:
+                        reason=" ".join(auto_check["reasons"]) if auto_check["reasons"] else "The request is not eligible for automatic approval."
+                        raise ValueError(f"Automatic CashLine approval is unavailable. Choose Bank review. {reason}")
                     assessment=credicheck_assess(session["minebank_client_id"],account,"CASHLINE",amount)
                     preview["credicheck_assessment"]=assessment["decision"]
                     preview["credicheck_reason"]=assessment["reason"]
-                    if amount<=5000 and auto_check["eligible"]:
                     execute_query("""INSERT INTO credit_facilities
                         (account_id,credit_limit,interest_monthly_bps,interest_annual_bps,activation_fee_monthly,status)
                         VALUES(%s,%s,CASE WHEN (SELECT account_type FROM bank_accounts WHERE id=%s)='PERSONAL' THEN 1830 ELSE 2370 END,
@@ -1195,11 +1199,6 @@ def minebank_credit_page():
                                         f"Your Standard CashLine for {amount} Emerald is now active.",account["id"])
                     session.pop("cashline_request_preview",None)
                     flash(f"CashLine approved automatically. Your {amount} Emerald Standard CashLine is now active.","success")
-                else:
-                    create_request(session["minebank_client_id"],"CREDIT_LINE",account["id"],preview)
-                    session.pop("cashline_request_preview",None)
-                    reason=" ".join(auto_check["reasons"]) if auto_check["reasons"] else "The request exceeds the automatic-approval threshold."
-                    flash(f"CashLine request submitted for Bank review. {reason}","success")
             else:
                 raise ValueError("Invalid CashLine operation.")
             return redirect(url_for("minebank_credit_page"))
