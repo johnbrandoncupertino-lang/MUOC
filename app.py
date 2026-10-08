@@ -975,6 +975,13 @@ def minebank_loans_page():
                  "PENDING","AUTO" if approval_mode=="AUTO" else "BANK_REVIEW"),commit=True)
             loan_id=rows[0][0]
             if approval_mode=="AUTO":
+                execute_query("""INSERT INTO credicheck_decisions
+                    (client_id,product_type,requested_amount,decision,score_snapshot,risk_snapshot,debt_snapshot,capacity_snapshot,decision_type,reason)
+                    VALUES(%s,'LOAN',%s,'AUTO_APPROVED',%s,
+                           (SELECT risk_level FROM credicheck_profiles WHERE client_id=%s),%s,%s,'AUTO_APPROVAL',
+                           'Loan automatically approved under MineBank rules.')""",
+                    (session["minebank_client_id"],amount,auto_check["score"],session["minebank_client_id"],
+                     profile["cashline_debt"],profile["maximum"]),commit=True)
                 result=disburse_loan(loan_id,session["minebank_client_id"])
                 create_notification(session["minebank_client_id"],"LOAN_APPROVED","Loan automatically approved",
                                     f"Your {loan_number} Loan for {amount} Emerald has been approved and deposited into your selected account.",
