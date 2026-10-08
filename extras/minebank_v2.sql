@@ -340,6 +340,7 @@ CREATE TABLE IF NOT EXISTS minebank_scheduled_transfers (
 );
 
 ALTER TABLE minebank_scheduled_transfers ADD COLUMN IF NOT EXISTS recurrence_config JSONB NOT NULL DEFAULT '{}'::jsonb;
+ALTER TABLE minebank_scheduled_transfers ADD COLUMN IF NOT EXISTS funding_source VARCHAR(20) NOT NULL DEFAULT 'BALANCE';
 ALTER TABLE minebank_scheduled_transfers ADD COLUMN IF NOT EXISTS last_error VARCHAR(500);
 ALTER TABLE minebank_scheduled_transfers ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ;
 ALTER TABLE minebank_scheduled_transfers DROP CONSTRAINT IF EXISTS minebank_scheduled_transfers_schedule_type_check;
