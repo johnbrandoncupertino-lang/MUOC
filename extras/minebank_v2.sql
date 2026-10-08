@@ -10,13 +10,35 @@ CREATE TABLE IF NOT EXISTS bank_clients (
     date_of_birth DATE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_login TIMESTAMPTZ
+    last_login TIMESTAMPTZ,
+    first_name VARCHAR(100),
+    last_name VARCHAR(100),
+    phone VARCHAR(40),
+    address VARCHAR(300),
+    city VARCHAR(120),
+    postal_code VARCHAR(20),
+    country VARCHAR(80),
+    occupation VARCHAR(120),
+    discord_username VARCHAR(100),
+    state VARCHAR(120),
+    main_language VARCHAR(80)
 );
 
 -- Authentication hardening for the v2 portal.
 CREATE SEQUENCE IF NOT EXISTS muoc_account_number_seq START 100001;
 
 ALTER TABLE bank_clients
+    ADD COLUMN IF NOT EXISTS first_name VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS last_name VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS phone VARCHAR(40),
+    ADD COLUMN IF NOT EXISTS address VARCHAR(300),
+    ADD COLUMN IF NOT EXISTS city VARCHAR(120),
+    ADD COLUMN IF NOT EXISTS postal_code VARCHAR(20),
+    ADD COLUMN IF NOT EXISTS country VARCHAR(80),
+    ADD COLUMN IF NOT EXISTS occupation VARCHAR(120),
+    ADD COLUMN IF NOT EXISTS discord_username VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS state VARCHAR(120),
+    ADD COLUMN IF NOT EXISTS main_language VARCHAR(80),
     ADD COLUMN IF NOT EXISTS wallet_pin_hash VARCHAR(255),
     ADD COLUMN IF NOT EXISTS wallet_pin_failed_attempts INTEGER NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS wallet_pin_locked_until TIMESTAMPTZ,
@@ -571,3 +593,8 @@ WHERE a.balance < 0
       SELECT 1 FROM credit_facilities cf
       WHERE cf.account_id=a.id AND cf.status IN ('ACTIVE','SUSPENDED')
   );
+
+ALTER TABLE bank_clients
+    ADD COLUMN IF NOT EXISTS discord_username VARCHAR(100),
+    ADD COLUMN IF NOT EXISTS state VARCHAR(120),
+    ADD COLUMN IF NOT EXISTS main_language VARCHAR(80);
