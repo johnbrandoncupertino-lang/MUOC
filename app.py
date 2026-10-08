@@ -22,7 +22,7 @@ from bank_lib.minebank_core import (
     approve_transfer, chargeback, deposit, withdraw, draw_credit,
     reject_transfer, reject_business_transfer, approve_business_transfer,
     repay_credit, transfer, cancel_transfer,
-    accrue_daily_credit_interest, generate_cashline_statement, disburse_loan, repay_loan_installment,
+    accrue_daily_credit_interest, generate_cashline_statement, disburse_loan, repay_loan_installment, auto_pay_due_loans, repay_loan_full,
 )
 from bank_lib.minebank_requests import create_request, list_requests, create_notification
 from bank_lib.minebank_security import ensure_security_schema, validate_session, list_active_sessions, terminate_session, terminate_other_sessions, security_event
@@ -301,7 +301,7 @@ def selected_account(account_id=None):
         accounts = get_accounts(session["minebank_client_id"])
     if not accounts:
         return None
-    wanted = account_id or session.get("minebank_account_id") or request.args.get("account_id")
+    wanted = account_id or request.args.get("account_id") or session.get("minebank_account_id")
     for account in accounts:
         if wanted and int(account["id"]) == int(wanted):
             session["minebank_account_id"] = int(account["id"])
@@ -716,7 +716,7 @@ def minebank_transaction_receipt(transaction_id):
                             (transaction_id,session["minebank_client_id"],session["minebank_client_id"]))
     if not rows: return "Transaction not found",404
     tx=rows[0]
-    customer_rows=execute_query_dict("SELECT id,email,COALESCE(full_name,email) AS full_name FROM bank_clients WHERE id=%s",(session["minebank_client_id"],))
+    customer_rows=execute_query_dict("SELECT id,email,TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) AS full_name FROM bank_clients WHERE id=%s",(session["minebank_client_id"],))
     preferred_account=tx["sender_account_id"] or tx["recipient_account_id"]
     account_rows=execute_query_dict("SELECT a.*,t.display_name AS tier_name FROM bank_accounts a LEFT JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE a.id=%s AND a.client_id=%s",(preferred_account,session["minebank_client_id"]))
     customer=customer_rows[0] if customer_rows else {}
