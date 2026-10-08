@@ -60,20 +60,46 @@ def csrf_token():
 
 @app.context_processor
 def inject_bank_context():
-    client = current_client()
-    accounts = get_accounts(client["id"]) if client else []
+    # The navigation/context layer must never be allowed to crash a page.
+    # Banking pages load their own authoritative account data; this context
+    # contains only best-effort navigation information.
+    client = None
+    accounts = []
+    pending = updates = unread = 0
+    try:
+        client = current_client()
+    except Exception as exc:
+        print(f"MineBank context client warning: {type(exc).__name__}: {exc}")
+    if client:
+        try:
+            accounts = get_accounts(client["id"])
+        except Exception as exc:
+            print(f"MineBank context accounts warning: {type(exc).__name__}: {exc}")
+            accounts = []
+        try:
+            pending = pending_count(client["id"])
+        except Exception as exc:
+            print(f"MineBank context pending warning: {type(exc).__name__}: {exc}")
+        try:
+            updates = request_update_count(client["id"])
+        except Exception as exc:
+            print(f"MineBank context updates warning: {type(exc).__name__}: {exc}")
+        try:
+            unread = unread_message_count(client["id"])
+        except Exception as exc:
+            print(f"MineBank context notifications warning: {type(exc).__name__}: {exc}")
+    frozen = None
+    if accounts:
+        frozen = next((a for a in accounts if a.get("id") == session.get("minebank_account_id") and a.get("status") == "FROZEN"),
+                      next((a for a in accounts if a.get("status") == "FROZEN"), None))
     return {
         "csrf_token": csrf_token,
         "minebank_client": client,
         "minebank_accounts": accounts,
-        "minebank_pending_requests": pending_count(client["id"]) if client else 0,
-        "minebank_request_updates": request_update_count(client["id"]) if client else 0,
-        "minebank_unread_messages": unread_message_count(client["id"]) if client else 0,
-        "minebank_frozen_account": (
-            next((a for a in accounts if a.get("id") == session.get("minebank_account_id") and a.get("status") == "FROZEN"),
-                 next((a for a in accounts if a.get("status") == "FROZEN"), None))
-            if client else None
-        ),
+        "minebank_pending_requests": pending,
+        "minebank_request_updates": updates,
+        "minebank_unread_messages": unread,
+        "minebank_frozen_account": frozen,
     }
 
 def unread_message_count(client_id):
@@ -96,33 +122,72 @@ def current_client():
     return client
 
 def get_accounts(client_id):
-    # Keep account/dashboard CashLine data compatible with older production schemas.
-    ensure_transaction_schema()
+    """Return accounts without making optional credit features a hard dependency.
+
+    The portal must remain usable when an older production database is missing
+    a newer CashLine/Dynamic-CashLine table or column. Core account data is
+    loaded first; optional credit data is enriched independently.
+    """
     cache = getattr(__import__("flask").g, "_minebank_accounts", None)
     if cache is not None and cache[0] == client_id:
         return cache[1]
+
     accounts = execute_query_dict(
         """SELECT a.id,a.account_number,a.account_type,a.balance,a.status,
                   a.monthly_outgoing_used,a.monthly_outgoing_period,a.last_outgoing_at,a.freeze_type,
                   t.code,t.display_name,t.monthly_fee,t.max_balance,t.monthly_outgoing_limit,
-                  t.daily_outgoing_limit,t.single_transfer_limit,t.credit_enabled,t.default_credit_limit,
-                  cf.credit_limit AS facility_credit_limit,cf.status AS credit_status,
-                  CASE WHEN cf.status='ACTIVE' THEN GREATEST(0, COALESCE(cf.credit_limit,0) - COALESCE((
-                    SELECT SUM(CASE WHEN l.transaction_type='TRANSFER' AND l.transfer_kind='CASHLINE'
-                                      AND l.status IN ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL') THEN l.amount+l.fee
-                                    WHEN l.transaction_type IN ('CREDIT_INTEREST','CREDIT_FEE') AND l.status='COMPLETED' THEN l.amount
-                                    WHEN l.transaction_type='CREDIT_REPAYMENT' AND l.status='COMPLETED' AND l.recipient_account_id=a.id THEN -l.amount
-                                    ELSE 0 END)
-                    FROM ledger_transactions l WHERE l.sender_account_id=a.id OR l.recipient_account_id=a.id
-                  ),0)) ELSE 0 END AS available_credit
-           FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
-           LEFT JOIN credit_facilities cf ON cf.account_id=a.id
-           WHERE a.status<>'CLOSED' AND (a.client_id=%s OR EXISTS (SELECT 1 FROM minebank_business_members bm WHERE bm.account_id=a.id AND bm.client_id=%s))
-           ORDER BY a.account_type,a.id""", (client_id,client_id,)
+                  t.daily_outgoing_limit,t.single_transfer_limit,t.credit_enabled,t.default_credit_limit
+           FROM bank_accounts a
+           JOIN account_tiers_v2 t ON t.id=a.tier_id
+           WHERE a.status<>'CLOSED'
+             AND (a.client_id=%s OR EXISTS (
+                    SELECT 1 FROM minebank_business_members bm
+                    WHERE bm.account_id=a.id AND bm.client_id=%s
+                 ))
+           ORDER BY a.account_type,a.id""",
+        (client_id,client_id)
     )
+
+    # CashLine is an enrichment, never a prerequisite for loading an account.
+    for account in accounts:
+        account.update({
+            "facility_credit_limit": 0,
+            "credit_status": "NONE",
+            "available_credit": 0,
+        })
+        try:
+            rows = execute_query_dict(
+                "SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s LIMIT 1",
+                (account["id"],)
+            )
+            if rows:
+                facility = rows[0]
+                account["facility_credit_limit"] = int(facility.get("credit_limit") or 0)
+                account["credit_status"] = str(facility.get("status") or "NONE").upper()
+                if account["credit_status"] == "ACTIVE":
+                    # The core calculator owns CashLine accounting rules. If an
+                    # older schema cannot calculate it, retain the facility limit
+                    # rather than failing the entire account query.
+                    try:
+                        from bank_lib.minebank_core import cashline_outstanding
+                        conn = __import__("bank_lib.database",fromlist=["get_db_connection"]).get_db_connection()
+                        if conn:
+                            try:
+                                with conn.cursor() as cur:
+                                    used = int(cashline_outstanding(cur, account["id"]) or 0)
+                            finally:
+                                __import__("bank_lib.database",fromlist=["release_db_connection"]).release_db_connection(conn)
+                            account["available_credit"] = max(0, account["facility_credit_limit"] - used)
+                        else:
+                            account["available_credit"] = account["facility_credit_limit"]
+                    except Exception as exc:
+                        print(f"MineBank account CashLine calculation warning: {type(exc).__name__}: {exc}")
+                        account["available_credit"] = account["facility_credit_limit"]
+        except Exception as exc:
+            print(f"MineBank account CashLine enrichment warning: {type(exc).__name__}: {exc}")
+
     __import__("flask").g._minebank_accounts = (client_id, accounts)
     return accounts
-
 def request_update_count(client_id):
     rows = execute_query("SELECT COUNT(*) FROM bank_notifications WHERE client_id=%s AND notification_type='REQUEST_UPDATE' AND read_at IS NULL",
                          (client_id,))
@@ -1935,7 +2000,10 @@ def admin_minebank_profiles():
     # missing an optional CashLine/CrediCheck table or column.
     ensure_minebank_schema()
     ensure_transaction_schema()
-    ensure_credicheck_schema()
+    try:
+        ensure_credicheck_schema()
+    except Exception as exc:
+        print(f"MineBank profiles CrediCheck schema warning: {type(exc).__name__}: {exc}")
     q=request.args.get("q","").strip()
     params=[]
     where=""
@@ -2036,8 +2104,16 @@ def admin_minebank_profile(client_id):
         LEFT JOIN bank_accounts a ON a.id=bm.account_id
         LEFT JOIN minebank_business_profiles bp ON bp.account_id=bm.account_id
         WHERE bm.client_id=%s ORDER BY bm.created_at DESC""",(client_id,))
-    cc=get_credicheck_profile(client_id)
-    cc_events=__import__("bank_lib.credicheck",fromlist=["list_events"]).list_events(client_id,150)
+    try:
+        cc=get_credicheck_profile(client_id)
+    except Exception as exc:
+        print(f"MineBank profile CrediCheck warning: {type(exc).__name__}: {exc}")
+        cc={"client_id":client_id,"score":None,"credit_status":"UNKNOWN"}
+    try:
+        cc_events=__import__("bank_lib.credicheck",fromlist=["list_events"]).list_events(client_id,150)
+    except Exception as exc:
+        print(f"MineBank profile CrediCheck events warning: {type(exc).__name__}: {exc}")
+        cc_events=[]
     cc_decisions=safe_rows("SELECT * FROM credicheck_decisions WHERE client_id=%s ORDER BY created_at DESC LIMIT 100",(client_id,))
     cc_overrides=safe_rows("""SELECT o.*,a.email admin_email FROM credicheck_overrides o
         LEFT JOIN bank_clients a ON a.id=o.admin_id WHERE o.client_id=%s ORDER BY o.created_at DESC LIMIT 100""",(client_id,))
