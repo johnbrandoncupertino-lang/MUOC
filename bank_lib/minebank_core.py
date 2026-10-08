@@ -576,6 +576,11 @@ def approve_transfer(transaction_id, actor_user_id, ip_address=None):
                         raise ValueError("Recipient account cannot receive the transfer while frozen.")
                 elif not recipient or recipient[6] not in ("ACTIVE","LIMITED"):
                     raise ValueError("Recipient account cannot receive the transfer.")
+                cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
+                max_balance_row = cur.fetchone()
+                max_balance = max_balance_row[0] if max_balance_row else None
+                if max_balance is not None and int(recipient[5]) + int(tx[3]) > int(max_balance):
+                    raise ValueError("Recipient account balance limit exceeded; transfer remains pending.")
                 cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
                             (tx[3],tx[2]))
                 cur.execute("""UPDATE ledger_transactions SET status='COMPLETED',approved_by=%s,
