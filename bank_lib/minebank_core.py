@@ -170,8 +170,14 @@ def _dynamic_cashline_capacity(cur, account_id, requested_amount=0):
     client_id, tier_id, tier_code = row
     cur.execute("SELECT score,credit_status FROM credicheck_profiles WHERE client_id=%s",(client_id,))
     profile=cur.fetchone()
-    if not profile or int(profile[0] or 0)>10 or str(profile[1] or '').upper()!="ACTIVE":
+    if not profile or str(profile[1] or '').upper()!="ACTIVE":
         raise ValueError("Dynamic CashLine is not currently available for this account.")
+    try:
+        score=int(profile[0] or 0)
+    except (TypeError, ValueError):
+        raise ValueError("Dynamic CashLine profile score is invalid. Please contact MineBank support.")
+    if score < 0 or score > 10:
+        raise ValueError("Dynamic CashLine profile score is outside the supported range.")
     cur.execute("""SELECT COUNT(*) FROM minebank_loans
                    WHERE client_id=%s AND status='ACTIVE' AND next_due_date<CURRENT_DATE""",(client_id,))
     overdue=cur.fetchone()
@@ -185,12 +191,6 @@ def _dynamic_cashline_capacity(cur, account_id, requested_amount=0):
            "BUSINESS":5000,"BUSINESS_PRO":25000,"CORPORATE":100000}
     multipliers={0:1.50,1:1.50,2:1.50,3:1.25,4:1.25,5:1.25,6:1.0,7:1.0,8:.75,9:.75,10:.75}
     base=bases.get(str(tier_code or '').upper(),0)
-    try:
-        score=int(profile[0] or 0)
-    except (TypeError, ValueError):
-        raise ValueError("Dynamic CashLine profile score is invalid. Please contact MineBank support.")
-    if score < 0 or score > 10:
-        raise ValueError("Dynamic CashLine profile score is outside the supported range.")
     capacity=int(base*multipliers.get(score,0))
     debt=cashline_outstanding(cur,account_id)
     return max(0,capacity-debt)
