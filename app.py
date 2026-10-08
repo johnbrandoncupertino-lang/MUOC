@@ -1057,7 +1057,23 @@ def minebank_credit_page():
     if request.method=="POST":
         action=request.form.get("action","request")
         try:
-            if action=="repay":
+            if action=="activate_dynamic":
+                profile=get_credicheck_profile(session["minebank_client_id"])
+                if int(profile.get("score") or 0)>10 or str(profile.get("credit_status") or "").upper()!="ACTIVE":
+                    raise ValueError("Dynamic CashLine is not currently available for your account.")
+                active_dynamic=execute_query_dict("SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE'",(account["id"],))
+                if active_dynamic:
+                    raise ValueError("Dynamic CashLine is already active on this account.")
+                active_facility=execute_query_dict("SELECT id FROM credit_facilities WHERE account_id=%s AND status='ACTIVE'",(account["id"],))
+                if active_facility and cashline_outstanding_for_app(account["id"])>0:
+                    raise ValueError("Repay your outstanding Standard CashLine balance before switching to Dynamic CashLine.")
+                activate_dynamic_cashline(session["minebank_client_id"],account["id"],session["minebank_client_id"])
+                create_notification(session["minebank_client_id"],"DYNAMIC_CASHLINE_ELIGIBLE","Dynamic CashLine activated","Your Dynamic CashLine is now active on this account.",account["id"])
+                flash("Dynamic CashLine activated successfully.","success")
+            elif action=="close_dynamic":
+                close_dynamic_cashline(session["minebank_client_id"],account["id"],session["minebank_client_id"])
+                flash("Dynamic CashLine closed.","success")
+            elif action=="repay":
                 source_id=int(request.form.get("source_account_id","0"))
                 amount=int(request.form.get("amount","0"))
                 result=repay_credit(account["id"],amount,source_id)
