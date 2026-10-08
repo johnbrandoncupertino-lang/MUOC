@@ -13,7 +13,7 @@ from flask import Flask, Response, flash, jsonify, redirect, render_template, re
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from bank_lib.database import execute_query, execute_query_dict, ensure_minebank_schema, ensure_transaction_schema, ensure_message_schema, ensure_loan_schema
-from bank_lib.credicheck import ensure_credicheck_schema, get_profile as get_credicheck_profile, assess as credicheck_assess, set_score as credicheck_set_score, set_product_access as credicheck_set_product_access, activate_dynamic_cashline, close_dynamic_cashline
+from bank_lib.credicheck import ensure_credicheck_schema, get_profile as get_credicheck_profile, assess as credicheck_assess, automatic_credit_eligibility, set_score as credicheck_set_score, set_product_access as credicheck_set_product_access, activate_dynamic_cashline, close_dynamic_cashline
 from bank_lib.minebank_auth import (
     create_account, get_client_accounts, login_client, logout_client,
     set_wallet_pin, verify_wallet_pin,
@@ -937,7 +937,6 @@ def minebank_loans_page():
             term=int(request.form.get("term_days","0"))
             source_id=int(request.form.get("source_account_id","0"))
             destination_id=int(request.form.get("destination_account_id","0"))
-            approval_mode=request.form.get("approval_mode","BANK_REVIEW").upper()
             pin=request.form.get("wallet_pin","")
             if amount<10000 or amount>50000000:
                 raise ValueError("Loan amount must be between 10,000 and 50,000,000 Emerald.")
@@ -948,19 +947,20 @@ def minebank_loans_page():
             owned_ids={int(a["id"]) for a in profile["accounts"]}
             if source_id not in owned_ids or destination_id not in owned_ids:
                 raise ValueError("Select one of your own accounts.")
-            if any(int(a["id"])==destination_id and a["status"]!="ACTIVE" for a in profile["accounts"]):
-                raise ValueError("The destination account is not active.")
-            if any(int(a["id"])==source_id and a["status"]!="ACTIVE" for a in profile["accounts"]):
-                raise ValueError("The fee source account is not active.")
-            if approval_mode=="AUTO":
-                if amount>20000:
-                    raise ValueError("Loans above 20,000 Emerald always require Bank authorisation.")
-                if amount<10000 or (profile["cashline_limit"] and profile["cashline_debt"] >= profile["cashline_limit"]*0.40):
-                    raise ValueError("This Loan does not qualify for automatic approval. Choose Bank review.")
-                if profile["balance"] < int(amount*1.10):
-                    raise ValueError("Automatic approval requires sufficient available balance to cover the Loan plus 10%.")
+            destination_account=next(a for a in profile["accounts"] if int(a["id"])==destination_id)
+            source_account=next(a for a in profile["accounts"] if int(a["id"])==source_id)
+            if destination_account["status"]!="ACTIVE" or source_account["status"]!="ACTIVE":
+                raise ValueError("The selected account is not active.")
+
+            # MineBank automatically approves qualifying Loans up to 20,000 Emerald.
+            # Larger Loans are always routed to Bank review. The customer cannot
+            # opt out of the automatic route when all automatic conditions pass.
+            auto_check=automatic_credit_eligibility(session["minebank_client_id"],destination_account,"LOAN",amount)
+            if amount<=20000 and auto_check["eligible"]:
+                approval_mode="AUTO"
             else:
                 approval_mode="BANK_REVIEW"
+
             ok,msg=verify_wallet_pin(session["minebank_client_id"],pin)
             if not ok: raise ValueError(msg)
             terms=loan_terms(amount,term)
@@ -1074,12 +1074,39 @@ def minebank_credit_page():
                 maximum=int(account.get("default_credit_limit") or 0)
                 if amount < 300 or (maximum and amount > maximum):
                     raise ValueError(f"CashLine request must be between 300 and {maximum} Emerald.")
+                auto_check=automatic_credit_eligibility(session["minebank_client_id"],account,"CASHLINE",amount)
                 assessment=credicheck_assess(session["minebank_client_id"],account,"CASHLINE",amount)
                 preview["credicheck_assessment"]=assessment["decision"]
                 preview["credicheck_reason"]=assessment["reason"]
-                create_request(session["minebank_client_id"],"CREDIT_LINE",account["id"],preview)
-                session.pop("cashline_request_preview",None)
-                flash("CashLine request submitted for bank review. CrediCheck assessment recorded.","success")
+
+                if amount<=5000 and auto_check["eligible"]:
+                    # Standard CashLine requests up to 5,000 Emerald are activated
+                    # immediately when every automatic-credit condition is satisfied.
+                    execute_query("""INSERT INTO credit_facilities
+                        (account_id,credit_limit,interest_monthly_bps,interest_annual_bps,activation_fee_monthly,status)
+                        VALUES(%s,%s,CASE WHEN (SELECT account_type FROM bank_accounts WHERE id=%s)='PERSONAL' THEN 1830 ELSE 2370 END,
+                               CASE WHEN (SELECT account_type FROM bank_accounts WHERE id=%s)='PERSONAL' THEN 1830 ELSE 2370 END,
+                               CASE WHEN %s>5000 THEN 20 ELSE 10 END,'ACTIVE')
+                        ON CONFLICT(account_id) DO UPDATE SET credit_limit=EXCLUDED.credit_limit,
+                          activation_fee_monthly=EXCLUDED.activation_fee_monthly,
+                          interest_annual_bps=EXCLUDED.interest_annual_bps,status='ACTIVE'""",
+                        (account["id"],amount,account["id"],account["id"],amount),commit=True)
+                    execute_query("""INSERT INTO credicheck_decisions
+                        (client_id,product_type,requested_amount,decision,score_snapshot,risk_snapshot,debt_snapshot,capacity_snapshot,decision_type,reason)
+                        VALUES(%s,'CASHLINE',%s,'AUTO_APPROVED',%s,
+                               (SELECT risk_level FROM credicheck_profiles WHERE client_id=%s),0,%s,'AUTO_APPROVAL',
+                               'Standard CashLine automatically approved under MineBank rules.')""",
+                        (session["minebank_client_id"],amount,assessment["score"],session["minebank_client_id"],assessment["capacity"]),commit=True)
+                    create_notification(session["minebank_client_id"],"CREDIT_APPROVED","CashLine automatically approved",
+                                        f"Your Standard CashLine for {amount} Emerald is now active.",
+                                        account["id"])
+                    session.pop("cashline_request_preview",None)
+                    flash(f"CashLine approved automatically. Your {amount} Emerald Standard CashLine is now active.","success")
+                else:
+                    create_request(session["minebank_client_id"],"CREDIT_LINE",account["id"],preview)
+                    session.pop("cashline_request_preview",None)
+                    reason=" ".join(auto_check["reasons"]) if auto_check["reasons"] else "The request exceeds the automatic-approval threshold."
+                    flash(f"CashLine request submitted for Bank review. {reason}","success")
             else:
                 raise ValueError("Invalid CashLine operation.")
             return redirect(url_for("minebank_credit_page"))
