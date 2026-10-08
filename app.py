@@ -22,7 +22,7 @@ from bank_lib.minebank_core import (
     reject_transfer, reject_business_transfer, approve_business_transfer,
     repay_credit, transfer, cancel_transfer,
     accrue_daily_credit_interest, generate_cashline_statement, disburse_loan, repay_loan_installment,
-    auto_pay_due_loans, repay_loan_full,
+    auto_pay_due_loans, repay_loan_full, repay_loan_fraction,
 )
 from bank_lib.minebank_requests import create_request, list_requests, create_notification
 from bank_lib.credicheck import (
@@ -1027,18 +1027,27 @@ def loan_financial_profile(client_id):
             cashline_limit += int(a.get("facility_credit_limit") or 0)
     active_loan_rows=execute_query("SELECT COALESCE(SUM(principal),0) FROM minebank_loans WHERE client_id=%s AND status='ACTIVE'",(client_id,))
     active_loans=int(active_loan_rows[0][0] or 0) if active_loan_rows else 0
+    count_rows=execute_query("SELECT COUNT(*) FROM minebank_loans WHERE client_id=%s AND status IN ('ACTIVE','PENDING','APPROVED')",(client_id,))
+    loan_count=int(count_rows[0][0] or 0) if count_rows else 0
     net_position=max(0,positive_balance-cashline_debt-active_loans)
-    maximum=(net_position*10//5000)*5000
-    maximum=min(50000000,maximum)
-    auto_budget=positive_balance >= 0
+    maximum=min(50000000,(net_position*10//5000)*5000)
+    credit_profile=get_credicheck_profile(client_id)
+    score=int(credit_profile.get("score") or 0)
+    credit_status=str(credit_profile.get("credit_status") or "").upper()
+    access_rows=execute_query_dict("SELECT status FROM credicheck_product_access WHERE client_id=%s AND product_type='LOAN'",(client_id,))
+    product_access=str(access_rows[0].get("status") or "").upper() if access_rows else "AVAILABLE"
+    blocked_reason=None
+    if loan_count>=3:
+        blocked_reason="You already have 3 active or pending Loans. Complete or resolve an existing Loan before requesting another."
+    elif score>10 or credit_status!="ACTIVE" or product_access not in ("AVAILABLE","ACTIVE"):
+        blocked_reason="Your current CrediCheck restrictions make new Loans unavailable. Check your Inbox for details."
+    elif maximum<10000:
+        blocked_reason="Your current financial eligibility is below the minimum Loan amount of 10,000 Emerald."
     return {
-        "accounts":accounts,
-        "balance":positive_balance,
-        "cashline_debt":cashline_debt,
-        "cashline_limit":cashline_limit,
-        "active_loans":active_loans,
-        "maximum":maximum,
-        "auto_budget":auto_budget,
+        "accounts":accounts,"balance":positive_balance,"cashline_debt":cashline_debt,
+        "cashline_limit":cashline_limit,"active_loans":active_loans,"loan_count":loan_count,
+        "maximum":maximum,"request_enabled":blocked_reason is None,
+        "request_blocked_reason":blocked_reason,"auto_budget":positive_balance >= 0,
         "cashline_ratio":(cashline_debt/cashline_limit if cashline_limit else 0),
     }
 
@@ -1061,13 +1070,19 @@ def minebank_loans_page():
     if request.method=="POST":
         action=request.form.get("action","request")
         try:
-            if action=="repay":
+            if action in ("repay","repay_fraction","repay_full"):
                 loan_id=int(request.form.get("loan_id","0"))
                 source_id=int(request.form.get("source_account_id","0"))
                 ok,msg=verify_wallet_pin(session["minebank_client_id"],request.form.get("wallet_pin",""))
                 if not ok: raise ValueError(msg)
-                result=repay_loan_installment(loan_id,source_id,session["minebank_client_id"])
-                flash(f"Loan installment paid: {result['amount']} Emerald.","success")
+                if action=="repay":
+                    result=repay_loan_installment(loan_id,source_id,session["minebank_client_id"])
+                else:
+                    fraction=request.form.get("repayment_fraction","1/4")
+                    try: numerator,denominator=[int(x) for x in fraction.split("/",1)]
+                    except Exception: raise ValueError("Choose a valid Loan repayment fraction.")
+                    result=repay_loan_fraction(loan_id,source_id,session["minebank_client_id"],numerator,denominator)
+                flash(f"Loan repayment processed: {result['amount']} Emerald. Status: {result['status']}.","success")
                 return redirect(url_for("minebank_loans_page"))
             if action!="request":
                 raise ValueError("Invalid Loan operation.")
@@ -1077,6 +1092,10 @@ def minebank_loans_page():
             destination_id=int(request.form.get("destination_account_id","0"))
             approval_mode=request.form.get("approval_mode","BANK_REVIEW").upper()
             pin=request.form.get("wallet_pin","")
+            if not profile.get("request_enabled"):
+                raise ValueError(profile.get("request_blocked_reason") or "New Loan requests are currently unavailable.")
+            if int(profile.get("loan_count") or 0)>=3:
+                raise ValueError("You can have a maximum of 3 active or pending Loans at a time.")
             if amount<10000 or amount>50000000:
                 raise ValueError("Loan amount must be between 10,000 and 50,000,000 Emerald.")
             if profile["maximum"]<amount:
