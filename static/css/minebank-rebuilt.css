@@ -437,3 +437,17 @@ table .pending{color:#8a671c;font-weight:bold}
 /* Important operation submission state */
 .operation-loading{position:relative;min-height:34px;cursor:wait!important;opacity:.92;filter:saturate(.84)}.operation-label{display:inline-block}.operation-spinner{display:inline-block;width:13px;height:13px;margin-left:8px;vertical-align:-2px;border:2px solid rgba(255,255,255,.48);border-top-color:#fff;border-radius:50%;animation:minebankOperationSpin .7s linear infinite}@keyframes minebankOperationSpin{to{transform:rotate(360deg)}}
 @media(prefers-reduced-motion:reduce){.operation-spinner{animation:none}}
+
+/* Dense-data scrolling: keep large operational datasets inside their panels. */
+.mb-main{min-width:0}
+.mb-main table{max-width:100%}
+.table-scroll,.scroll-panel{max-width:100%;overflow:auto;overscroll-behavior:contain}
+.table-scroll{max-height:520px}
+.scroll-panel{max-height:420px}
+.notifications-scroll{max-height:520px}
+.security-scroll{max-height:360px}
+.message-panel{max-height:180px;overflow:auto}
+@media(max-width:900px){
+  .table-scroll{max-height:430px}
+  .scroll-panel{max-height:360px}
+}
