@@ -923,6 +923,14 @@ def minebank_loans_page():
     if request.method=="POST":
         action=request.form.get("action","request")
         try:
+            if action=="repay_full":
+                loan_id=int(request.form.get("loan_id","0"))
+                source_id=int(request.form.get("source_account_id","0"))
+                ok,msg=verify_wallet_pin(session["minebank_client_id"],request.form.get("wallet_pin",""))
+                if not ok: raise ValueError(msg)
+                result=repay_loan_full(loan_id,source_id,session["minebank_client_id"])
+                flash(f"Loan fully repaid: {result['amount']} Emerald.","success")
+                return redirect(url_for("minebank_loans_page"))
             if action=="repay":
                 loan_id=int(request.form.get("loan_id","0"))
                 source_id=int(request.form.get("source_account_id","0"))
