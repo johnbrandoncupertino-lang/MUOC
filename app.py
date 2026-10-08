@@ -618,6 +618,9 @@ def approve_business_payment(account_id,transaction_id):
 @app.route("/portal/transfer", methods=["GET","POST"])
 @require_login
 def minebank_transfer_page():
+    ensure_minebank_schema()
+    ensure_transaction_schema()
+    ensure_security_schema()
     account = selected_account(request.args.get("account_id") or request.form.get("account_id"))
     if not account:
         return redirect(url_for("minebank_accounts_page"))
@@ -2055,6 +2058,9 @@ def admin_minebank_profiles():
 @app.route("/admin/minebank/profile/<int:client_id>")
 @require_role("ADMIN","OPERATOR")
 def admin_minebank_profile(client_id):
+    # Customer 360 must initialise every core dependency before optional sections.
+    ensure_minebank_schema()
+    ensure_transaction_schema()
     ensure_credicheck_schema()
     def safe_rows(sql, params=()):
         try:
