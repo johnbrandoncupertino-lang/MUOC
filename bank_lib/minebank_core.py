@@ -185,7 +185,13 @@ def _dynamic_cashline_capacity(cur, account_id, requested_amount=0):
            "BUSINESS":5000,"BUSINESS_PRO":25000,"CORPORATE":100000}
     multipliers={0:1.50,1:1.50,2:1.50,3:1.25,4:1.25,5:1.25,6:1.0,7:1.0,8:.75,9:.75,10:.75}
     base=bases.get(str(tier_code or '').upper(),0)
-    capacity=int(base*multipliers.get(int(profile[0]),0))
+    try:
+        score=int(profile[0] or 0)
+    except (TypeError, ValueError):
+        raise ValueError("Dynamic CashLine profile score is invalid. Please contact MineBank support.")
+    if score < 0 or score > 10:
+        raise ValueError("Dynamic CashLine profile score is outside the supported range.")
+    capacity=int(base*multipliers.get(score,0))
     debt=cashline_outstanding(cur,account_id)
     return max(0,capacity-debt)
 
@@ -752,15 +758,19 @@ def repay_loan_fraction(loan_id, source_account_id, actor_client_id, numerator=1
                 cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(amount,source[0]))
                 create_ledger_transaction(cur,transaction_id=txid,transaction_type="LOAN_REPAYMENT",amount=amount,sender_account_id=source[0],description=f"Loan repayment {loan[7]} ({numerator}/4)",reference_id=loan[7])
                 if numerator==4 or amount>=remaining:
-                    cur.execute("UPDATE minebank_loans SET installments_paid=term_days,status='COMPLETED',total_cost=0,principal=0,next_due_date=NULL,completed_at=CURRENT_TIMESTAMP WHERE id=%s",(loan_id,))
+                    # Preserve the original principal for audit/history and to
+                    # satisfy minebank_loans_principal_check after settlement.
+                    cur.execute("UPDATE minebank_loans SET installments_paid=term_days,status='COMPLETED',total_cost=0,next_due_date=NULL,completed_at=CURRENT_TIMESTAMP WHERE id=%s",(loan_id,))
                     status="COMPLETED"
                 else:
                     new_remaining=max(0,remaining-amount)
-                    new_principal=max(0,int(loan[8] or 0)-amount)
+                    # principal is the original contractual principal and is
+                    # constrained by the product minimum; never overwrite it with
+                    # the remaining debt after a partial repayment.
                     remaining_days=max(1,int(loan[4])-int(loan[3]))
                     new_installment=max(1,(new_remaining+remaining_days-1)//remaining_days)
                     new_total=new_remaining + new_installment*int(loan[3])
-                    cur.execute("UPDATE minebank_loans SET total_cost=%s,principal=%s,installment_amount=%s WHERE id=%s",(new_total,new_principal,new_installment,loan_id))
+                    cur.execute("UPDATE minebank_loans SET total_cost=%s,installment_amount=%s WHERE id=%s",(new_total,new_installment,loan_id))
                     status="ACTIVE"
                 return {"transaction_id":txid,"amount":amount,"status":status,"remaining":max(0,remaining-amount)}
     finally: release_db_connection(conn)
