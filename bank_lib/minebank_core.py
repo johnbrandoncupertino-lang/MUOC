@@ -157,6 +157,38 @@ def _cashline_repayment_suggestion(cur, account_id, incoming_amount):
                  f"You have {outstanding} Emerald outstanding on CashLine and just received {int(incoming_amount)} Emerald. You have enough available funds to repay the CashLine balance if you wish. No automatic repayment has been made."))
 
 
+def _dynamic_cashline_capacity(cur, account_id):
+    """Return the current transaction-by-transaction Dynamic CashLine capacity."""
+    cur.execute("""SELECT d.client_id,a.tier_id,t.code
+                   FROM dynamic_cashlines d
+                   JOIN bank_accounts a ON a.id=d.account_id
+                   JOIN account_tiers_v2 t ON t.id=a.tier_id
+                   WHERE d.account_id=%s AND d.status='ACTIVE' FOR UPDATE OF d""",(account_id,))
+    row=cur.fetchone()
+    if not row:
+        return None
+    client_id, tier_id, tier_code = row
+    cur.execute("SELECT score,credit_status FROM credicheck_profiles WHERE client_id=%s",(client_id,))
+    profile=cur.fetchone()
+    if not profile or int(profile[0] or 0)>10 or str(profile[1] or '').upper()!="ACTIVE":
+        raise ValueError("Dynamic CashLine is not currently available for this account.")
+    cur.execute("""SELECT COUNT(*) FROM minebank_loans
+                   WHERE client_id=%s AND status='ACTIVE' AND next_due_date<CURRENT_DATE""",(client_id,))
+    overdue=cur.fetchone()
+    if overdue and int(overdue[0] or 0)>0:
+        raise ValueError("Dynamic CashLine cannot be used while a Loan repayment is overdue.")
+    cur.execute("SELECT COUNT(*) FROM minebank_loans WHERE client_id=%s AND status='DEFAULTED'",(client_id,))
+    defaulted=cur.fetchone()
+    if defaulted and int(defaulted[0] or 0)>0:
+        raise ValueError("Dynamic CashLine is unavailable while a Loan is in default.")
+    bases={"PERSONAL":1000,"PERSONAL_PRO":3000,"PERSONAL_PRIVATE":10000,
+           "BUSINESS":5000,"BUSINESS_PRO":25000,"CORPORATE":100000}
+    multipliers={0:1.50,1:1.50,2:1.50,3:1.25,4:1.25,5:1.25,6:1.0,7:1.0,8:.75,9:.75,10:.75}
+    base=bases.get(str(tier_code or '').upper(),0)
+    capacity=int(base*multipliers.get(int(profile[0]),0))
+    debt=cashline_outstanding(cur,account_id)
+    return max(0,capacity-debt)
+
 def preview_transfer(actor_client_id, sender_account_id, recipient_account_number, amount, extra_fee=0, funding_source="BALANCE"):
     """Validate a transfer and calculate its fee without changing the ledger."""
     if not isinstance(amount, int) or amount <= 0:
@@ -229,13 +261,19 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
                 if int(sender[5]) < total: raise ValueError("Insufficient MineBank Balance.")
                 available_after=int(sender[5])-total
             else:
-                cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(sender[0],))
-                facility=cur.fetchone()
-                if not facility or facility[1]!="ACTIVE": raise ValueError("CashLine is not active for this account.")
-                outstanding=cashline_outstanding(cur,sender[0])
-                available_credit=max(0,int(facility[0])-outstanding)
-                if total>available_credit: raise ValueError(f"Insufficient CashLine availability. Available: {available_credit} Emerald.")
-                available_after=available_credit-total
+                dynamic_capacity=_dynamic_cashline_capacity(cur,sender[0])
+                if dynamic_capacity is not None:
+                    if total>dynamic_capacity:
+                        raise ValueError(f"Dynamic CashLine assessment declined this payment. Current assessed capacity: {dynamic_capacity} Emerald.")
+                    available_after=dynamic_capacity-total
+                else:
+                    cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(sender[0],))
+                    facility=cur.fetchone()
+                    if not facility or facility[1]!="ACTIVE": raise ValueError("CashLine is not active for this account.")
+                    outstanding=cashline_outstanding(cur,sender[0])
+                    available_credit=max(0,int(facility[0])-outstanding)
+                    if total>available_credit: raise ValueError(f"Insufficient CashLine availability. Available: {available_credit} Emerald.")
+                    available_after=available_credit-total
             cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
             max_balance_row = cur.fetchone()
             max_balance = max_balance_row[0] if max_balance_row else None
@@ -746,6 +784,12 @@ def repay_credit(account_id, amount, source_account_id):
                 if not debt_account or not source: raise ValueError("Account not found.")
                 if debt_account[1]!=source[1]: raise ValueError("Repayment source must belong to the same client.")
                 if source_account_id==account_id: raise ValueError("Repayment requires a separate source account.")
+                cur.execute("SELECT status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(account_id,))
+                standard=cur.fetchone()
+                cur.execute("SELECT status FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE' FOR UPDATE",(account_id,))
+                dynamic=cur.fetchone()
+                if (not standard or standard[0] not in ("ACTIVE","SUSPENDED")) and not dynamic:
+                    raise ValueError("CashLine is not active on this account.")
                 outstanding=cashline_outstanding(cur,account_id)
                 if outstanding<=0: raise ValueError("CashLine has no outstanding balance.")
                 if amount>outstanding: raise ValueError("Repayment exceeds the outstanding CashLine balance.")
