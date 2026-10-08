@@ -168,8 +168,6 @@ def _dynamic_cashline_capacity(cur, account_id, requested_amount=0):
     if not row:
         return None
     client_id, tier_id, tier_code = row
-    if int(requested_amount or 0) < 300:
-        raise ValueError("Dynamic CashLine payments must be at least 300 Emerald.")
     cur.execute("SELECT score,credit_status FROM credicheck_profiles WHERE client_id=%s",(client_id,))
     profile=cur.fetchone()
     if not profile or int(profile[0] or 0)>10 or str(profile[1] or '').upper()!="ACTIVE":
