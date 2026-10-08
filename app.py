@@ -2086,12 +2086,12 @@ def minebank_loans_page():
             if any(int(a["id"])==source_id and a["status"]!="ACTIVE" for a in profile["accounts"]):
                 raise ValueError("The fee source account is not active.")
             if approval_mode=="AUTO":
+                auto_account=next(a for a in profile["accounts"] if int(a["id"])==destination_id)
+                auto_check=automatic_credit_eligibility(session["minebank_client_id"],auto_account,"LOAN",amount)
                 if amount>20000:
                     raise ValueError("Loans above 20,000 Emerald always require Bank authorisation.")
-                if amount<10000 or (profile["cashline_limit"] and profile["cashline_debt"] >= profile["cashline_limit"]*0.40):
+                if not auto_check["eligible"]:
                     raise ValueError("This Loan does not qualify for automatic approval. Choose Bank review.")
-                if profile["balance"] < int(amount*1.10):
-                    raise ValueError("Automatic approval requires sufficient available balance to cover the Loan plus 10%.")
             else:
                 approval_mode="BANK_REVIEW"
             ok,msg=verify_wallet_pin(session["minebank_client_id"],pin)
