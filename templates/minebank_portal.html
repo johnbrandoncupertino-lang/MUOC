@@ -238,6 +238,15 @@ document.getElementById('loanNext').onclick=()=>{if(current===1&&!amount.value)r
     const context=((form.innerText||'')+' '+Array.from(form.querySelectorAll('input,select,textarea')).map(e=>e.name+' '+e.value).join(' ')+' '+(submitter.innerText||submitter.value||'')).toLowerCase();
     const match=keywords.find(([key])=>context.includes(key));
     if(!match) return;
+    // Preserve the named submit-button value before disabling it. Otherwise
+    // form data can omit stage=confirm and the route will only preview again.
+    if(submitter.name){
+      const preserved=document.createElement('input');
+      preserved.type='hidden';
+      preserved.name=submitter.name;
+      preserved.value=submitter.value;
+      form.appendChild(preserved);
+    }
     submitter.classList.add('operation-loading'); submitter.setAttribute('aria-busy','true'); submitter.disabled=true;
     submitter.innerHTML='<span class="operation-label">'+match[1]+'</span><span class="operation-spinner" aria-hidden="true"></span>';
   },true);
