@@ -77,16 +77,18 @@ document.querySelectorAll('[data-range]').forEach(b=>b.addEventListener('click',
 <div class="transfer-field"><label for="transferReference">Reference (optional)</label><input id="transferReference" name="reference" maxlength="100" value="{{ preview.reference if preview else request.form.get('reference','') }}" placeholder="Your reference"></div>
 </div>
 <div class="transfer-step" data-step="3">
-<div class="transfer-step-title"><span class="transfer-step-number">3</span><div><h3>Review your payment</h3><p class="muted">Check recipient, funding source, fee and total before proceeding.</p></div></div>
+<div class="transfer-step-title"><span class="transfer-step-number">3</span><div><h3>Assessment &amp; pre-authorisation</h3><p class="muted">Review the checks and prepared payment before final authorisation.</p></div></div>
 {% if preview %}
-<div class="transfer-callout">This is a server-calculated preview. Nothing has been sent yet.</div>
+<div class="transfer-callout"><strong>Assessment passed — payment prepared.</strong><br>The server has checked account eligibility, recipient status, payment limits, funding availability and applicable fees. The payment is prepared for your final Wallet PIN authorisation.</div>
 <div class="transfer-summary"><span>Recipient account</span><strong>{{ preview.recipient_account_number }}</strong></div>
 <div class="transfer-summary"><span>Payment reason</span><strong>{{ preview.causal or 'Not supplied' }}</strong></div>
 <div class="transfer-summary"><span>Funding source</span><strong>{{ 'Standard CashLine' if preview.funding_source=='CASHLINE' else ('Dynamic CashLine' if preview.funding_source=='DYNAMIC_CASHLINE' else 'MineBank Balance') }}</strong></div>
 <div class="transfer-summary"><span>Transfer amount</span><strong>{{ preview.amount }} Emerald</strong></div>
 <div class="transfer-summary"><span>Transfer fee</span><strong>{{ preview.fee }} Emerald</strong></div>
-<div class="transfer-summary total"><span>Total charged</span><strong>{{ preview.total }} Emerald</strong></div>
-{% else %}<div class="transfer-callout">Submit your details to calculate fees and check account limits. This step does not move funds.</div>{% endif %}
+<div class="transfer-summary total"><span>Total to authorise</span><strong>{{ preview.total }} Emerald</strong></div>
+<div class="transfer-summary"><span>{% if preview.funding_source=='BALANCE' %}Estimated Balance after payment{% elif preview.funding_source=='CASHLINE' %}Standard CashLine available after payment{% else %}Dynamic CashLine capacity after payment{% endif %}</span><strong>{{ preview.available_after }} Emerald</strong></div>
+<div class="transfer-callout">This is a provisional pre-authorisation, not a completed transfer or a database funds hold. No money is moved at this step. Your payment details and available funds or credit will be checked again when you authorise in Step 4.</div>
+{% else %}<div class="transfer-callout">Submit your details to assess the payment, calculate fees and check account limits. This step does not move funds.</div>{% endif %}
 </div>
 <div class="transfer-step" data-step="4">
 <div class="transfer-step-title"><span class="transfer-step-number">4</span><div><h3>Authorise securely</h3><p class="muted">Your Wallet PIN confirms the operation.</p></div></div>
