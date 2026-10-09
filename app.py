@@ -157,7 +157,8 @@ def get_accounts(client_id):
     accounts = execute_query_dict(
         """SELECT a.id,a.account_number,a.account_type,a.balance,a.status,
                   a.monthly_outgoing_used,a.monthly_outgoing_period,a.last_outgoing_at,a.freeze_type,
-                  t.code,t.display_name,t.monthly_fee,t.max_balance,t.monthly_outgoing_limit,
+                  t.code,t.code AS tier_code,t.display_name,t.display_name AS tier_name,
+                  t.monthly_fee,t.max_balance,t.monthly_outgoing_limit,
                   t.daily_outgoing_limit,t.single_transfer_limit,t.credit_enabled,t.default_credit_limit
            FROM bank_accounts a
            JOIN account_tiers_v2 t ON t.id=a.tier_id
@@ -170,6 +171,65 @@ def get_accounts(client_id):
         (client_id,client_id)
     )
 
+    # Enrich all accounts in batches. The previous per-account lookups opened
+    # several short-lived PostgreSQL connections for each account on every page.
+    account_ids = [int(account["id"]) for account in accounts]
+    facilities = {}
+    dynamic_accounts = set()
+    outstanding = {}
+    outstanding_query_ok = True
+    if account_ids:
+        try:
+            for row in execute_query_dict(
+                "SELECT DISTINCT ON (account_id) account_id,credit_limit,status "
+                "FROM credit_facilities WHERE account_id=ANY(%s) ORDER BY account_id,id",
+                (account_ids,)
+            ) or []:
+                facilities[int(row["account_id"])] = row
+        except Exception as exc:
+            print(f"MineBank account CashLine enrichment warning: {type(exc).__name__}: {exc}")
+        try:
+            dynamic_accounts = {
+                int(row["account_id"]) for row in execute_query_dict(
+                    "SELECT DISTINCT account_id FROM dynamic_cashlines "
+                    "WHERE account_id=ANY(%s) AND status='ACTIVE'",
+                    (account_ids,)
+                ) or []
+            }
+        except Exception as exc:
+            print(f"MineBank account Dynamic CashLine warning: {type(exc).__name__}: {exc}")
+        standard_account_ids = [
+            account_id for account_id, facility in facilities.items()
+            if str(facility.get("status") or "").upper() == "ACTIVE"
+        ]
+        if standard_account_ids:
+            try:
+                for row in execute_query_dict(
+                    """SELECT a.id AS account_id, GREATEST(0,
+                             COALESCE(SUM(CASE
+                               WHEN (l.sender_account_id=a.id AND l.transaction_type='TRANSFER'
+                                     AND l.transfer_kind IN ('CASHLINE','DYNAMIC_CASHLINE')
+                                     AND l.status IN ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL'))
+                                 OR (l.recipient_account_id=a.id AND l.transaction_type='CREDIT_DRAW'
+                                     AND l.transfer_kind IN ('CASHLINE','DYNAMIC_CASHLINE')
+                                     AND l.status IN ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL'))
+                               THEN l.amount+l.fee ELSE 0 END),0)
+                             + COALESCE(SUM(CASE WHEN l.recipient_account_id=a.id
+                               AND l.transaction_type IN ('CREDIT_INTEREST','CREDIT_FEE') AND l.status='COMPLETED'
+                               THEN l.amount ELSE 0 END),0)
+                             - COALESCE(SUM(CASE WHEN l.recipient_account_id=a.id
+                               AND l.transaction_type='CREDIT_REPAYMENT' AND l.status='COMPLETED'
+                               THEN l.amount ELSE 0 END),0)) AS used
+                       FROM bank_accounts a LEFT JOIN ledger_transactions l
+                         ON l.sender_account_id=a.id OR l.recipient_account_id=a.id
+                       WHERE a.id=ANY(%s) GROUP BY a.id""",
+                    (standard_account_ids,)
+                ) or []:
+                    outstanding[int(row["account_id"])] = int(row["used"] or 0)
+            except Exception as exc:
+                outstanding_query_ok = False
+                print(f"MineBank account CashLine calculation warning: {type(exc).__name__}: {exc}")
+
     # CashLine is an enrichment, never a prerequisite for loading an account.
     for account in accounts:
         account.update({
@@ -179,47 +239,18 @@ def get_accounts(client_id):
             "available_credit": 0,
             "dynamic_cashline_active": False,
         })
-        try:
-            rows = execute_query_dict(
-                "SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s LIMIT 1",
-                (account["id"],)
-            )
-            if rows:
-                facility = rows[0]
-                account["facility_credit_limit"] = int(facility.get("credit_limit") or 0)
-                account["credit_status"] = str(facility.get("status") or "NONE").upper()
-                if account["credit_status"] == "ACTIVE":
-                    account["standard_cashline_active"] = True
-                    # The core calculator owns CashLine accounting rules. If an
-                    # older schema cannot calculate it, retain the facility limit
-                    # rather than failing the entire account query.
-                    try:
-                        from bank_lib.minebank_core import cashline_outstanding
-                        conn = __import__("bank_lib.database",fromlist=["get_db_connection"]).get_db_connection()
-                        if conn:
-                            try:
-                                with conn.cursor() as cur:
-                                    used = int(cashline_outstanding(cur, account["id"]) or 0)
-                            finally:
-                                __import__("bank_lib.database",fromlist=["release_db_connection"]).release_db_connection(conn)
-                            account["available_credit"] = max(0, account["facility_credit_limit"] - used)
-                        else:
-                            account["available_credit"] = account["facility_credit_limit"]
-                    except Exception as exc:
-                        print(f"MineBank account CashLine calculation warning: {type(exc).__name__}: {exc}")
-                        account["available_credit"] = account["facility_credit_limit"]
-        except Exception as exc:
-            print(f"MineBank account CashLine enrichment warning: {type(exc).__name__}: {exc}")
-        try:
-            dynamic = execute_query_dict("SELECT id FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE' LIMIT 1",(account["id"],))
-            account["dynamic_cashline_active"] = bool(dynamic)
-            # Legacy pages use credit_status to display a dynamic-only facility.
-            # Keep ACTIVE when Standard CashLine is also active.
-            if dynamic and not account["standard_cashline_active"]:
-                account["credit_status"] = "DYNAMIC"
-
-        except Exception as exc:
-            print(f"MineBank account Dynamic CashLine enrichment warning: {type(exc).__name__}: {exc}")
+        facility = facilities.get(int(account["id"]))
+        if facility:
+            account["facility_credit_limit"] = int(facility.get("credit_limit") or 0)
+            account["credit_status"] = str(facility.get("status") or "NONE").upper()
+            if account["credit_status"] == "ACTIVE":
+                account["standard_cashline_active"] = True
+                used = outstanding.get(int(account["id"]), 0) if outstanding_query_ok else 0
+                account["available_credit"] = max(0, account["facility_credit_limit"] - used)
+        account["dynamic_cashline_active"] = int(account["id"]) in dynamic_accounts
+        # Legacy pages use credit_status to display a dynamic-only facility.
+        if account["dynamic_cashline_active"] and not account["standard_cashline_active"]:
+            account["credit_status"] = "DYNAMIC"
 
     __import__("flask").g._minebank_accounts = (client_id, accounts)
     return accounts
@@ -381,17 +412,11 @@ def minebank_dashboard():
     # across all accounts, while retaining per-account product/type details.
     cashline_accounts = []
     total_cashline_credit = 0
+    has_dynamic_cashline = False
     for a in accounts:
         static_limit = int(a.get("facility_credit_limit") or 0) if str(a.get("credit_status") or "").upper()=="ACTIVE" else 0
-        try:
-            dynamic_rows = execute_query_dict(
-                "SELECT status FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE' LIMIT 1",
-                (a["id"],)
-            )
-        except Exception as exc:
-            print(f"MineBank dashboard Dynamic CashLine warning: {type(exc).__name__}: {exc}")
-            dynamic_rows = []
-        dynamic_active = bool(dynamic_rows)
+        dynamic_active = bool(a.get("dynamic_cashline_active"))
+        has_dynamic_cashline = has_dynamic_cashline or dynamic_active
         if dynamic_active:
             product_type = "Dynamic"
             display_amount = None
@@ -426,6 +451,7 @@ def minebank_dashboard():
     return render_template("minebank_portal.html", mode="dashboard", account=account,
                            accounts=accounts, total_balance=total_balance, balance_breakdown=balance_breakdown,
                            cashline_accounts=cashline_accounts, total_cashline_credit=total_cashline_credit,
+                           has_dynamic_cashline=has_dynamic_cashline,
                            transactions=transactions, messages=messages, chart_rows=chart_rows,
                            portal_active="dashboard")
 
@@ -448,7 +474,7 @@ def recent_transactions(account, limit=10):
     if not account:
         return []
     return execute_query_dict(
-        """SELECT transaction_id,transaction_type,amount,fee,status,description,reference_id,created_at,
+        """SELECT transaction_id,transaction_type,amount,fee,status,description,causal,reference_id,created_at,
                   sender_account_id,recipient_account_id
            FROM ledger_transactions
            WHERE sender_account_id=%s OR recipient_account_id=%s
@@ -546,16 +572,7 @@ def minebank_accounts_page():
             action=request.form.get("action","open_business")
             if action=="tier_change":
                 account_id=int(request.form.get("account_id","0") or 0)
-                tier_code=request.form.get("tier_code","").strip().upper()
-                owned=execute_query_dict("SELECT id,account_type FROM bank_accounts WHERE id=%s AND client_id=%s AND status<>'CLOSED'",(account_id,session["minebank_client_id"]))
-                if not owned:
-                    raise ValueError("Account not found.")
-                tier=execute_query_dict("SELECT code FROM account_tiers_v2 WHERE code=%s AND account_type=%s AND active=TRUE",(tier_code,owned[0]["account_type"]))
-                if not tier:
-                    raise ValueError("That tier is not available for this account.")
-                create_request(session["minebank_client_id"],"TIER_CHANGE",account_id,{"tier_code":tier_code})
-                flash("Account tier change submitted for bank review.","success")
-                return redirect(url_for("minebank_accounts_page",account_id=account_id))
+                return redirect(url_for("minebank_plans_page",account_id=account_id))
             # Business accounts are opened at Standard only. Upgrades are
             # requested from the account after the eligibility checks pass.
             tier="BUSINESS"
@@ -574,19 +591,9 @@ def minebank_accounts_page():
         except Exception as exc:
             error=str(exc)
     account=selected_account()
-    plan_tiers=execute_query_dict("""SELECT code,display_name,monthly_fee,opening_fee,monthly_outgoing_limit,
-                                               credit_enabled,default_credit_limit,eligibility_config
-                                        FROM account_tiers_v2
-                                        WHERE account_type=%s AND active=TRUE ORDER BY id""",
-                                   (account["account_type"] if account else "PERSONAL",))
-    for tier in plan_tiers:
-        tier["is_current"] = bool(account and tier["code"] == account.get("tier_code"))
-        tier["eligible"], tier["eligibility_reason"] = evaluate_tier_eligibility(
-            current_client(), account, tier
-        ) if account else (False, "No account selected.")
     business_tiers=execute_query_dict("SELECT code,display_name,monthly_fee,opening_fee,monthly_outgoing_limit,credit_enabled,default_credit_limit FROM account_tiers_v2 WHERE account_type='BUSINESS' AND active=TRUE ORDER BY id")
     return render_template("minebank_portal.html",mode="account",account=account,accounts=get_accounts(session["minebank_client_id"]),
-                           plan_tiers=plan_tiers,business_tiers=business_tiers,account_error=error,portal_active="account")
+                           business_tiers=business_tiers,account_error=error,portal_active="account")
 
 @app.route("/portal/business/<int:account_id>/members",methods=["GET","POST"])
 @require_login
@@ -866,6 +873,8 @@ def _pdf_response(title, rows, filename, sections=None, customer=None, account=N
 @app.route("/portal/transactions/<transaction_id>/receipt")
 @require_login
 def minebank_transaction_receipt(transaction_id):
+    if not ensure_transaction_schema():
+        return "MineBank database is temporarily unavailable. Please try again in a moment.", 503
     rows=execute_query_dict("""SELECT l.*,s.account_number sender_number,r.account_number recipient_number,
                                       sc.email sender_email,rc.email recipient_email
                                FROM ledger_transactions l
@@ -878,8 +887,14 @@ def minebank_transaction_receipt(transaction_id):
     if not rows: return "Transaction not found",404
     tx=rows[0]
     customer_rows=execute_query_dict("SELECT id,email,date_of_birth,occupation,discord_username,state,main_language,TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) AS full_name FROM bank_clients WHERE id=%s",(session["minebank_client_id"],))
-    preferred_account=tx["sender_account_id"] or tx["recipient_account_id"]
-    account_rows=execute_query_dict("SELECT a.*,t.display_name AS tier_name FROM bank_accounts a LEFT JOIN account_tiers_v2 t ON t.id=a.tier_id WHERE a.id=%s AND a.client_id=%s",(preferred_account,session["minebank_client_id"]))
+    account_rows=execute_query_dict("""SELECT a.*,t.code AS tier_code,t.display_name AS tier_name
+        FROM bank_accounts a LEFT JOIN account_tiers_v2 t ON t.id=a.tier_id
+        WHERE a.id IN (%s,%s) AND (a.client_id=%s OR EXISTS (
+            SELECT 1 FROM minebank_business_members bm
+            WHERE bm.account_id=a.id AND bm.client_id=%s))
+        ORDER BY CASE WHEN a.id=%s THEN 0 ELSE 1 END LIMIT 1""",
+        (tx["sender_account_id"],tx["recipient_account_id"],session["minebank_client_id"],
+         session["minebank_client_id"],tx["sender_account_id"]))
     customer=customer_rows[0] if customer_rows else {}
     account=account_rows[0] if account_rows else {}
     return _pdf_response("Transaction Receipt",[
@@ -947,15 +962,14 @@ def minebank_statements_page():
 @app.route("/portal/statements/print")
 @require_login
 def minebank_statements_print():
+    if not ensure_transaction_schema():
+        return "MineBank database is temporarily unavailable. Please try again in a moment.", 503
     account=selected_account()
+    if not account:
+        return redirect(url_for("minebank_accounts_page"))
     if int(account["balance"]) < 1:
         flash("1 Emerald is required for a printed statement.","error")
         return redirect(url_for("minebank_statements_page"))
-    execute_query("UPDATE bank_accounts SET balance=balance-1,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(account["id"],),commit=True)
-    execute_query("""INSERT INTO ledger_transactions
-                     (transaction_id,transaction_type,amount,fee,currency,sender_account_id,status,description)
-                     VALUES(%s,'PRINTED_STATEMENT_FEE',1,0,'Emerald',%s,'COMPLETED','Printed statement')""",
-                  (f"MB-STMT-{secrets.token_hex(6)}",account["id"]),commit=True)
     transactions=recent_transactions(account,500)
     total_in=sum(int(t["amount"] or 0) for t in transactions if t["recipient_account_id"]==account["id"] and t["status"]=="COMPLETED")
     total_out=sum(int(t["amount"] or 0)+int(t["fee"] or 0) for t in transactions if t["sender_account_id"]==account["id"] and t["status"]=="COMPLETED")
@@ -970,8 +984,33 @@ def minebank_statements_print():
                        f'{direction} · {tx["transaction_type"]} · {tx["status"]} · {tx["amount"]} Emerald · Fee {tx["fee"]} · {tx["description"] or tx["causal"] or "No description"}'))
     customer_rows=execute_query_dict("SELECT id,email,date_of_birth,occupation,discord_username,state,main_language,TRIM(COALESCE(first_name,'') || ' ' || COALESCE(last_name,'')) AS full_name FROM bank_clients WHERE id=%s",(session["minebank_client_id"],))
     customer=customer_rows[0] if customer_rows else {}
-    return _pdf_response("Account Statement",rows,f"minebank-statement-{account['account_number']}.pdf",
-                         sections=[("Statement overview",rows),("Transaction register",detail)],customer=customer,account=account,document_reference=f"MB-STMT-{account['account_number']}")
+    pdf=_pdf_response("Account Statement",rows,f"minebank-statement-{account['account_number']}.pdf",
+                      sections=[("Statement overview",rows),("Transaction register",detail)],customer=customer,account=account,document_reference=f"MB-STMT-{account['account_number']}")
+    # Render successfully before charging, then debit and record the fee as one
+    # atomic operation so a PDF error or ledger failure cannot leave a partial charge.
+    db=__import__("bank_lib.database",fromlist=["get_db_connection","release_db_connection"])
+    conn=db.get_db_connection()
+    if conn is None:
+        return "MineBank database is temporarily unavailable. Please try again in a moment.",503
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE bank_accounts SET balance=balance-1,updated_at=CURRENT_TIMESTAMP WHERE id=%s AND balance>=1 RETURNING id",(account["id"],))
+            if not cur.fetchone():
+                conn.rollback()
+                flash("1 Emerald is required for a printed statement.","error")
+                return redirect(url_for("minebank_statements_page"))
+            cur.execute("""INSERT INTO ledger_transactions
+                (transaction_id,transaction_type,amount,fee,currency,sender_account_id,status,description)
+                VALUES(%s,'PRINTED_STATEMENT_FEE',1,0,'Emerald',%s,'COMPLETED','Printed statement')""",
+                (f"MB-STMT-{secrets.token_hex(6)}",account["id"]))
+        conn.commit()
+    except Exception as exc:
+        conn.rollback()
+        print(f"MineBank statement fee warning: {type(exc).__name__}: {exc}")
+        return "The statement could not be completed. Please try again.",503
+    finally:
+        db.release_db_connection(conn)
+    return pdf
 
 @app.route("/portal/statements/csv")
 @require_login
@@ -999,7 +1038,7 @@ def minebank_plans_page():
                 raise ValueError("Account not found.")
             account=selected_account(account_id)
             tier=execute_query_dict(
-                "SELECT code FROM account_tiers_v2 WHERE code=%s AND account_type=%s AND active=TRUE",
+                "SELECT code,eligibility_config FROM account_tiers_v2 WHERE code=%s AND account_type=%s AND active=TRUE",
                 (tier_code,owned[0]["account_type"])
             )
             if not tier:
