@@ -658,7 +658,10 @@ def minebank_transfer_page():
         flash("This account is suspended and cannot be used for transfers.", "error")
         return redirect(url_for("minebank_accounts_page", account_id=account["id"]))
     client_id = session["minebank_client_id"]
-    if request.args.get("restart") == "1":
+    # Account-switch links carry restart=1 in the query string. Browsers keep
+    # that query string on subsequent POSTs, so clearing the preview on every
+    # request invalidates the exact preview needed by the confirm step.
+    if request.method == "GET" and request.args.get("restart") == "1":
         session.pop("transfer_preview", None)
     preview = session.get("transfer_preview")
     if preview and (preview.get("client_id") != client_id or int(preview.get("sender_account_id") or 0) != int(account["id"])):
