@@ -276,8 +276,17 @@ def _validate_transfer_request(cur, *, actor_client_id, sender, recipient, amoun
     daily_used = int(cur.fetchone()[0] or 0)
     if daily_limit is not None and daily_used + amount > int(daily_limit):
         raise ValueError("The transfer exceeds the remaining daily outgoing limit.")
-    if sender[9] and (_now() - sender[9]).total_seconds() < 30:
-        raise ValueError("For security, wait 30 seconds between outgoing transfers.")
+    last_outgoing = sender[9]
+    if last_outgoing:
+        # PostgreSQL columns may be TIMESTAMP WITHOUT TIME ZONE in older schemas.
+        # Match the timestamp's timezone awareness to avoid a TypeError that can
+        # abort every transfer after the first payment on those databases.
+        now = _now()
+        if getattr(last_outgoing, "tzinfo", None) is None:
+            now = now.replace(tzinfo=None)
+        elapsed = (now - last_outgoing).total_seconds()
+        if elapsed < 30:
+            raise ValueError("For security, wait 30 seconds between outgoing transfers.")
 
     try:
         extra_fee = max(0, int(extra_fee or 0))
@@ -332,7 +341,8 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
         raise RuntimeError("Database unavailable")
     try:
         with conn.cursor() as cur:
-            _assert_banking_unlocked(cur, actor_client_id)
+            if actor_client_id is not None:
+                _assert_banking_unlocked(cur, actor_client_id)
             sender = _lock_account(cur, sender_account_id)
             recipient = _lock_recipient(cur, recipient_account_number)
             result = _validate_transfer_request(
