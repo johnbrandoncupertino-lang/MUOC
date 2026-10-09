@@ -217,108 +217,129 @@ def _dynamic_cashline_capacity(cur, account_id, requested_amount=0):
     debt=cashline_outstanding(cur,account_id)
     return max(0,capacity-debt)
 
-def preview_transfer(actor_client_id, sender_account_id, recipient_account_number, amount, extra_fee=0, funding_source="BALANCE"):
-    """Validate a transfer and calculate its fee without changing the ledger."""
+def _validate_transfer_request(cur, *, actor_client_id, sender, recipient, amount, extra_fee=0, funding_source="BALANCE"):
+    """Single source of truth for preview and execution transfer validation.
+
+    The caller must hold row locks on sender and recipient when executing a transfer.
+    This function never writes a ledger entry or changes an account balance.
+    """
     amount = _positive_integer_amount(amount)
-    funding_source=(funding_source or "BALANCE").upper()
-    if funding_source not in ("BALANCE","CASHLINE","DYNAMIC_CASHLINE"): raise ValueError("Invalid payment source.")
+    funding_source = (funding_source or "BALANCE").strip().upper()
+    if funding_source not in ("BALANCE", "CASHLINE", "DYNAMIC_CASHLINE"):
+        raise ValueError("Choose Balance, Standard CashLine or Dynamic CashLine.")
+    if not sender or not recipient:
+        raise ValueError("Sender or recipient account not found.")
+
+    business_role = None
+    sender_tier_code = None
+    if sender[3] == "BUSINESS":
+        cur.execute("SELECT code FROM account_tiers_v2 WHERE id=%s", (sender[4],))
+        tier_row = cur.fetchone()
+        sender_tier_code = tier_row[0] if tier_row else None
+        cur.execute("SELECT role FROM minebank_business_members WHERE account_id=%s AND client_id=%s",
+                    (sender[0], actor_client_id))
+        member = cur.fetchone() if actor_client_id is not None else None
+        business_role = "OWNER" if sender[1] == actor_client_id else (member[0] if member else None)
+        if business_role not in ("OWNER", "ADMIN", "FINANCE_MANAGER", "EMPLOYEE"):
+            raise ValueError("You do not have payment permission on this Business account.")
+    elif actor_client_id is not None and int(sender[1]) != int(actor_client_id):
+        raise ValueError("Account does not belong to the logged-in client.")
+
+    if sender[0] == recipient[0]:
+        raise ValueError("You cannot transfer money to the same account.")
+    if sender[6] != "ACTIVE":
+        raise ValueError("The source account is not active.")
+    if recipient[6] == "FROZEN":
+        cur.execute("SELECT freeze_type FROM bank_accounts WHERE id=%s", (recipient[0],))
+        freeze_row = cur.fetchone()
+        freeze_type = freeze_row[0] if freeze_row else None
+        if freeze_type not in ("SECURITY_FREEZE", "EMERGENCY_FREEZE", "CREDIT_FREEZE"):
+            raise ValueError("The recipient account is frozen and cannot receive transfers.")
+    elif recipient[6] not in ("ACTIVE", "LIMITED"):
+        raise ValueError("The recipient account cannot receive transfers.")
+
+    used, period = _reset_month_if_needed(cur, sender)
+    cur.execute("SELECT monthly_outgoing_limit,daily_outgoing_limit,single_transfer_limit FROM account_tiers_v2 WHERE id=%s",
+                (sender[4],))
+    limits = cur.fetchone()
+    if not limits:
+        raise ValueError("The source account tier has no configured transfer limits.")
+    monthly_limit, daily_limit, single_limit = limits
+    if single_limit is not None and amount > int(single_limit):
+        raise ValueError("The transfer exceeds the single-payment limit.")
+    if monthly_limit is not None and used + amount > int(monthly_limit):
+        raise ValueError("The transfer exceeds the remaining monthly outgoing limit.")
+    cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions
+                   WHERE sender_account_id=%s
+                     AND status IN ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL')
+                     AND created_at>=CURRENT_TIMESTAMP-INTERVAL '1 day'""", (sender[0],))
+    daily_used = int(cur.fetchone()[0] or 0)
+    if daily_limit is not None and daily_used + amount > int(daily_limit):
+        raise ValueError("The transfer exceeds the remaining daily outgoing limit.")
+    if sender[9] and (_now() - sender[9]).total_seconds() < 30:
+        raise ValueError("For security, wait 30 seconds between outgoing transfers.")
+
+    try:
+        extra_fee = max(0, int(extra_fee or 0))
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("Invalid transfer fee.")
+    fee = _fee_for_transfer(cur, sender, recipient[0], amount) + extra_fee
+    total = amount + fee
+    if funding_source == "BALANCE":
+        if int(sender[5]) < total:
+            raise ValueError("Insufficient MineBank Balance to cover the transfer and fee.")
+        available_after = int(sender[5]) - total
+    elif funding_source == "DYNAMIC_CASHLINE":
+        dynamic_capacity = _dynamic_cashline_capacity(cur, sender[0], amount)
+        if dynamic_capacity is None:
+            raise ValueError("Dynamic CashLine is not active for this account.")
+        if total > dynamic_capacity:
+            raise ValueError(f"Dynamic CashLine does not have enough available capacity. Available: {dynamic_capacity} Emerald.")
+        available_after = dynamic_capacity - total
+    else:
+        cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE", (sender[0],))
+        facility = cur.fetchone()
+        if not facility or facility[1] != "ACTIVE":
+            raise ValueError("Standard CashLine is not active for this account.")
+        outstanding = cashline_outstanding(cur, sender[0])
+        available_credit = max(0, int(facility[0]) - outstanding)
+        if total > available_credit:
+            raise ValueError(f"Insufficient Standard CashLine availability. Available: {available_credit} Emerald.")
+        available_after = available_credit - total
+
+    cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
+    max_balance_row = cur.fetchone()
+    max_balance = max_balance_row[0] if max_balance_row else None
+    if max_balance is not None and int(recipient[5]) + amount > int(max_balance):
+        raise ValueError("The recipient account would exceed its maximum permitted balance.")
+
+    return {
+        "amount": amount, "funding_source": funding_source, "business_role": business_role,
+        "sender_tier_code": sender_tier_code, "used": used, "period": period,
+        "fee": fee, "total": total, "available_after": available_after,
+        "recipient_account_number": recipient[2], "sender_balance": int(sender[5]),
+        "recipient_balance": int(recipient[5]),
+    }
+
+
+def preview_transfer(actor_client_id, sender_account_id, recipient_account_number, amount, extra_fee=0, funding_source="BALANCE"):
+    """Validate a transfer through the same rules used by final execution."""
     recipient_account_number = (recipient_account_number or "").strip().upper()
     if not recipient_account_number:
         raise ValueError("Recipient account number is required.")
-
     conn = get_db_connection()
     if conn is None:
         raise RuntimeError("Database unavailable")
     try:
         with conn.cursor() as cur:
-            if actor_client_id is not None:
-                _assert_banking_unlocked(cur, actor_client_id)
+            _assert_banking_unlocked(cur, actor_client_id)
             sender = _lock_account(cur, sender_account_id)
             recipient = _lock_recipient(cur, recipient_account_number)
-            if not sender or not recipient:
-                raise ValueError("Sender or recipient account not found.")
-
-            if sender[3] == "BUSINESS":
-                cur.execute("SELECT code FROM account_tiers_v2 WHERE id=%s", (sender[4],))
-                tier = cur.fetchone()
-                tier_code = tier[0] if tier else None
-                cur.execute("SELECT role FROM minebank_business_members WHERE account_id=%s AND client_id=%s",
-                            (sender[0], actor_client_id))
-                member = cur.fetchone() if actor_client_id is not None else None
-                role = "OWNER" if sender[1] == actor_client_id else (member[0] if member else None)
-                if role not in ("OWNER", "ADMIN", "FINANCE_MANAGER", "EMPLOYEE"):
-                    raise ValueError("You do not have payment permission on this Business account.")
-            elif actor_client_id is not None and sender[1] != actor_client_id:
-                raise ValueError("Account does not belong to the logged-in client.")
-
-            if sender[0] == recipient[0]:
-                raise ValueError("Self-transfers are not allowed.")
-            if sender[6] != "ACTIVE":
-                raise ValueError("Sender account is not active.")
-            if recipient[6] == "FROZEN":
-                cur.execute("SELECT freeze_type FROM bank_accounts WHERE id=%s", (recipient[0],))
-                freeze_type = cur.fetchone()[0]
-                if freeze_type not in ("SECURITY_FREEZE", "EMERGENCY_FREEZE", "CREDIT_FREEZE"):
-                    raise ValueError("Recipient account cannot receive transfers while frozen.")
-            elif recipient[6] not in ("ACTIVE", "LIMITED"):
-                raise ValueError("Recipient account cannot receive transfers.")
-
-            used, period = _reset_month_if_needed(cur, sender)
-            cur.execute("SELECT monthly_outgoing_limit,daily_outgoing_limit,single_transfer_limit FROM account_tiers_v2 WHERE id=%s", (sender[4],))
-            limits = cur.fetchone()
-            if not limits:
-                raise ValueError("Sender account tier is not configured.")
-            monthly_limit, daily_limit, single_limit = limits
-            if single_limit is not None and amount > int(single_limit):
-                raise ValueError("Single-transfer limit exceeded.")
-            if monthly_limit is not None and used + amount > int(monthly_limit):
-                raise ValueError("Monthly outgoing transfer limit exceeded.")
-            cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions
-                           WHERE sender_account_id=%s AND status IN ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL')
-                             AND created_at>=CURRENT_TIMESTAMP-INTERVAL '1 day'""", (sender[0],))
-            daily_used = int(cur.fetchone()[0] or 0)
-            if daily_limit is not None and daily_used + amount > int(daily_limit):
-                raise ValueError("Daily outgoing transfer limit exceeded.")
-            if sender[9] and (_now() - sender[9]).total_seconds() < 30:
-                raise ValueError("Outgoing transfers require a 30-second cooldown.")
-
-            fee = _fee_for_transfer(cur, sender, recipient[0], amount) + max(0, int(extra_fee))
-            total = amount + fee
-            if funding_source=="BALANCE":
-                if int(sender[5]) < total: raise ValueError("Insufficient MineBank Balance.")
-                available_after=int(sender[5])-total
-            elif funding_source=="DYNAMIC_CASHLINE":
-                dynamic_capacity=_dynamic_cashline_capacity(cur,sender[0],amount)
-                if dynamic_capacity is None:
-                    raise ValueError("Dynamic CashLine is not active for this account.")
-                if total>dynamic_capacity:
-                    raise ValueError(f"Dynamic CashLine assessment declined this payment. Current assessed capacity: {dynamic_capacity} Emerald.")
-                available_after=dynamic_capacity-total
-            else:
-                cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(sender[0],))
-                facility=cur.fetchone()
-                if not facility or facility[1]!="ACTIVE": raise ValueError("Standard CashLine is not active for this account.")
-                outstanding=cashline_outstanding(cur,sender[0])
-                available_credit=max(0,int(facility[0])-outstanding)
-                if total>available_credit: raise ValueError(f"Insufficient Standard CashLine availability. Available: {available_credit} Emerald.")
-                available_after=available_credit-total
-            cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
-            max_balance_row = cur.fetchone()
-            max_balance = max_balance_row[0] if max_balance_row else None
-            if max_balance is not None and int(recipient[5]) + amount > int(max_balance):
-                raise ValueError("Recipient account balance limit exceeded.")
-
-            return {
-                "recipient_account_number": recipient[2],
-                "amount": amount,
-                "fee": fee,
-                "total": total,
-                "sender_balance": int(sender[5]),
-                "available_after": available_after,
-                "funding_source": funding_source,
-                "recipient_balance": int(recipient[5]),
-                "period": period,
-            }
+            result = _validate_transfer_request(
+                cur, actor_client_id=actor_client_id, sender=sender, recipient=recipient,
+                amount=amount, extra_fee=extra_fee, funding_source=funding_source,
+            )
+            return result
     finally:
         release_db_connection(conn)
 
@@ -354,69 +375,18 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 recipient = _lock_recipient(cur, recipient_account_number)
                 if not sender or not recipient:
                     raise ValueError("Sender or recipient account not found.")
-                business_role=None
-                sender_tier_code=None
-                if sender[3]=="BUSINESS":
-                    cur.execute("SELECT code FROM account_tiers_v2 WHERE id=%s",(sender[4],))
-                    sender_tier_code=cur.fetchone()[0]
-                    cur.execute("""SELECT role FROM minebank_business_members
-                                   WHERE account_id=%s AND client_id=%s""",(sender[0],actor_client_id))
-                    member=cur.fetchone() if actor_client_id is not None else None
-                    if sender[1]==actor_client_id:
-                        business_role="OWNER"
-                    elif member:
-                        business_role=member[0]
-                    else:
-                        raise ValueError("You do not have access to this Business account.")
-                    if business_role not in ("OWNER","ADMIN","FINANCE_MANAGER","EMPLOYEE"):
-                        raise ValueError("You do not have payment permission on this Business account.")
-                elif actor_client_id is not None and sender[1] != actor_client_id:
-                    raise ValueError("Account does not belong to the logged-in client.")
-                if sender[0] == recipient[0]:
-                    raise ValueError("Self-transfers are not allowed.")
-                if sender[6] != "ACTIVE":
-                    raise ValueError("Sender account is not active.")
-                if recipient[6] == "FROZEN":
-                    cur.execute("SELECT freeze_type FROM bank_accounts WHERE id=%s",(recipient[0],))
-                    freeze_type=cur.fetchone()[0]
-                    if freeze_type not in ("SECURITY_FREEZE","EMERGENCY_FREEZE","CREDIT_FREEZE"):
-                        raise ValueError("Recipient account cannot receive transfers while frozen.")
-                elif recipient[6] not in ("ACTIVE","LIMITED"):
-                    raise ValueError("Recipient account cannot receive transfers.")
-
-                used, period = _reset_month_if_needed(cur, sender)
-                cur.execute("SELECT monthly_outgoing_limit,daily_outgoing_limit,single_transfer_limit FROM account_tiers_v2 WHERE id=%s", (sender[4],))
-                monthly_limit,daily_limit,single_limit = cur.fetchone()
-                if single_limit is not None and amount > int(single_limit):
-                    raise ValueError("Single-transfer limit exceeded.")
-                if monthly_limit is not None and used + amount > int(monthly_limit):
-                    raise ValueError("Monthly outgoing transfer limit exceeded.")
-                cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions
-                               WHERE sender_account_id=%s AND status IN ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL')
-                                 AND created_at>=CURRENT_TIMESTAMP-INTERVAL '1 day'""",(sender[0],))
-                daily_used=int(cur.fetchone()[0] or 0)
-                if daily_limit is not None and daily_used + amount > int(daily_limit):
-                    raise ValueError("Daily outgoing transfer limit exceeded.")
-                if sender[9] and (_now() - sender[9]).total_seconds() < 30:
-                    raise ValueError("Outgoing transfers require a 30-second cooldown.")
-
-                fee = _fee_for_transfer(cur, sender, recipient[0], amount) + max(0, int(extra_fee))
-                total = amount + fee
-                if funding_source=="BALANCE":
-                    if int(sender[5]) < total: raise ValueError("Insufficient MineBank Balance.")
-                elif funding_source=="DYNAMIC_CASHLINE":
-                    dynamic_capacity=_dynamic_cashline_capacity(cur,sender[0],amount)
-                    if dynamic_capacity is None:
-                        raise ValueError("Dynamic CashLine is not active for this account.")
-                    if total>dynamic_capacity:
-                        raise ValueError(f"Dynamic CashLine assessment declined this payment. Current assessed capacity: {dynamic_capacity} Emerald.")
-                else:
-                    cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(sender[0],))
-                    facility=cur.fetchone()
-                    if not facility or facility[1]!="ACTIVE": raise ValueError("Standard CashLine is not active for this account.")
-                    outstanding=cashline_outstanding(cur,sender[0])
-                    available_credit=max(0,int(facility[0])-outstanding)
-                    if total>available_credit: raise ValueError(f"Insufficient Standard CashLine availability. Available: {available_credit} Emerald.")
+                validation = _validate_transfer_request(
+                    cur, actor_client_id=actor_client_id, sender=sender, recipient=recipient,
+                    amount=amount, extra_fee=extra_fee, funding_source=funding_source,
+                )
+                amount = validation["amount"]
+                funding_source = validation["funding_source"]
+                business_role = validation["business_role"]
+                sender_tier_code = validation["sender_tier_code"]
+                used = validation["used"]
+                period = validation["period"]
+                fee = validation["fee"]
+                total = validation["total"]
 
                 risk_score = 0
                 risk_reasons = []
@@ -454,14 +424,6 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                     transfer_kind="DYNAMIC_CASHLINE"
                 elif transfer_kind is None:
                     transfer_kind = "OWN_TRANSFER" if sender[1] == recipient[1] else f"{sender[3]}_TO_{recipient[3]}"
-                # Re-check the recipient cap inside the write transaction. The
-                # earlier preview is informational and may be stale by authorisation.
-                cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
-                max_balance_row = cur.fetchone()
-                max_balance = max_balance_row[0] if max_balance_row else None
-                if max_balance is not None and int(recipient[5]) + amount > int(max_balance):
-                    raise ValueError("Recipient account balance limit exceeded.")
-
                 txid = next_transaction_id(cur)
                 if funding_source=="BALANCE":
                     cur.execute("""UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
