@@ -9,7 +9,7 @@ import csv, io, secrets, hashlib, os
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 
-from flask import Flask, Response, flash, jsonify, redirect, render_template, render_template_string, request, session, url_for
+from flask import Flask, Response, flash, g, jsonify, redirect, render_template, render_template_string, request, session, url_for
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from bank_lib.database import execute_query, execute_query_dict, ensure_minebank_schema, ensure_transaction_schema, ensure_message_schema, ensure_loan_schema
@@ -87,17 +87,12 @@ def inject_bank_context():
             print(f"MineBank context accounts warning: {type(exc).__name__}: {exc}")
             accounts = []
         try:
-            pending = pending_count(client["id"])
+            counts = navigation_counts(client["id"])
+            pending = counts["pending_requests"]
+            updates = counts["request_updates"]
+            unread = counts["unread_messages"]
         except Exception as exc:
-            print(f"MineBank context pending warning: {type(exc).__name__}: {exc}")
-        try:
-            updates = request_update_count(client["id"])
-        except Exception as exc:
-            print(f"MineBank context updates warning: {type(exc).__name__}: {exc}")
-        try:
-            unread = unread_message_count(client["id"])
-        except Exception as exc:
-            print(f"MineBank context notifications warning: {type(exc).__name__}: {exc}")
+            print(f"MineBank context notification counts warning: {type(exc).__name__}: {exc}")
     frozen = None
     if accounts:
         frozen = next((a for a in accounts if a.get("id") == session.get("minebank_account_id") and a.get("status") == "FROZEN"),
@@ -111,6 +106,33 @@ def inject_bank_context():
         "minebank_unread_messages": unread,
         "minebank_frozen_account": frozen,
     }
+
+@app.teardown_appcontext
+def close_request_database_connection(_error=None):
+    """Close the request-scoped connection after Flask finishes the response."""
+    conn = getattr(g, "_minebank_query_connection", None)
+    if conn is not None:
+        from bank_lib.database import release_db_connection
+        release_db_connection(conn)
+        g._minebank_query_connection = None
+
+def navigation_counts(client_id):
+    """Load the three navigation badge counts in one database round trip."""
+    rows = execute_query_dict(
+        """SELECT
+             (SELECT COUNT(*) FROM bank_requests_v2
+              WHERE client_id=%s AND status='PENDING') AS pending_requests,
+             (SELECT COUNT(*) FROM bank_notifications
+              WHERE client_id=%s AND notification_type='REQUEST_UPDATE'
+                AND read_at IS NULL) AS request_updates,
+             (SELECT COUNT(*) FROM bank_notifications
+              WHERE client_id=%s AND read_at IS NULL) AS unread_messages""",
+        (client_id, client_id, client_id),
+    )
+    row = rows[0] if rows else {}
+    return {key: int(row.get(key) or 0) for key in (
+        "pending_requests", "request_updates", "unread_messages"
+    )}
 
 def unread_message_count(client_id):
     rows = execute_query("SELECT COUNT(*) FROM bank_notifications WHERE client_id=%s AND read_at IS NULL", (client_id,))

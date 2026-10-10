@@ -1,8 +1,8 @@
 """Small, serverless-safe PostgreSQL helpers for MineBank.
 
-The portal uses one short-lived PostgreSQL connection per query. This is
-deliberately simpler and more reliable on Vercel than keeping a process-wide
-connection pool alive across warm/cold serverless invocations.
+Queries in a Flask request share one short-lived connection, which is closed
+when the request ends. Calls outside a request still own and close their own
+connection. This avoids repeated connection setup without a process-wide pool.
 """
 import os
 
@@ -42,8 +42,24 @@ def release_db_connection(conn):
             pass
 
 
+def _query_connection():
+    """Reuse a connection only for the lifetime of the current Flask request."""
+    try:
+        from flask import g, has_request_context
+        if has_request_context():
+            conn = getattr(g, "_minebank_query_connection", None)
+            if conn is None:
+                conn = get_db_connection()
+                if conn is not None:
+                    g._minebank_query_connection = conn
+            return conn, True
+    except (ImportError, RuntimeError):
+        pass
+    return get_db_connection(), False
+
+
 def execute_query(query, params=None, fetch=True, commit=False, cursor_factory=None):
-    conn = get_db_connection()
+    conn, request_scoped = _query_connection()
     if conn is None:
         return None
     cur = None
@@ -69,7 +85,18 @@ def execute_query(query, params=None, fetch=True, commit=False, cursor_factory=N
                 cur.close()
             except Exception:
                 pass
-        release_db_connection(conn)
+        if request_scoped:
+            # If the server closed a broken connection, let a later query in
+            # the same request obtain a fresh one. Flask teardown owns cleanup.
+            if getattr(conn, "closed", False):
+                try:
+                    from flask import g, has_request_context
+                    if has_request_context() and getattr(g, "_minebank_query_connection", None) is conn:
+                        g._minebank_query_connection = None
+                except (ImportError, RuntimeError):
+                    pass
+        else:
+            release_db_connection(conn)
 
 
 def execute_query_dict(query, params=None, fetch=True, commit=False):
