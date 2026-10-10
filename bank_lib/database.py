@@ -196,7 +196,7 @@ def ensure_minebank_schema():
 _MESSAGE_SCHEMA_READY = False
 
 def ensure_message_schema():
-    """Ensure customer-message campaign storage exists on older production databases."""
+    """Ensure bank campaigns and secure customer-conversation tables exist."""
     global _MESSAGE_SCHEMA_READY
     if _MESSAGE_SCHEMA_READY:
         return True
@@ -209,6 +209,29 @@ def ensure_message_schema():
             recipient_filter JSONB NOT NULL DEFAULT '{}'::jsonb,
             created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""", fetch=False, commit=True)
+        execute_query("""CREATE TABLE IF NOT EXISTS minebank_support_threads (
+            id BIGSERIAL PRIMARY KEY,
+            client_id BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
+            account_id BIGINT REFERENCES bank_accounts(id) ON DELETE SET NULL,
+            subject VARCHAR(160) NOT NULL,
+            status VARCHAR(16) NOT NULL DEFAULT 'OPEN' CHECK(status IN ('OPEN','CLOSED')),
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            client_last_read_at TIMESTAMPTZ,
+            staff_last_read_at TIMESTAMPTZ
+        )""", fetch=False, commit=True)
+        execute_query("""CREATE TABLE IF NOT EXISTS minebank_support_messages (
+            id BIGSERIAL PRIMARY KEY,
+            thread_id BIGINT NOT NULL REFERENCES minebank_support_threads(id) ON DELETE CASCADE,
+            sender_client_id BIGINT REFERENCES bank_clients(id) ON DELETE SET NULL,
+            sender_role VARCHAR(10) NOT NULL CHECK(sender_role IN ('CLIENT','STAFF')),
+            body TEXT NOT NULL,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""", fetch=False, commit=True)
+        execute_query("""CREATE INDEX IF NOT EXISTS minebank_support_threads_client_idx
+                         ON minebank_support_threads(client_id,updated_at DESC)""", fetch=False, commit=True)
+        execute_query("""CREATE INDEX IF NOT EXISTS minebank_support_messages_thread_idx
+                         ON minebank_support_messages(thread_id,id)""", fetch=False, commit=True)
         _MESSAGE_SCHEMA_READY = True
         return True
     except Exception as exc:

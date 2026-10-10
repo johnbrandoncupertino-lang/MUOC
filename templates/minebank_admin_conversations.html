@@ -1,0 +1,17 @@
+{% extends 'minebank_layout.html' %}
+{% block title %}MineBank — Customer Conversations{% endblock %}
+{% block content %}
+<div class="page-head"><div><div class="eyebrow">BANK COMMUNICATIONS</div><h1>Customer Conversations</h1><p>Private support messages between MineBank staff and customers.</p></div><div class="toolbar"><a class="button" href="{{ url_for('admin_minebank_messages') }}">Broadcast messages</a></div></div>
+<div class="tabs" aria-label="Conversation status">
+  <a href="{{ url_for('admin_minebank_conversations',status='OPEN') }}" class="{% if status=='OPEN' %}active{% endif %}">Open</a>
+  <a href="{{ url_for('admin_minebank_conversations',status='CLOSED') }}" class="{% if status=='CLOSED' %}active{% endif %}">Closed</a>
+  <a href="{{ url_for('admin_minebank_conversations',status='ALL') }}" class="{% if status=='ALL' %}active{% endif %}">All</a>
+</div>
+<section class="panel support-staff-queue">
+  <div class="panel-title">{{ status|title }} conversations <span class="support-count">{{ threads|length }}</span></div>
+  <div class="table-scroll"><table><thead><tr><th>Status</th><th>Subject</th><th>Customer</th><th>Account</th><th>Latest message</th><th>Updated</th><th></th></tr></thead><tbody>
+  {% for t in threads %}<tr class="{% if t.staff_unread %}support-unread-row{% endif %}"><td><span class="status {{ 'active' if t.status=='OPEN' else 'closed' }}">{{ t.status }}</span></td><td><a href="{{ url_for('admin_minebank_conversation',thread_id=t.id) }}"><b>{{ t.subject }}</b></a>{% if t.staff_unread %}<small class="support-unread-label">New customer reply</small>{% endif %}</td><td>{{ t.client_email }}</td><td>{{ t.account_number or 'General' }}</td><td class="support-table-preview">{% if t.last_sender_role=='STAFF' %}MineBank: {% else %}Customer: {% endif %}{{ t.last_message|truncate(100) }}</td><td>{{ t.updated_at.strftime('%d %b %Y, %H:%M') if t.updated_at else '' }}</td><td><a class="button small" href="{{ url_for('admin_minebank_conversation',thread_id=t.id) }}">Open</a></td></tr>
+  {% else %}<tr><td colspan="7">No {{ status|lower }} conversations.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

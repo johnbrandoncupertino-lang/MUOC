@@ -25,6 +25,15 @@ from bank_lib.minebank_core import (
     auto_pay_due_loans, repay_loan_fraction,
 )
 from bank_lib.minebank_requests import create_request, list_requests, create_notification
+from bank_lib.minebank_messaging import (
+    close_support_thread,
+    create_support_thread,
+    get_support_thread,
+    list_support_messages,
+    list_support_threads,
+    mark_support_thread_read,
+    send_support_reply,
+)
 from bank_lib.credicheck import (
     ensure_credicheck_schema,
     get_profile as get_credicheck_profile,
@@ -75,7 +84,7 @@ def inject_bank_context():
     # contains only best-effort navigation information.
     client = None
     accounts = []
-    pending = updates = unread = 0
+    pending = updates = unread = unread_conversations = 0
     try:
         client = current_client()
     except Exception as exc:
@@ -91,6 +100,7 @@ def inject_bank_context():
             pending = counts["pending_requests"]
             updates = counts["request_updates"]
             unread = counts["unread_messages"]
+            unread_conversations = counts["unread_conversations"]
         except Exception as exc:
             print(f"MineBank context notification counts warning: {type(exc).__name__}: {exc}")
     frozen = None
@@ -104,6 +114,7 @@ def inject_bank_context():
         "minebank_pending_requests": pending,
         "minebank_request_updates": updates,
         "minebank_unread_messages": unread,
+        "minebank_unread_conversations": unread_conversations,
         "minebank_frozen_account": frozen,
     }
 
@@ -117,7 +128,7 @@ def close_request_database_connection(_error=None):
         g._minebank_query_connection = None
 
 def navigation_counts(client_id):
-    """Load the three navigation badge counts in one database round trip."""
+    """Load the navigation badge counts in one database round trip."""
     rows = execute_query_dict(
         """SELECT
              (SELECT COUNT(*) FROM bank_requests_v2
@@ -126,12 +137,18 @@ def navigation_counts(client_id):
               WHERE client_id=%s AND notification_type='REQUEST_UPDATE'
                 AND read_at IS NULL) AS request_updates,
              (SELECT COUNT(*) FROM bank_notifications
-              WHERE client_id=%s AND read_at IS NULL) AS unread_messages""",
-        (client_id, client_id, client_id),
+              WHERE client_id=%s AND read_at IS NULL) AS unread_messages,
+             (SELECT COUNT(*) FROM minebank_support_threads t
+              WHERE t.client_id=%s AND EXISTS (
+                SELECT 1 FROM minebank_support_messages m
+                WHERE m.thread_id=t.id AND m.sender_role='STAFF'
+                  AND (t.client_last_read_at IS NULL OR m.created_at>t.client_last_read_at)
+              )) AS unread_conversations""",
+        (client_id, client_id, client_id, client_id),
     )
     row = rows[0] if rows else {}
     return {key: int(row.get(key) or 0) for key in (
-        "pending_requests", "request_updates", "unread_messages"
+        "pending_requests", "request_updates", "unread_messages", "unread_conversations"
     )}
 
 def unread_message_count(client_id):
@@ -349,6 +366,11 @@ def prepare_request():
                 session["_session_validated_at"] = now_ts
             except Exception:
                 return redirect(url_for("minebank_login", next=request.path))
+
+    if session.get("minebank_client_id"):
+        # Create the secure-message tables once per warm worker. This is
+        # idempotent, so existing signed-in customers receive the feature too.
+        ensure_message_schema()
 
     failed = csrf_check()
     if failed:
@@ -1740,6 +1762,71 @@ def minebank_notifications_page():
     messages=execute_query_dict("SELECT * FROM bank_notifications WHERE client_id=%s ORDER BY created_at DESC LIMIT 100",(session["minebank_client_id"],))
     return render_template("minebank_portal.html",mode="notifications",messages=messages,portal_active="notifications")
 
+@app.route("/portal/messages", methods=["GET", "POST"])
+@require_login
+def minebank_support_messages_page():
+    if not ensure_message_schema():
+        return "MineBank secure messages are temporarily unavailable. Please try again in a moment.", 503
+    client_id = session["minebank_client_id"]
+    error = None
+    if request.method == "POST":
+        subject = request.form.get("subject", "").strip()
+        body = request.form.get("body", "").strip()
+        account_raw = request.form.get("account_id", "").strip()
+        try:
+            if not subject or len(subject) > 160:
+                raise ValueError("Enter a subject of up to 160 characters.")
+            if not body or len(body) > 4000:
+                raise ValueError("Enter a message of up to 4,000 characters.")
+            account_id = None
+            if account_raw:
+                try:
+                    account_id = int(account_raw)
+                except ValueError:
+                    raise ValueError("Select one of your MineBank accounts.")
+                owned = {int(a["id"]) for a in get_accounts(client_id)}
+                if account_id not in owned:
+                    raise ValueError("Select one of your MineBank accounts.")
+            thread_id = create_support_thread(client_id, account_id, subject, body)
+            if not thread_id:
+                raise RuntimeError("Your message could not be sent. Please try again.")
+            flash("Your secure message was sent to MineBank.", "success")
+            return redirect(url_for("minebank_support_thread_page", thread_id=thread_id))
+        except Exception as exc:
+            error = str(exc)
+    accounts = get_accounts(client_id)
+    threads = list_support_threads(client_id=client_id)
+    return render_template("minebank_support_messages.html", accounts=accounts,
+                           threads=threads, error=error, portal_active="messages")
+
+@app.route("/portal/messages/<int:thread_id>", methods=["GET", "POST"])
+@require_login
+def minebank_support_thread_page(thread_id):
+    if not ensure_message_schema():
+        return "MineBank secure messages are temporarily unavailable. Please try again in a moment.", 503
+    client_id = session["minebank_client_id"]
+    thread = get_support_thread(thread_id, client_id=client_id)
+    if not thread:
+        return "Message thread not found.", 404
+    if request.method == "POST":
+        action = request.form.get("action", "reply")
+        if action == "close":
+            close_support_thread(thread_id, client_id=client_id)
+            flash("Conversation closed. Reply any time to reopen it.", "success")
+            return redirect(url_for("minebank_support_thread_page", thread_id=thread_id))
+        body = request.form.get("body", "").strip()
+        if not body or len(body) > 4000:
+            flash("Enter a reply of up to 4,000 characters.", "error")
+        elif not send_support_reply(thread_id, client_id, "CLIENT", client_id, body):
+            return "Message thread not found.", 404
+        else:
+            flash("Your reply was sent to MineBank.", "success")
+            return redirect(url_for("minebank_support_thread_page", thread_id=thread_id))
+    mark_support_thread_read(thread_id, "CLIENT", client_id=client_id)
+    messages = list_support_messages(thread_id)
+    return render_template("minebank_support_thread.html", thread=thread,
+                           messages=messages, is_staff=False, portal_active="messages")
+
 @app.route("/portal/security", methods=["GET","POST"])
 @require_login
 def minebank_security_page():
@@ -2129,6 +2216,8 @@ def admin_minebank_messages():
             tier_code=request.form.get("tier_code","").strip().upper()
             if not subject or not body:
                 raise ValueError("Subject and message are required.")
+            if target_mode not in {"ALL", "ACCOUNT", "TYPE", "TIER"}:
+                raise ValueError("Choose a valid recipient group.")
             if target_mode=="ACCOUNT":
                 targets=execute_query_dict("SELECT id,client_id FROM bank_accounts WHERE account_number=%s AND status<>'CLOSED'",(account_number,))
             else:
@@ -2160,6 +2249,45 @@ def admin_minebank_messages():
     campaigns=execute_query_dict("""SELECT m.*,c.email created_by_email FROM minebank_message_campaigns m
                                     JOIN bank_clients c ON c.id=m.created_by ORDER BY m.created_at DESC LIMIT 50""")
     return render_template("minebank_admin_new.html",mode="messages",accounts=accounts,tiers=tiers,campaigns=campaigns,error=error)
+
+@app.route("/admin/minebank/conversations")
+@require_role("ADMIN", "OPERATOR")
+def admin_minebank_conversations():
+    if not ensure_message_schema():
+        return "MineBank conversations are temporarily unavailable. Please try again in a moment.", 503
+    status = request.args.get("status", "OPEN").upper()
+    if status not in {"OPEN", "CLOSED", "ALL"}:
+        status = "OPEN"
+    threads = list_support_threads(status=None if status == "ALL" else status)
+    return render_template("minebank_admin_conversations.html", threads=threads,
+                           status=status, portal_active="admin")
+
+@app.route("/admin/minebank/conversations/<int:thread_id>", methods=["GET", "POST"])
+@require_role("ADMIN", "OPERATOR")
+def admin_minebank_conversation(thread_id):
+    if not ensure_message_schema():
+        return "MineBank conversations are temporarily unavailable. Please try again in a moment.", 503
+    thread = get_support_thread(thread_id)
+    if not thread:
+        return "Conversation not found.", 404
+    if request.method == "POST":
+        action = request.form.get("action", "reply")
+        if action == "close":
+            close_support_thread(thread_id)
+            flash("Customer conversation closed.", "success")
+            return redirect(url_for("admin_minebank_conversation", thread_id=thread_id))
+        body = request.form.get("body", "").strip()
+        if not body or len(body) > 4000:
+            flash("Enter a reply of up to 4,000 characters.", "error")
+        elif not send_support_reply(thread_id, session["minebank_client_id"], "STAFF", None, body):
+            return "Conversation not found.", 404
+        else:
+            flash("Your reply was sent to the customer.", "success")
+            return redirect(url_for("admin_minebank_conversation", thread_id=thread_id))
+    mark_support_thread_read(thread_id, "STAFF")
+    messages = list_support_messages(thread_id)
+    return render_template("minebank_admin_conversation.html", thread=thread,
+                           messages=messages, portal_active="admin")
 
 @app.route("/admin/minebank/profiles")
 @require_role("ADMIN","OPERATOR")

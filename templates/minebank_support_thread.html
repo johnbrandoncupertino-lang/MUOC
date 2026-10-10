@@ -1,0 +1,26 @@
+{% extends 'minebank_layout.html' %}
+{% block title %}MineBank — {{ thread.subject }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">SECURE CONVERSATION</div><h1>{{ thread.subject }}</h1><p>{% if thread.account_number %}{{ thread.account_number }} · {% endif %}{{ thread.status|title }}</p></div>
+  <a class="button small back-button" href="{{ url_for('minebank_support_messages_page') }}">← All messages</a>
+</div>
+<section class="panel support-conversation">
+  <div class="panel-title">Conversation with MineBank <span class="status {{ 'active' if thread.status=='OPEN' else 'closed' }}">{{ thread.status|title }}</span></div>
+  <div class="support-message-stream" aria-label="Conversation messages">
+    {% for m in messages %}
+      <article class="support-bubble {{ 'from-client' if m.sender_role=='CLIENT' else 'from-staff' }}">
+        <header><b>{% if m.sender_role=='CLIENT' %}You{% else %}MineBank{% endif %}</b><time>{{ m.created_at.strftime('%d %b %Y, %H:%M') if m.created_at else '' }}</time></header>
+        <div class="support-bubble-body">{{ m.body }}</div>
+      </article>
+    {% endfor %}
+  </div>
+  {% if thread.status=='CLOSED' %}<div class="support-closed-note">This conversation is closed. Sending a reply will reopen it.</div>{% endif %}
+  <form method="post" class="support-reply-form" action="{{ url_for('minebank_support_thread_page',thread_id=thread.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="support-reply">Your reply</label><textarea id="support-reply" name="body" rows="5" maxlength="4000" required placeholder="Write a reply to MineBank"></textarea>
+    <div class="support-compose-foot"><small class="muted support-privacy-note">Never share your password or Wallet PIN in a message.</small><button class="button primary" type="submit">Send reply</button></div>
+  </form>
+  {% if thread.status=='OPEN' %}<form method="post" class="support-close-form" action="{{ url_for('minebank_support_thread_page',thread_id=thread.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button small" type="submit" name="action" value="close">Close conversation</button></form>{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,33 @@
+{% extends 'minebank_layout.html' %}
+{% block title %}MineBank — Secure Messages{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">PRIVATE BANKING</div><h1>Secure Messages</h1><p>Write to MineBank and keep every reply in one private conversation.</p></div>
+  <a class="button" href="{{ url_for('minebank_notifications_page') }}">Bank notifications</a>
+</div>
+{% if error %}<div class="notice error">{{ error }}</div>{% endif %}
+<div class="support-message-grid">
+  <section class="panel form-panel support-compose">
+    <div class="panel-title">Write to MineBank <span aria-hidden="true">✉</span></div>
+    <p class="muted">A MineBank team member will reply here. Your conversation is visible only to you and authorised bank staff.</p>
+    <form method="post" action="{{ url_for('minebank_support_messages_page') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label for="support-subject">Subject</label><input id="support-subject" name="subject" maxlength="160" required>
+      {% if accounts %}<label for="support-account">Related account <small>(optional)</small></label><select id="support-account" name="account_id"><option value="">General question</option>{% for a in accounts %}<option value="{{ a.id }}">{{ a.display_name }} · {{ a.account_number }}</option>{% endfor %}</select>{% endif %}
+      <label for="support-body">Your message</label><textarea id="support-body" name="body" rows="7" maxlength="4000" required placeholder="How can we help?"></textarea>
+      <div class="support-compose-foot"><small class="muted support-privacy-note">Please don’t include your password or Wallet PIN.</small><button class="button primary" type="submit">Send secure message</button></div>
+    </form>
+  </section>
+  <section class="panel support-thread-list">
+    <div class="panel-title">Your conversations <span class="support-count">{{ threads|length }}</span></div>
+    {% for t in threads %}
+      <a class="support-thread-row{% if t.client_unread %} unread{% endif %}" href="{{ url_for('minebank_support_thread_page',thread_id=t.id) }}">
+        <span class="support-thread-heading"><b>{{ t.subject }}</b><span class="status {{ 'active' if t.status=='OPEN' else 'closed' }}">{{ t.status|title }}</span></span>
+        {% if t.account_number %}<small class="support-thread-account">{{ t.account_number }}</small>{% endif %}
+        <span class="support-thread-preview">{% if t.last_sender_role=='STAFF' %}MineBank: {% else %}You: {% endif %}{{ t.last_message|truncate(150) }}</span>
+        <small class="support-thread-time">Updated {{ t.updated_at.strftime('%d %b %Y, %H:%M') if t.updated_at else '' }}{% if t.client_unread %}<b> · New reply</b>{% endif %}</small>
+      </a>
+    {% else %}<div class="support-empty"><span aria-hidden="true">✉</span><b>No conversations yet</b><p>Send a message and the MineBank team will reply here.</p></div>{% endfor %}
+  </section>
+</div>
+{% endblock %}

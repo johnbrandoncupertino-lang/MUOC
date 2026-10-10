@@ -1,0 +1,25 @@
+{% extends 'minebank_layout.html' %}
+{% block title %}MineBank — {{ thread.subject }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div><div class="eyebrow">CUSTOMER CONVERSATION</div><h1>{{ thread.subject }}</h1><p>{{ thread.client_email }} · {% if thread.account_number %}{{ thread.account_number }}{% else %}General enquiry{% endif %}</p></div>
+  <a class="button small back-button" href="{{ url_for('admin_minebank_conversations') }}">← Conversation queue</a>
+</div>
+<section class="panel support-conversation staff-view">
+  <div class="panel-title">Private thread <span class="status {{ 'pending' if thread.status=='OPEN' else 'complete' }}">{{ thread.status|title }}</span></div>
+  <div class="support-message-stream" aria-label="Conversation messages">
+    {% for m in messages %}
+      <article class="support-bubble {{ 'from-client' if m.sender_role=='CLIENT' else 'from-staff' }}">
+        <header><b>{% if m.sender_role=='CLIENT' %}Customer · {{ m.sender_email or thread.client_email }}{% else %}MineBank · {{ m.sender_email or 'Staff' }}{% endif %}</b><time>{{ m.created_at.strftime('%d %b %Y, %H:%M') if m.created_at else '' }}</time></header>
+        <div class="support-bubble-body">{{ m.body }}</div>
+      </article>
+    {% endfor %}
+  </div>
+  <form method="post" class="support-reply-form" action="{{ url_for('admin_minebank_conversation',thread_id=thread.id) }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label for="support-reply">Reply to customer</label><textarea id="support-reply" name="body" rows="5" maxlength="4000" required placeholder="Write a secure reply"></textarea>
+    <div class="support-compose-foot"><small class="muted">Replies appear in the customer’s secure inbox.</small><button class="button primary" type="submit">Send reply</button></div>
+  </form>
+  {% if thread.status=='OPEN' %}<form method="post" class="support-close-form" action="{{ url_for('admin_minebank_conversation',thread_id=thread.id) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="button small" type="submit" name="action" value="close">Close conversation</button></form>{% endif %}
+</section>
+{% endblock %}
