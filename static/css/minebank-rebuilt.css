@@ -537,6 +537,48 @@ table .pending{color:#8a671c;font-weight:bold}
   .cashline-account-row{align-items:flex-start}
   .cashline-account-row strong{max-width:48%}
 }
+
+/* Compact MineBank notification banners */
+.toast-region{
+  position:fixed;
+  z-index:1000;
+  top:78px;
+  right:18px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  width:min(460px,calc(100vw - 24px));
+  pointer-events:none;
+}
+.toast-notification{
+  position:relative;
+  display:grid;
+  grid-template-columns:minmax(0,4fr) minmax(78px,1fr);
+  align-items:stretch;
+  gap:12px;
+  width:100%;
+  margin:0;
+  padding:11px 34px 10px 13px;
+  border:1px solid #9fb6c8;
+  border-left:4px solid #07549a;
+  background:linear-gradient(#fff,#eaf2f8);
+  box-shadow:0 3px 10px rgba(35,59,78,.24),inset 0 1px #fff;
+  color:#16324a;
+  pointer-events:auto;
+  animation:minebankToastEnter .18s ease-out both;
+}
+.toast-notification.success{border-left-color:#4a8152;background:linear-gradient(#fff,#eff7ef);border-color:#a5c9a5;color:#275e2a}
+.toast-notification.error{border-left-color:#a63838;background:linear-gradient(#fff,#fbefef);border-color:#d7a4a4;color:#842727}
+.toast-copy{align-self:center;min-width:0;line-height:1.45;overflow-wrap:anywhere}
+.toast-meta{display:flex;align-items:flex-end;justify-content:flex-end;min-width:0;padding-right:2px}
+.toast-author{color:#60778b;font-size:10px;font-weight:bold;text-align:right;white-space:nowrap}
+.toast-dismiss{position:absolute;top:5px;right:6px;width:23px;height:23px;padding:0;border:1px solid #b4c3cf;border-radius:2px;background:linear-gradient(#fff,#e1e8ee);color:#456176;font:bold 16px/20px Arial;cursor:pointer}
+.toast-dismiss:hover{background:#dceaf4;color:#173f65}
+.toast-exiting{animation:minebankToastLeave .24s ease-in both;pointer-events:none}
+@keyframes minebankToastEnter{from{opacity:0;transform:translateY(-7px)}to{opacity:1;transform:translateY(0)}}
+@keyframes minebankToastLeave{to{opacity:0;transform:translateY(-5px)}}
+@media(max-width:520px){.toast-region{top:72px;right:12px;width:calc(100vw - 24px)}.toast-notification{grid-template-columns:minmax(0,4fr) minmax(70px,1fr);gap:8px;padding-left:10px}}
+@media(prefers-reduced-motion:reduce){.toast-notification,.toast-exiting{animation:none}}
 @media(prefers-reduced-motion:reduce){
   .dashboard-entry,.dashboard-entry > *{animation:none!important}
 }
@@ -557,3 +599,11 @@ table .pending{color:#8a671c;font-weight:bold}
 .security-notice small{
   color:#8b744b;
 }
+*{font-family:"Segoe UI",Tahoma,Arial,sans-serif}
+.mb-logo,.page-head h1,.big-number,.account-balance{font-family:"Segoe UI",Tahoma,Arial,sans-serif}
+.mb-user-menu{display:flex;align-items:center;gap:12px;min-width:0}.mb-user-menu form{margin:0}.mb-user-email{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.mb-logout{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-color:#a7c8e2;background:linear-gradient(#fff,#dcecf8);color:#164d79;box-shadow:inset 0 1px #fff,0 1px 3px rgba(0,32,67,.24)}.mb-logout:hover{background:linear-gradient(#fff,#c7e0f2);transform:translateY(-1px)}.nav-icon{display:inline-block;width:19px;margin-right:5px;color:#527897;text-align:center;font-size:14px;font-weight:bold;transition:color .15s,transform .15s}.mb-side nav>a:hover .nav-icon,.mb-side details a:hover .nav-icon{color:#07549a;transform:translateX(2px)}
+body{font-family:"Segoe UI",Tahoma,Arial,sans-serif}.panel-title{font-family:"Segoe UI",Tahoma,Arial,sans-serif}.page-head h1{font-weight:600;letter-spacing:.1px}.panel b,.panel strong,td b{font-weight:700}.muted,.sub{line-height:1.5}.repay-note,.loan-auto-note{font-style:italic}.button{transition:transform .14s ease,box-shadow .14s ease,filter .14s ease}.button:hover{filter:brightness(1.025);box-shadow:inset 0 1px #fff,0 2px 5px #aabac7}.button:active{transform:translateY(1px)}.button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #3d88c2;outline-offset:2px}.panel{animation:minebankPanelEnter .24s ease-out both}@keyframes minebankPanelEnter{from{opacity:.82;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}
+.loan-repay-wizard{margin-top:9px;padding:10px;border:1px solid #bdcbd6;background:linear-gradient(#fbfdfe,#edf3f7);box-shadow:inset 0 1px #fff}.repay-progress{display:flex;align-items:center;gap:5px;margin-bottom:9px}.repay-progress span{display:flex;align-items:center;gap:4px;color:#8293a0;font-size:11px;font-weight:bold}.repay-progress span.active{color:#07549a}.repay-progress small{font-size:9px;font-weight:normal}.repay-progress i{height:1px;flex:1;background:#c4d2dd}.repay-step{display:block}.loan-repay-wizard.js-enabled .repay-step{display:none}.loan-repay-wizard.js-enabled .repay-step.active{display:block;animation:repayStepEnter .16s ease-out}.repay-choice-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}.repay-choice-list>label{display:block;margin:0!important;cursor:pointer}.repay-choice-list input{position:absolute;opacity:0;width:1px!important;height:1px;padding:0!important}.repay-choice-list label>span{display:flex;justify-content:space-between;align-items:center;gap:5px;min-height:33px;padding:5px 7px;border:1px solid #b5c5d1;background:linear-gradient(#fff,#edf3f7);color:#284d6b}.repay-choice-list input:checked+span{border-color:#4286b7;background:linear-gradient(#f7fcff,#d9ebf7);box-shadow:inset 0 0 0 1px #83b0cf;color:#074b83}.repay-choice-list small{font-size:9px;color:#61798b;text-align:right;font-weight:normal}.repay-note{font-size:10px;color:#718596;line-height:1.4;margin:7px 0 0}.repay-review{padding:7px;border-left:3px solid #6097bf;background:#f4f9fc;font-size:11px;line-height:1.5}.repay-actions{display:flex;justify-content:space-between;gap:6px;margin-top:8px}.repay-actions [hidden]{display:none!important}@keyframes repayStepEnter{from{opacity:0;transform:translateX(4px)}to{opacity:1;transform:translateX(0)}}
+@media(max-width:560px){.mb-top{padding:0 10px}.mb-user-email{display:none}.mb-user-menu{gap:4px}.repay-progress small{display:none}.repay-choice-list{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(prefers-reduced-motion:reduce){.panel,.repay-step,.button,.nav-icon{animation:none!important;transition:none!important}}
+*{font-family:"Segoe UI",Tahoma,Arial,sans-serif}.mb-logo,.page-head h1,.big-number,.account-balance{font-family:"Segoe UI",Tahoma,Arial,sans-serif}.mb-user-menu{display:flex;align-items:center;gap:12px;min-width:0}.mb-user-menu form{margin:0}.mb-user-email{max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:12px}.mb-logout{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-color:#a7c8e2;background:linear-gradient(#fff,#dcecf8);color:#164d79;box-shadow:inset 0 1px #fff,0 1px 3px rgba(0,32,67,.24)}.mb-logout:hover{background:linear-gradient(#fff,#c7e0f2);transform:translateY(-1px)}.nav-icon{display:inline-block;width:19px;margin-right:5px;color:#527897;text-align:center;font-size:14px;font-weight:bold;transition:color .15s,transform .15s}.mb-side nav>a:hover .nav-icon,.mb-side details a:hover .nav-icon{color:#07549a;transform:translateX(2px)}body{font-family:"Segoe UI",Tahoma,Arial,sans-serif}.panel-title{font-family:"Segoe UI",Tahoma,Arial,sans-serif}.page-head h1{font-weight:600;letter-spacing:.1px}.panel b,.panel strong,td b{font-weight:700}.muted,.sub{line-height:1.5}.repay-note,.loan-auto-note{font-style:italic}.button{transition:transform .14s ease,box-shadow .14s ease,filter .14s ease}.button:hover{filter:brightness(1.025);box-shadow:inset 0 1px #fff,0 2px 5px #aabac7}.button:active{transform:translateY(1px)}.button:focus-visible,a:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid #3d88c2;outline-offset:2px}.panel{animation:minebankPanelEnter .24s ease-out both}@keyframes minebankPanelEnter{from{opacity:.82;transform:translateY(4px)}to{opacity:1;transform:translateY(0)}}.loan-repay-wizard{margin-top:9px;padding:10px;border:1px solid #bdcbd6;background:linear-gradient(#fbfdfe,#edf3f7);box-shadow:inset 0 1px #fff}.repay-progress{display:flex;align-items:center;gap:5px;margin-bottom:9px}.repay-progress span{display:flex;align-items:center;gap:4px;color:#8293a0;font-size:11px;font-weight:bold}.repay-progress span.active{color:#07549a}.repay-progress small{font-size:9px;font-weight:normal}.repay-progress i{height:1px;flex:1;background:#c4d2dd}.repay-step{display:block}.loan-repay-wizard.js-enabled .repay-step{display:none}.loan-repay-wizard.js-enabled .repay-step.active{display:block;animation:repayStepEnter .16s ease-out}.repay-choice-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}.repay-choice-list>label{display:block;margin:0!important;cursor:pointer}.repay-choice-list input{position:absolute;opacity:0;width:1px!important;height:1px;padding:0!important}.repay-choice-list label>span{display:flex;justify-content:space-between;align-items:center;gap:5px;min-height:33px;padding:5px 7px;border:1px solid #b5c5d1;background:linear-gradient(#fff,#edf3f7);color:#284d6b}.repay-choice-list input:checked+span{border-color:#4286b7;background:linear-gradient(#f7fcff,#d9ebf7);box-shadow:inset 0 0 0 1px #83b0cf;color:#074b83}.repay-choice-list small{font-size:9px;color:#61798b;text-align:right;font-weight:normal}.repay-note{font-size:10px;color:#718596;line-height:1.4;margin:7px 0 0}.repay-review{padding:7px;border-left:3px solid #6097bf;background:#f4f9fc;font-size:11px;line-height:1.5}.repay-actions{display:flex;justify-content:space-between;gap:6px;margin-top:8px}.repay-actions [hidden]{display:none!important}@keyframes repayStepEnter{from{opacity:0;transform:translateX(4px)}to{opacity:1;transform:translateX(0)}}@media(max-width:560px){.mb-top{padding:0 10px}.mb-user-email{display:none}.mb-user-menu{gap:4px}.repay-progress small{display:none}.repay-choice-list{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(prefers-reduced-motion:reduce){.panel,.repay-step,.button,.nav-icon{animation:none!important;transition:none!important}}
