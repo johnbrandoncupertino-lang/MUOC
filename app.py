@@ -417,7 +417,7 @@ def prepare_request():
 
 @app.route("/")
 def home():
-    return render_template("minebank_public.html")
+    return redirect(url_for("minebank_login"))
 
 @app.route("/login")
 def legacy_login():
@@ -447,33 +447,73 @@ def minebank_logout():
 def minebank_register():
     error = None
     registration_step = 1
-    if request.method == "POST":
-        email = request.form.get("email","").strip().lower()
-        password = request.form.get("password","")
-        confirm = request.form.get("password_confirmation","")
-        pin = request.form.get("wallet_pin","")
-        if "@" not in email:
-            error = "Enter a valid email address."
+
+    def issue_registration_captcha():
+        left = secrets.randbelow(8) + 2
+        right = secrets.randbelow(8) + 2
+        session["registration_captcha_answer"] = str(left + right)
+        session["registration_captcha_question"] = f"{left} + {right} = ?"
+
+    if request.method == "GET":
+        issue_registration_captcha()
+    else:
+        email = request.form.get("email", "").strip().lower()
+        password = request.form.get("password", "")
+        confirm = request.form.get("password_confirmation", "")
+        pin = request.form.get("wallet_pin", "")
+        first_name = request.form.get("first_name", "").strip()[:100]
+        last_name = request.form.get("last_name", "").strip()[:100]
+        date_of_birth = request.form.get("date_of_birth", "").strip() or None
+        phone = request.form.get("phone", "").strip()[:40]
+        address = request.form.get("address", "").strip()[:300]
+        city = request.form.get("city", "").strip()[:120]
+        postal_code = request.form.get("postal_code", "").strip()[:20]
+        country = request.form.get("country", "").strip()[:80]
+        occupation = request.form.get("occupation", "").strip()[:120]
+        state = request.form.get("state", "").strip()[:120]
+        main_language = request.form.get("main_language", "").strip()[:80]
+        discord_username = request.form.get("discord_username", "").strip()[:100]
+        captcha_answer = request.form.get("captcha_answer", "").strip()
+        honeypot = request.form.get("website", "").strip()
+
+        if honeypot:
+            error = "Registration could not be completed. Please try again."
+            registration_step = 4
+        elif not session.get("registration_captcha_answer") or not secrets.compare_digest(
+            captcha_answer, str(session.get("registration_captcha_answer", ""))
+        ):
+            error = "The security check was not correct. Please solve the new challenge."
+            registration_step = 4
+        elif not first_name or not last_name or not date_of_birth or not phone or not address or not city or not postal_code or not country:
+            error = "Complete all required personal details before continuing."
             registration_step = 1
-        elif len(password) < 8:
-            error = "Password must contain at least 8 characters."
+        elif not email or "@" not in email or len(email) > 320 or email.startswith("@") or email.endswith("@"):
+            error = "Enter a valid email address."
             registration_step = 2
+        elif execute_query("SELECT id FROM bank_clients WHERE LOWER(email)=LOWER(%s)", (email,)):
+            error = "An account with this email already exists. Sign in or use a different email address."
+            registration_step = 2
+        elif len(password) < 8 or len(password) > 128:
+            error = "Password must contain between 8 and 128 characters."
+            registration_step = 3
         elif password != confirm:
             error = "Passwords do not match."
-            registration_step = 2
+            registration_step = 3
         elif not pin.isdigit() or len(pin) != 6:
             error = "Wallet PIN must contain exactly 6 digits."
-            # Password fields are intentionally never echoed back into HTML.
-            # Return to the credential step so they can be entered again.
-            registration_step = 2
-        elif execute_query("SELECT id FROM bank_clients WHERE LOWER(email)=LOWER(%s)",(email,)):
-            error = "An account with this email already exists."
-            registration_step = 1
+            registration_step = 4
         else:
             try:
                 rows = execute_query(
-                    "INSERT INTO bank_clients(email,password_hash,role,wallet_pin_hash) VALUES(%s,%s,'CLIENT',%s) RETURNING id",
-                    (email,generate_password_hash(password),generate_password_hash(pin)),commit=True
+                    """INSERT INTO bank_clients
+                       (email,password_hash,role,wallet_pin_hash,first_name,last_name,date_of_birth,
+                        phone,address,city,postal_code,country,occupation,state,main_language,discord_username)
+                       VALUES(%s,%s,'CLIENT',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       RETURNING id""",
+                    (email, generate_password_hash(password), generate_password_hash(pin),
+                     first_name, last_name, date_of_birth, phone, address, city, postal_code,
+                     country, occupation, state, main_language, discord_username),
+                    commit=True
                 )
                 client_id = rows[0][0]
                 create_account(client_id, "PERSONAL", "PERSONAL")
@@ -486,11 +526,27 @@ def minebank_register():
                 flash("Welcome to MineBank. Your Personal account is ready.", "success")
                 return redirect(url_for("minebank_dashboard"))
             except Exception as exc:
-                error = str(exc)
-                registration_step = 2
-    return render_template("minebank_register_new.html", error=error,
-                           form_email=request.form.get("email",""),
-                           registration_step=registration_step)
+                # PostgreSQL's unique constraint remains the final guard against
+                # two concurrent registrations using the same email address.
+                message = str(exc).lower()
+                if "unique" in message or "duplicate key" in message:
+                    error = "An account with this email already exists. Sign in or use a different email address."
+                    registration_step = 2
+                else:
+                    print(f"MineBank registration failed: {type(exc).__name__}")
+                    error = "We could not complete registration right now. Please try again."
+                    registration_step = 1
+
+        issue_registration_captcha()
+
+    return render_template(
+        "minebank_register_new.html",
+        error=error,
+        form_email=request.form.get("email", ""),
+        registration_step=registration_step,
+        registration_captcha_question=session.get("registration_captcha_question"),
+        registration_max_date=datetime.now(timezone.utc).date().isoformat(),
+    )
 
 @app.route("/portal", endpoint="minebank_dashboard")
 @app.route("/portal/dashboard")

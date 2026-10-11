@@ -2,157 +2,142 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#071b30">
-  <title>Create an account · MineBank</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07549a">
+  <title>Create a Personal Account · MineBank</title>
   <link rel="stylesheet" href="{{ url_for('static',filename='css/minebank-rebuilt.css') }}">
+  <style>
+    .mb-register-page{box-sizing:border-box;min-height:100vh;margin:0;padding:24px 14px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(rgba(255,255,255,.2) 1px,transparent 1px),linear-gradient(90deg,rgba(110,145,170,.05) 1px,transparent 1px),#dce7f2;background-size:24px 24px;color:#16324a;font:13px Tahoma,Arial,sans-serif}
+    .mb-register-card{width:min(100%,620px);overflow:hidden;border:1px solid #8fa9bd;border-radius:3px;background:linear-gradient(#fff,#f1f6f9);box-shadow:0 3px 12px #b0bfcb,inset 0 1px #fff}
+    .mb-register-head{display:flex;align-items:center;gap:12px;padding:15px 21px;background:linear-gradient(#1971bd,#07539a 48%,#064581);border-bottom:1px solid #043968;color:#fff}
+    .mb-register-mark{display:grid;place-items:center;width:37px;height:37px;flex:0 0 37px;border:1px solid #83b4d8;background:linear-gradient(#3b8bca,#07539a);box-shadow:inset 0 1px rgba(255,255,255,.35);color:#fff;font:22px Arial}
+    .mb-register-brand{display:flex;flex-direction:column;gap:3px;min-width:0}.mb-register-brand strong{font:bold 22px Arial,sans-serif;letter-spacing:-.3px;text-shadow:0 1px #00345f}.mb-register-brand small{color:#d8ecff;font-size:10px}
+    .mb-register-tag{margin-left:auto;padding:5px 7px;border:1px solid rgba(255,255,255,.35);background:rgba(0,35,70,.18);color:#eaf5ff;font:bold 9px Arial,sans-serif;letter-spacing:.7px;white-space:nowrap}
+    .mb-register-content{padding:20px 25px 18px}.mb-register-top{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-bottom:10px;border-bottom:1px solid #c4d1dc;color:#315c7e;font:bold 11px Arial,sans-serif;text-transform:uppercase}
+    .mb-register-top a{color:#175a8b;font: bold 11px Tahoma,Arial,sans-serif;text-transform:none;text-decoration:none}.mb-register-top a:hover{text-decoration:underline}
+    .mb-register-progress-copy{display:flex;justify-content:space-between;gap:12px;margin-top:17px;color:#60778b;font-size:10px;font-weight:bold;letter-spacing:.5px}
+    .mb-register-progress{display:flex;gap:4px;margin-top:7px}.mb-register-progress span{height:4px;flex:1;border:1px solid #c0ced9;background:#e4ebf1}.mb-register-progress span.is-current,.mb-register-progress span.is-complete{border-color:#1b679f;background:#277cb8}
+    .mb-register-heading{margin:15px 0 5px;color:#173f65;font:bold 23px Arial,sans-serif}.mb-register-intro{margin:0 0 16px;color:#60778b;font-size:12px;line-height:1.5}
+    .mb-register-error{display:flex;gap:9px;margin:0 0 14px;padding:10px 11px;border:1px solid #d7a4a4;background:#fff0f0;color:#8b2323;line-height:1.45}.mb-register-error strong{display:grid;place-items:center;width:17px;height:17px;flex:0 0 17px;border:1px solid #d9a5a5;background:#fff;font:bold 11px Arial}
+    .mb-register-step[hidden]{display:none!important}.mb-register-step-title{display:flex;gap:10px;align-items:flex-start;margin:0 0 14px;padding-bottom:10px;border-bottom:1px solid #d3dfe8}.mb-register-step-number{display:grid;place-items:center;width:28px;height:28px;flex:0 0 28px;border:1px solid #a6bfd2;background:linear-gradient(#fff,#e6eff5);color:#175a8b;font:bold 12px Arial}.mb-register-step-title h3{margin:1px 0 4px;color:#244f72;font:bold 14px Arial}.mb-register-step-title p{margin:0;color:#718596;font-size:11px;line-height:1.45}
+    .mb-register-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 13px}.mb-register-field{min-width:0;margin:0 0 13px}.mb-register-field.full{grid-column:1/-1}.mb-register-field label{display:block;margin:0 0 5px;color:#35566f;font-weight:bold;font-size:12px}.mb-register-field input,.mb-register-field select{box-sizing:border-box;width:100%;height:37px;padding:8px 9px;border:1px solid #9eb1c1;background:#fff;box-shadow:inset 1px 1px 3px #d5dfe7;color:#16324a;font:12px Tahoma,Arial,sans-serif}.mb-register-field input:focus,.mb-register-field select:focus{outline:2px solid #c5e0f4;border-color:#397eae}
+    .mb-register-help{display:block;margin-top:4px;color:#718596;font-size:10px}.mb-register-input-wrap{display:flex;min-width:0;border:1px solid #9eb1c1;background:#fff;box-shadow:inset 1px 1px 3px #d5dfe7}.mb-register-input-wrap:focus-within{outline:2px solid #c5e0f4;border-color:#397eae}.mb-register-input-wrap input{border:0;box-shadow:none;outline:0;min-width:0}.mb-register-icon{display:grid;place-items:center;width:32px;flex:0 0 32px;border-right:1px solid #d0dce5;background:linear-gradient(#f8fbfd,#e7eff5);color:#55758e;font-size:14px}.mb-register-reveal{padding:0 9px;border:0;border-left:1px solid #d0dce5;background:linear-gradient(#fff,#e1e8ee);color:#175a8b;font:bold 11px Tahoma,Arial,sans-serif;cursor:pointer}
+    .mb-register-note{margin:3px 0 14px;padding:9px 10px;border:1px solid #c3d2de;background:#edf4f9;color:#5d7487;font-size:11px;line-height:1.5}
+    .mb-register-captcha{padding:11px;border:1px solid #b7cad9;background:#edf4f9}.mb-register-captcha .mb-register-field{margin-bottom:0}.mb-register-captcha-question{display:inline-block;margin-left:6px;padding:4px 8px;border:1px solid #b4c7d6;background:#fff;color:#173f65;font:bold 13px Arial}
+    .mb-register-review{margin-top:12px;padding:11px;border:1px solid #c3d2de;background:linear-gradient(#fff,#edf4f8)}.mb-register-review strong{display:block;margin-bottom:8px;color:#315c7e;font:bold 10px Arial;letter-spacing:.5px}.mb-register-review div{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-top:1px solid #e0e8ee;font-size:11px}.mb-register-review span{color:#718596}.mb-register-review b{color:#244f72;overflow-wrap:anywhere;text-align:right}
+    .mb-register-actions{display:flex;align-items:center;gap:9px;margin-top:14px;padding-top:13px;border-top:1px solid #cbd8e2}.mb-register-spacer{flex:1}.mb-register-button{display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:39px;padding:9px 12px;border:1px solid #22679d;border-radius:3px;background:linear-gradient(#78b8ea,#2f79b9 52%,#17629f);box-shadow:inset 0 1px rgba(255,255,255,.5),0 1px 2px #b6c2cb;color:#fff;font:bold 12px Tahoma,Arial,sans-serif;cursor:pointer}.mb-register-button:hover{background:linear-gradient(#8bc5f0,#347fbd 52%,#1a69a8)}.mb-register-button.secondary{border-color:#a7bac9;background:linear-gradient(#fff,#e7eef4);color:#175486}.mb-register-button:disabled{opacity:.78;cursor:wait}.mb-register-button:focus-visible,.mb-register-reveal:focus-visible{outline:2px solid #174f7d;outline-offset:2px}
+    .mb-register-security{display:flex;gap:7px;margin:14px 0 0;color:#718596;font-size:10px;line-height:1.5}.mb-register-security span{color:#2f6d9c}.mb-register-foot{display:flex;justify-content:space-between;gap:10px;padding:11px 25px;border-top:1px solid #d0dce5;background:linear-gradient(#f1f6f9,#e5edf3);color:#718596;font-size:10px}.mb-register-page-foot{margin-top:12px;color:#718596;font-size:10px;text-align:center}
+    .mb-register-honeypot{position:absolute!important;left:-10000px!important;width:1px!important;height:1px!important;overflow:hidden!important}
+    @media(max-width:520px){.mb-register-page{padding:10px}.mb-register-head{padding:13px 15px}.mb-register-content{padding:17px 15px}.mb-register-foot{padding:10px 15px}.mb-register-grid{grid-template-columns:1fr;gap:0}.mb-register-field.full{grid-column:auto}.mb-register-tag{font-size:8px}.mb-register-brand strong{font-size:20px}.mb-register-heading{font-size:21px}.mb-register-top{align-items:flex-start}.mb-register-button{font-size:11px;padding:9px}.mb-register-progress-copy{font-size:9px}}
+  </style>
 </head>
-<body class="login-body auth-body auth-register">
-  <div class="auth-orb auth-orb-one" aria-hidden="true"></div>
-  <div class="auth-orb auth-orb-two" aria-hidden="true"></div>
-  <main class="auth-shell auth-register-shell">
-    <section class="auth-story auth-register-story" aria-label="MineBank introduction">
-      <header class="auth-brand">
-        <span class="auth-brand-mark" aria-hidden="true">◆</span>
-        <span class="auth-brand-copy"><strong>MineBank</strong><small>The New Bank</small></span>
-        <span class="auth-brand-tag">GET STARTED</span>
-      </header>
-      <div class="auth-story-main">
-        <div class="auth-eyebrow"><span class="auth-eyebrow-dot"></span> A BETTER WAY TO BANK</div>
-        <h1>Your next chapter<br><span>starts here.</span></h1>
-        <p class="auth-lead">Set up your access in a few guided steps. We’ll create your Personal account when registration is complete.</p>
-        <div class="auth-onboarding-list">
-          <div><span class="auth-onboarding-number">01</span><span><b>Account details</b><small>Tell us which email to use.</small></span></div>
-          <div><span class="auth-onboarding-number">02</span><span><b>Sign-in credentials</b><small>Set a strong password.</small></span></div>
-          <div><span class="auth-onboarding-number">03</span><span><b>Wallet security</b><small>Choose a separate 6-digit PIN.</small></span></div>
-        </div>
-      </div>
-      <footer class="auth-story-foot"><span><i></i> Three clear steps</span><span>No account is created until you submit.</span></footer>
-    </section>
-
-    <section class="auth-panel auth-register-panel" aria-labelledby="register-title">
-      <div class="auth-panel-top"><span class="auth-panel-kicker">NEW CUSTOMER</span><a class="auth-back-link" href="{{ url_for('minebank_login') }}">Already registered? Sign in <span aria-hidden="true">↗</span></a></div>
-      <div class="auth-form-wrap auth-register-wrap">
-        <div class="auth-progress-copy"><span id="register-step-label">STEP 01 OF 03</span><span id="register-step-name">Account details</span></div>
-        <div class="auth-progress-track" aria-label="Registration progress"><span class="is-current"></span><span></span><span></span></div>
-        <h2 id="register-title">Let’s get started.</h2>
-        <p class="auth-form-intro">Create your secure MineBank login.</p>
-        {% if error %}<div class="auth-error" role="alert"><span aria-hidden="true">!</span><div>{{ error }}</div></div>{% endif %}
-        <form method="post" class="auth-wizard" id="registration-wizard" novalidate data-start-step="{{ registration_step|default(1) }}">
-          <section class="auth-wizard-step is-active" data-step="1" aria-labelledby="register-step-one">
-            <div class="auth-step-heading"><span>01</span><div><h3 id="register-step-one">Account details</h3><p>Start with an email address you can access.</p></div></div>
-            <div class="auth-field">
-              <label for="register-email">Email address</label>
-              <div class="auth-input-wrap"><span class="auth-input-icon" aria-hidden="true">✉</span><input id="register-email" type="email" name="email" required autocomplete="email" autocapitalize="none" spellcheck="false" maxlength="320" value="{{ form_email|default('') }}" placeholder="you@example.com"></div>
-              <small class="auth-help">We’ll use this address for your MineBank login.</small>
-            </div>
-            <div class="auth-step-note"><span aria-hidden="true">i</span><p>One customer can hold one Personal account and up to five Business accounts.</p></div>
-          </section>
-          <section class="auth-wizard-step" data-step="2" aria-labelledby="register-step-two">
-            <div class="auth-step-heading"><span>02</span><div><h3 id="register-step-two">Create your password</h3><p>Use a unique password that you don’t use elsewhere.</p></div></div>
-            <div class="auth-field">
-              <label for="register-password">Password</label>
-              <div class="auth-input-wrap"><span class="auth-input-icon" aria-hidden="true">⌑</span><input id="register-password" type="password" name="password" required minlength="8" maxlength="128" autocomplete="new-password" placeholder="At least 8 characters"><button class="auth-reveal" type="button" data-reveal="register-password" aria-label="Show password">Show</button></div>
-              <small class="auth-help">Use at least 8 characters.</small>
-            </div>
-            <div class="auth-field">
-              <label for="register-password-confirm">Confirm password</label>
-              <div class="auth-input-wrap"><span class="auth-input-icon" aria-hidden="true">✓</span><input id="register-password-confirm" type="password" name="password_confirmation" required minlength="8" maxlength="128" autocomplete="new-password" placeholder="Enter the password again"></div>
-              <small class="auth-inline-error" id="password-match-message" aria-live="polite"></small>
-            </div>
-          </section>
-          <section class="auth-wizard-step" data-step="3" aria-labelledby="register-step-three">
-            <div class="auth-step-heading"><span>03</span><div><h3 id="register-step-three">Secure your wallet</h3><p>Choose a separate PIN for sensitive banking operations.</p></div></div>
-            <div class="auth-field">
-              <label for="register-pin">6-digit Wallet PIN</label>
-              <div class="auth-input-wrap"><span class="auth-input-icon" aria-hidden="true">▦</span><input id="register-pin" type="password" name="wallet_pin" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="new-password" required placeholder="••••••"><button class="auth-reveal" type="button" data-reveal="register-pin" aria-label="Show Wallet PIN">Show</button></div>
-              <small class="auth-help">Enter exactly six digits. Don’t reuse your account password.</small>
-            </div>
-            <div class="auth-step-note auth-step-note-warning"><span aria-hidden="true">!</span><p>Three incorrect Wallet PIN attempts trigger a 5-minute lockout.</p></div>
-            <div class="auth-review-card"><div class="auth-review-heading"><span>ACCOUNT TO BE CREATED</span><b>Personal</b></div><div><span>Login email</span><strong id="register-review-email">—</strong></div><div><span>Banking currency</span><strong>Emerald</strong></div><div><span>Access</span><strong>MineBank Online</strong></div></div>
-          </section>
-          <div class="auth-wizard-actions">
-            <button class="auth-back-button" id="register-back" type="button">← Back</button>
-            <span class="auth-action-spacer"></span>
-            <button class="auth-submit auth-next-button" id="register-next" type="button">Continue <span aria-hidden="true">→</span></button>
-            <button class="auth-submit auth-create-button" id="register-submit" type="submit"><span>Create Personal account</span><span aria-hidden="true">→</span></button>
+<body class="mb-register-page">
+  <main class="mb-register-card">
+    <header class="mb-register-head">
+      <span class="mb-register-mark" aria-hidden="true">◆</span>
+      <span class="mb-register-brand"><strong>MineBank</strong><small>The New Bank</small></span>
+      <span class="mb-register-tag">ONLINE BANKING</span>
+    </header>
+    <section class="mb-register-content" aria-labelledby="register-title">
+      <div class="mb-register-top"><span>New Customer Registration</span><a href="{{ url_for('minebank_login') }}">Already registered? Sign in ↗</a></div>
+      <div class="mb-register-progress-copy"><span id="register-step-label">STEP 01 OF 04</span><span id="register-step-name">Personal details</span></div>
+      <div class="mb-register-progress" aria-label="Registration progress"><span class="is-current"></span><span></span><span></span><span></span></div>
+      <h1 class="mb-register-heading" id="register-title">Let’s get started.</h1>
+      <p class="mb-register-intro">Create your Personal account and enter your profile details before accessing MineBank.</p>
+      {% if error %}<div class="mb-register-error" role="alert"><strong aria-hidden="true">!</strong><div>{{ error }}</div></div>{% endif %}
+      <form method="post" id="registration-wizard" novalidate data-start-step="{{ registration_step|default(1) }}">
+        <div class="mb-register-honeypot" aria-hidden="true"><label for="register-website">Leave this field empty</label><input id="register-website" type="text" name="website" tabindex="-1" autocomplete="off"></div>
+        <section class="mb-register-step" data-step="1" aria-labelledby="register-personal-title">
+          <div class="mb-register-step-title"><span class="mb-register-step-number">01</span><div><h3 id="register-personal-title">Personal information</h3><p>These details will be saved directly to your MineBank profile.</p></div></div>
+          <div class="mb-register-grid">
+            <div class="mb-register-field"><label for="register-first-name">First name *</label><input id="register-first-name" name="first_name" required maxlength="100" autocomplete="given-name" value="{{ request.form.get('first_name','') }}" placeholder="First name"></div>
+            <div class="mb-register-field"><label for="register-last-name">Last name *</label><input id="register-last-name" name="last_name" required maxlength="100" autocomplete="family-name" value="{{ request.form.get('last_name','') }}" placeholder="Last name"></div>
+            <div class="mb-register-field"><label for="register-dob">Date of birth *</label><input id="register-dob" type="date" name="date_of_birth" required max="{{ registration_max_date }}" autocomplete="bday" value="{{ request.form.get('date_of_birth','') }}"></div>
+            <div class="mb-register-field"><label for="register-phone">Phone number *</label><input id="register-phone" type="tel" name="phone" required maxlength="40" autocomplete="tel" value="{{ request.form.get('phone','') }}" placeholder="+39 …"></div>
+            <div class="mb-register-field full"><label for="register-address">Street address *</label><input id="register-address" name="address" required maxlength="300" autocomplete="street-address" value="{{ request.form.get('address','') }}" placeholder="Street and house number"></div>
+            <div class="mb-register-field"><label for="register-city">City *</label><input id="register-city" name="city" required maxlength="120" autocomplete="address-level2" value="{{ request.form.get('city','') }}" placeholder="City"></div>
+            <div class="mb-register-field"><label for="register-postal">Postal code *</label><input id="register-postal" name="postal_code" required maxlength="20" autocomplete="postal-code" value="{{ request.form.get('postal_code','') }}" placeholder="Postal code"></div>
+            <div class="mb-register-field full"><label for="register-country">Country *</label><input id="register-country" name="country" required maxlength="80" autocomplete="country-name" value="{{ request.form.get('country','') }}" placeholder="Country"></div>
+            <div class="mb-register-field"><label for="register-state">State / region</label><input id="register-state" name="state" maxlength="120" autocomplete="address-level1" value="{{ request.form.get('state','') }}" placeholder="State or region"></div>
+            <div class="mb-register-field"><label for="register-occupation">Occupation</label><input id="register-occupation" name="occupation" maxlength="120" autocomplete="organization-title" value="{{ request.form.get('occupation','') }}" placeholder="Occupation (optional)"></div>
+            <div class="mb-register-field"><label for="register-language">Main language</label><input id="register-language" name="main_language" maxlength="80" value="{{ request.form.get('main_language','') }}" placeholder="Preferred language"></div>
+            <div class="mb-register-field"><label for="register-discord">Discord username</label><input id="register-discord" name="discord_username" maxlength="100" value="{{ request.form.get('discord_username','') }}" placeholder="Optional"></div>
           </div>
-        </form>
-        <p class="auth-assurance"><span aria-hidden="true">◆</span> Passwords and PINs are stored as password hashes, not plain text.</p>
-      </div>
-      <footer class="auth-panel-foot"><span>MineBank · The New Bank</span><span>Registration</span></footer>
+        </section>
+        <section class="mb-register-step" data-step="2" aria-labelledby="register-email-title" hidden>
+          <div class="mb-register-step-title"><span class="mb-register-step-number">02</span><div><h3 id="register-email-title">Login email</h3><p>Use an email address you can access. Existing addresses cannot be registered twice.</p></div></div>
+          <div class="mb-register-field"><label for="register-email">Email address *</label><div class="mb-register-input-wrap"><span class="mb-register-icon" aria-hidden="true">✉</span><input id="register-email" type="email" name="email" required autocomplete="email" autocapitalize="none" spellcheck="false" maxlength="320" value="{{ form_email|default('') }}" placeholder="you@example.com"></div><small class="mb-register-help">Your email is your MineBank sign-in identifier.</small></div>
+          <div class="mb-register-note">If an account already uses this email, registration will stop and you can return to the login page.</div>
+        </section>
+        <section class="mb-register-step" data-step="3" aria-labelledby="register-password-title" hidden>
+          <div class="mb-register-step-title"><span class="mb-register-step-number">03</span><div><h3 id="register-password-title">Sign-in credentials</h3><p>Use a unique password and confirm it before continuing.</p></div></div>
+          <div class="mb-register-field"><label for="register-password">Password *</label><div class="mb-register-input-wrap"><span class="mb-register-icon" aria-hidden="true">▣</span><input id="register-password" type="password" name="password" required minlength="8" maxlength="128" autocomplete="new-password" placeholder="At least 8 characters"><button class="mb-register-reveal" type="button" data-reveal="register-password">Show</button></div><small class="mb-register-help">Use between 8 and 128 characters.</small></div>
+          <div class="mb-register-field"><label for="register-password-confirm">Confirm password *</label><div class="mb-register-input-wrap"><span class="mb-register-icon" aria-hidden="true">✓</span><input id="register-password-confirm" type="password" name="password_confirmation" required minlength="8" maxlength="128" autocomplete="new-password" placeholder="Enter the password again"></div><small id="password-match-message" class="mb-register-help" aria-live="polite"></small></div>
+        </section>
+        <section class="mb-register-step" data-step="4" aria-labelledby="register-security-title" hidden>
+          <div class="mb-register-step-title"><span class="mb-register-step-number">04</span><div><h3 id="register-security-title">Wallet security</h3><p>Choose a separate PIN and complete the anti-bot check.</p></div></div>
+          <div class="mb-register-field"><label for="register-pin">6-digit Wallet PIN *</label><div class="mb-register-input-wrap"><span class="mb-register-icon" aria-hidden="true">▦</span><input id="register-pin" type="password" name="wallet_pin" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="new-password" required placeholder="Six digits"><button class="mb-register-reveal" type="button" data-reveal="register-pin">Show</button></div><small class="mb-register-help">This PIN is separate from your sign-in password.</small></div>
+          <div class="mb-register-captcha"><div class="mb-register-field"><label for="register-captcha">Security check * <span class="mb-register-captcha-question">{{ registration_captcha_question }}</span></label><div class="mb-register-input-wrap"><span class="mb-register-icon" aria-hidden="true">✓</span><input id="register-captcha" name="captcha_answer" inputmode="numeric" pattern="[0-9]+" required autocomplete="off" placeholder="Enter the answer"></div><small class="mb-register-help">Solve this quick question to help prevent automated registrations.</small></div></div>
+          <div class="mb-register-review"><strong>ACCOUNT SUMMARY</strong><div><span>Account type</span><b>Personal</b></div><div><span>Currency</span><b>Emerald</b></div><div><span>Profile details</span><b>Saved to your customer profile</b></div></div>
+        </section>
+        <div class="mb-register-actions">
+          <button class="mb-register-button secondary" id="register-back" type="button" hidden>← Back</button>
+          <span class="mb-register-spacer"></span>
+          <button class="mb-register-button" id="register-next" type="button">Continue <span aria-hidden="true">→</span></button>
+          <button class="mb-register-button" id="register-submit" type="submit" hidden><span>Create Personal account</span><span aria-hidden="true">→</span></button>
+        </div>
+      </form>
+      <p class="mb-register-security"><span aria-hidden="true">◆</span> Passwords and Wallet PINs are stored as password hashes. Never share your credentials.</p>
     </section>
+    <footer class="mb-register-foot"><span>MineBank · The New Bank</span><span>Currency: Emerald</span></footer>
   </main>
-  <footer class="auth-page-footer">© {{ 2026 }} MineBank <span>·</span> Emerald banking services <span>·</span> Keep your credentials private.</footer>
+  <footer class="mb-register-page-foot">© 2026 MineBank · Secure online banking</footer>
   <script>
   (function(){
     document.querySelectorAll('[data-reveal]').forEach(function(toggle){
       toggle.addEventListener('click',function(){
-        const input=document.getElementById(toggle.getAttribute('data-reveal'));
-        if(!input) return;
-        const show=input.type==='password';
-        input.type=show?'text':'password';
-        toggle.textContent=show?'Hide':'Show';
-        toggle.setAttribute('aria-label',show?'Hide password':'Show password');
+        var input=document.getElementById(toggle.getAttribute('data-reveal')); if(!input)return;
+        var show=input.type==='password'; input.type=show?'text':'password'; toggle.textContent=show?'Hide':'Show';
+        toggle.setAttribute('aria-label',show?'Hide value':'Show value');
       });
     });
-    const form=document.getElementById('registration-wizard');
-    if(!form) return;
-    const steps=Array.from(form.querySelectorAll('.auth-wizard-step'));
-    const dots=Array.from(document.querySelectorAll('.auth-progress-track span'));
-    const back=document.getElementById('register-back');
-    const next=document.getElementById('register-next');
-    const submit=document.getElementById('register-submit');
-    const stepLabel=document.getElementById('register-step-label');
-    const stepName=document.getElementById('register-step-name');
-    const title=document.getElementById('register-title');
-    const email=document.getElementById('register-email');
-    const password=document.getElementById('register-password');
-    const confirm=document.getElementById('register-password-confirm');
-    const pin=document.getElementById('register-pin');
-    const matchMessage=document.getElementById('password-match-message');
-    const reviewEmail=document.getElementById('register-review-email');
-    const names=['Account details','Sign-in credentials','Wallet security'];
-    const headings=['Let’s get started.','Secure your sign-in.','One final security step.'];
-    let current=Math.max(0,Math.min(2,(Number(form.dataset.startStep)||1)-1));
-    function checkPasswordMatch(){
-      if(!password||!confirm) return true;
-      const mismatch=confirm.value.length>0&&password.value!==confirm.value;
-      confirm.setCustomValidity(mismatch?'Passwords do not match.':'');
-      if(matchMessage) matchMessage.textContent=mismatch?'Passwords do not match.':'';
+    var form=document.getElementById('registration-wizard'); if(!form)return;
+    var steps=Array.from(form.querySelectorAll('.mb-register-step'));
+    var dots=Array.from(document.querySelectorAll('.mb-register-progress span'));
+    var back=document.getElementById('register-back'),next=document.getElementById('register-next'),submit=document.getElementById('register-submit');
+    var stepLabel=document.getElementById('register-step-label'),stepName=document.getElementById('register-step-name'),title=document.getElementById('register-title');
+    var password=document.getElementById('register-password'),confirm=document.getElementById('register-password-confirm'),match=document.getElementById('password-match-message');
+    var names=['Personal details','Login email','Sign-in credentials','Wallet security'];
+    var headings=['Tell us about yourself.','Choose your login email.','Secure your sign-in.','Protect your wallet.'];
+    var current=Math.max(0,Math.min(3,(Number(form.dataset.startStep)||1)-1));
+    function checkMatch(){
+      var mismatch=!!(password&&confirm&&confirm.value.length&&password.value!==confirm.value);
+      if(confirm)confirm.setCustomValidity(mismatch?'Passwords do not match.':'');
+      if(match)match.textContent=mismatch?'Passwords do not match.':'';
       return !mismatch;
     }
-    function syncReview(){ if(reviewEmail) reviewEmail.textContent=email&&email.value?email.value:'Enter your email in Step 1'; }
     function showStep(index){
-      current=index;
-      steps.forEach((step,i)=>{step.hidden=i!==index;step.classList.toggle('is-active',i===index);});
-      dots.forEach((dot,i)=>{dot.classList.toggle('is-current',i===index);dot.classList.toggle('is-complete',i<index);});
-      stepLabel.textContent='STEP 0'+(index+1)+' OF 03';
-      stepName.textContent=names[index];
-      title.textContent=headings[index];
-      back.hidden=index===0;
-      next.hidden=index===2;
-      submit.hidden=index!==2;
-      syncReview();
+      current=index;steps.forEach(function(step,i){step.hidden=i!==index;step.classList.toggle('is-active',i===index);});
+      dots.forEach(function(dot,i){dot.classList.toggle('is-current',i===index);dot.classList.toggle('is-complete',i<index);});
+      stepLabel.textContent='STEP 0'+(index+1)+' OF 04';stepName.textContent=names[index];title.textContent=headings[index];
+      back.hidden=index===0;next.hidden=index===3;submit.hidden=index!==3;
+      if(index===1){var email=document.getElementById('register-email');if(email)email.focus({preventScroll:true});}
     }
     function currentIsValid(){
-      if(current===1) checkPasswordMatch();
-      const fields=Array.from(steps[current].querySelectorAll('input,select,textarea'));
-      for(const field of fields){if(!field.checkValidity()){field.reportValidity();return false;}}
+      if(current===2&&!checkMatch()) {confirm.reportValidity();return false;}
+      var fields=Array.from(steps[current].querySelectorAll('input,select,textarea')).filter(function(field){return field.name!=='website';});
+      for(var i=0;i<fields.length;i++){if(!fields[i].checkValidity()){fields[i].reportValidity();return false;}}
       return true;
     }
-    next.addEventListener('click',function(){if(currentIsValid()) showStep(Math.min(2,current+1));});
+    next.addEventListener('click',function(){if(currentIsValid())showStep(Math.min(3,current+1));});
     back.addEventListener('click',function(){showStep(Math.max(0,current-1));});
-    if(password) password.addEventListener('input',checkPasswordMatch);
-    if(confirm) confirm.addEventListener('input',checkPasswordMatch);
-    if(email) email.addEventListener('input',syncReview);
+    if(password)password.addEventListener('input',checkMatch);if(confirm)confirm.addEventListener('input',checkMatch);
     form.addEventListener('submit',function(event){
-      if(current!==2){event.preventDefault();if(currentIsValid()) showStep(current+1);return;}
+      if(current!==3){event.preventDefault();if(currentIsValid())showStep(current+1);return;}
       if(!currentIsValid()){event.preventDefault();return;}
-      submit.disabled=true;submit.classList.add('is-loading');submit.querySelector('span').textContent='Creating your account…';
+      submit.disabled=true;submit.querySelector('span').textContent='Creating your account…';
     });
-    form.classList.add('js-ready');
-    showStep(current);
+    form.classList.add('js-ready');showStep(current);
   })();
   </script>
 </body>
