@@ -755,3 +755,59 @@ body{font-family:"Segoe UI",Tahoma,Arial,sans-serif}.panel-title{font-family:"Se
 @media(max-width:720px){.auth-body.login-body{padding:12px 10px 14px}.auth-shell,.auth-register-shell{display:flex;flex-direction:column;width:min(540px,100%);min-height:0;border-radius:16px}.auth-story{padding:20px 22px 16px}.auth-brand-mark{width:36px;height:36px;flex-basis:36px;border-radius:10px;font-size:19px}.auth-brand-copy strong{font-size:18px}.auth-brand-tag{padding:6px 7px;letter-spacing:.08em}.auth-story-main{margin:22px 0 18px}.auth-eyebrow{margin-bottom:12px;font-size:9px}.auth-story h1{font-size:35px;letter-spacing:-1px}.auth-lead{margin:12px 0 15px;font-size:11px;line-height:1.6}.auth-preview{display:none}.auth-story-foot{padding-top:11px;font-size:9px}.auth-panel{padding:20px 22px 17px}.auth-form-wrap{margin:0 auto;padding:30px 0 24px}.auth-form-symbol{width:36px;height:36px;margin-bottom:16px}.auth-form-wrap h2{font-size:27px}.auth-form-intro{margin:8px 0 20px}.auth-panel-foot{padding-top:12px}.auth-page-footer{line-height:1.6}.auth-register-story .auth-story-main{margin:20px 0 16px}.auth-onboarding-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin-top:15px}.auth-onboarding-list>div{align-items:flex-start;flex-direction:column;gap:7px;padding:8px 0;border:0}.auth-onboarding-number{width:27px;height:27px;flex-basis:27px;border-radius:8px}.auth-onboarding-list b{font-size:10px}.auth-onboarding-list small{font-size:9px;line-height:1.4}.auth-register-wrap{padding-top:25px}.auth-register-wrap h2{font-size:25px}}
 @media(max-width:420px){.auth-body.login-body{padding:8px}.auth-brand-tag{display:none}.auth-story{padding:18px 17px 14px}.auth-panel{padding:18px 17px 15px}.auth-story h1{font-size:31px}.auth-onboarding-list{grid-template-columns:1fr;gap:4px}.auth-onboarding-list>div{flex-direction:row;align-items:center;padding:5px 0}.auth-brand-copy small{font-size:9px}.auth-form-wrap h2{font-size:24px}.auth-form{gap:14px}.auth-progress-copy{letter-spacing:.07em}.auth-next-button,.auth-create-button{min-width:0;flex:1}.auth-review-card{padding:11px}}
 @media(prefers-reduced-motion:reduce){.auth-story,.auth-panel,.auth-wizard-step,.auth-progress-track span,.auth-input-wrap,.auth-submit{animation:none!important;transition:none!important}}
+
+
+/* Guided Business account-opening wizard */
+.account-opening-wizard{padding:clamp(15px,2.3vw,25px);overflow:hidden}
+.account-wizard-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:15px;margin-bottom:19px}
+.account-wizard-heading>div{min-width:0}
+.account-wizard-kicker{margin-bottom:7px;color:#6a889b;font-size:9px;font-weight:850;letter-spacing:.16em}
+.account-wizard-heading .panel-title{margin:0 0 7px;font-size:18px}
+.account-wizard-heading .muted{margin:0;max-width:610px;font-size:11px}
+.account-wizard-progress{display:grid;grid-template-columns:auto minmax(18px,1fr) auto minmax(18px,1fr) auto;align-items:center;gap:9px;margin:0 0 22px;padding:12px 14px;border:1px solid #d9e4eb;border-radius:9px;background:linear-gradient(180deg,#fbfdff,#f3f8fb)}
+.account-wizard-progress>div{display:flex;align-items:center;gap:8px;color:#8093a0;font-size:10px;font-weight:750;white-space:nowrap}
+.account-wizard-progress i{display:grid;place-items:center;width:26px;height:26px;flex:0 0 26px;border:1px solid #d3e0e8;border-radius:8px;background:#fff;color:#758c9c;font-size:9px;font-style:normal}
+.account-wizard-progress>div.is-active{color:#155d88}
+.account-wizard-progress>div.is-active i{border-color:#1c78a8;background:#e6f4fa;color:#155d88;box-shadow:0 0 0 3px rgba(28,120,168,.08)}
+.account-wizard-progress>div.is-complete i{border-color:#74bca8;background:#e9f8f3;color:#287b64}
+.account-wizard-progress>b{height:1px;background:#cfdae2}
+.account-wizard-step-title{display:flex;align-items:flex-start;gap:12px;margin:0 0 16px}
+.account-wizard-step-title>span{display:grid;place-items:center;width:31px;height:31px;flex:0 0 31px;border:1px solid #d2e4ee;border-radius:9px;background:#f1f8fc;color:#1d709b;font-size:10px;font-weight:850}
+.account-wizard-step-title h3{margin:1px 0 5px;color:#1a394f;font-size:14px}
+.account-wizard-step-title p{margin:0;color:#7b8f9d;font-size:10px;line-height:1.5}
+.account-wizard-form{gap:13px}
+.account-opening-wizard .product-choice-grid{grid-template-columns:repeat(auto-fit,minmax(min(100%,185px),1fr));gap:11px;margin:0}
+.account-opening-wizard .product-choice{gap:8px;min-height:145px;padding:14px;border:1px solid #d5e1e9;border-radius:10px;background:linear-gradient(180deg,#fff,#f9fcfe);box-shadow:inset 0 1px #fff}
+.account-opening-wizard .product-choice:has(input:checked){border-color:#438db8;background:linear-gradient(180deg,#f5fbff,#e8f5fc);box-shadow:inset 0 0 0 1px rgba(67,141,184,.24),0 4px 12px rgba(25,87,127,.06)}
+.account-opening-wizard .product-choice-title{color:#173e59;font-size:12px}
+.account-opening-wizard .product-choice-meta{display:flex;justify-content:space-between;gap:8px;color:#7c8f9c;font-size:10px}
+.account-opening-wizard .product-choice-meta b{color:#3b5a70;font-size:10px;white-space:nowrap}
+.account-opening-wizard .product-choice-note{margin-top:auto;padding-top:8px;border-top:1px solid #e6edf2;color:#47738d;font-size:9px;line-height:1.45}
+.account-opening-wizard .product-choice:has(input:disabled){opacity:.58}
+.account-wizard-hint{display:flex;align-items:flex-start;gap:9px;margin-top:16px;padding:11px 12px;border:1px solid #dae8ee;border-radius:8px;background:#f5fafc;color:#6e8594}
+.account-wizard-hint>span{display:grid;place-items:center;width:17px;height:17px;flex:0 0 17px;border-radius:50%;background:#e0eef5;color:#337a9e;font-size:10px;font-weight:900}
+.account-wizard-hint p{margin:0;font-size:10px;line-height:1.55}
+.account-wizard-fields{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px}
+.account-wizard-field{display:flex;flex-direction:column;gap:7px;min-width:0}
+.account-wizard-field-full{grid-column:1/-1}
+.account-wizard-field label{color:#315168;font-size:11px;font-weight:750}
+.account-wizard-field label span{color:#8798a4;font-weight:500}
+.account-wizard-field input{width:100%;min-width:0;min-height:43px;padding:10px 12px;border:1px solid #d4e0e8;border-radius:8px;background:#fbfdff;color:#183b53;font:11px "Segoe UI",Tahoma,Arial,sans-serif}
+.account-wizard-field input:focus{border-color:#5795bc;outline:0;box-shadow:0 0 0 3px rgba(61,136,194,.12);background:#fff}
+.account-opening-review{padding:16px;border:1px solid #d6e3eb;border-radius:10px;background:linear-gradient(140deg,#fbfdff,#f2f8fb)}
+.account-opening-review-head{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:center;gap:10px;padding-bottom:14px;border-bottom:1px solid #dce7ed}
+.account-opening-review-head>span{color:#7c93a2;font-size:9px;font-weight:850;letter-spacing:.13em}
+.account-opening-review-head>strong{color:#165d88;font-size:12px}
+.account-opening-review-row{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;padding-top:12px}
+.account-opening-review-row span{color:#748a99;font-size:10px}
+.account-opening-review-row strong{max-width:65%;color:#294b61;font-size:10px;text-align:right;overflow-wrap:anywhere}
+.account-opening-review-divider{height:1px;margin-top:14px;background:#dce7ed}
+.account-wizard-actions{display:flex;align-items:center;gap:9px;margin-top:19px;padding-top:15px;border-top:1px solid #e2eaf0}
+.account-wizard-action-spacer{flex:1}
+.account-wizard-actions button[hidden]{display:none!important}
+.account-wizard-actions .button{min-height:37px;padding:9px 13px}
+.account-wizard-actions .button:disabled{opacity:.52;cursor:wait}
+.account-opening-footnote{margin:14px 0 0;font-size:10px;line-height:1.5}
+.account-opening-wizard.js-enabled .account-wizard-step[hidden]{display:none!important}
+@media(max-width:620px){.account-wizard-heading{flex-direction:column}.account-wizard-progress{gap:5px;padding:10px 8px}.account-wizard-progress>div{gap:5px;font-size:9px}.account-wizard-progress i{width:23px;height:23px;flex-basis:23px}.account-opening-wizard .product-choice-grid{grid-template-columns:1fr}.account-opening-wizard .product-choice{min-height:0}.account-wizard-fields{grid-template-columns:1fr}.account-wizard-field-full{grid-column:auto}.account-wizard-actions{flex-wrap:wrap}.account-wizard-action-spacer{display:none}.account-wizard-actions .button{flex:1;min-width:0}.account-opening-review-row{gap:10px}}
+@media(prefers-reduced-motion:reduce){.account-opening-wizard .product-choice{transition:none!important}}
