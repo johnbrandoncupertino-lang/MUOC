@@ -43,7 +43,7 @@ document.querySelectorAll('[data-range]').forEach(b=>b.addEventListener('click',
 <section class="panel account-opening-wizard" id="accountOpeningWizard">
   <div class="account-wizard-heading"><div><div class="account-wizard-kicker">ACCOUNT OPENING</div><div class="panel-title">Open a Business Account</div><p class="muted">Choose a product, enter the business details and review everything before submitting.</p></div><span class="live-indicator">Guided process</span></div>
   <div class="account-wizard-progress" id="business-progress" aria-label="Account opening steps"><div class="is-active"><i>01</i><span>Product</span></div><b></b><div><i>02</i><span>Details</span></div><b></b><div><i>03</i><span>Review</span></div></div>
-  <form method="post" action="{{ url_for('minebank_accounts_page') }}" class="guided-form account-wizard-form" id="business-account-wizard">
+  <form method="post" action="{{ url_for('minebank_accounts_page') }}" class="guided-form account-wizard-form" id="business-account-wizard" novalidate>
     <input type="hidden" name="action" value="open_business">
     <section class="account-wizard-step is-active" data-step="1">
       <div class="account-wizard-step-title"><span>01</span><div><h3>Choose your Business product</h3><p>Opening and monthly fees are shown for each available option.</p></div></div>
