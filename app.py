@@ -408,6 +408,7 @@ def minebank_logout():
 @app.route("/portal/register", methods=["GET","POST"])
 def minebank_register():
     error = None
+    registration_step = 1
     if request.method == "POST":
         email = request.form.get("email","").strip().lower()
         password = request.form.get("password","")
@@ -415,14 +416,21 @@ def minebank_register():
         pin = request.form.get("wallet_pin","")
         if "@" not in email:
             error = "Enter a valid email address."
+            registration_step = 1
         elif len(password) < 8:
             error = "Password must contain at least 8 characters."
+            registration_step = 2
         elif password != confirm:
             error = "Passwords do not match."
+            registration_step = 2
         elif not pin.isdigit() or len(pin) != 6:
             error = "Wallet PIN must contain exactly 6 digits."
+            # Password fields are intentionally never echoed back into HTML.
+            # Return to the credential step so they can be entered again.
+            registration_step = 2
         elif execute_query("SELECT id FROM bank_clients WHERE LOWER(email)=LOWER(%s)",(email,)):
             error = "An account with this email already exists."
+            registration_step = 1
         else:
             try:
                 rows = execute_query(
@@ -441,7 +449,10 @@ def minebank_register():
                 return redirect(url_for("minebank_dashboard"))
             except Exception as exc:
                 error = str(exc)
-    return render_template("minebank_register_new.html", error=error)
+                registration_step = 2
+    return render_template("minebank_register_new.html", error=error,
+                           form_email=request.form.get("email",""),
+                           registration_step=registration_step)
 
 @app.route("/portal", endpoint="minebank_dashboard")
 @app.route("/portal/dashboard")
@@ -611,6 +622,12 @@ def evaluate_tier_eligibility(client, account, tier):
 @require_login
 def minebank_accounts_page():
     error=None
+    form_data={
+        "tier_code": request.form.get("tier_code","BUSINESS"),
+        "legal_name": request.form.get("legal_name",""),
+        "trading_name": request.form.get("trading_name",""),
+        "address": request.form.get("address",""),
+    }
     if request.method=="POST":
         try:
             action=request.form.get("action","open_business")
@@ -656,7 +673,7 @@ def minebank_accounts_page():
     account=selected_account()
     business_tiers=execute_query_dict("SELECT code,display_name,monthly_fee,opening_fee,monthly_outgoing_limit,credit_enabled,default_credit_limit FROM account_tiers_v2 WHERE account_type='BUSINESS' AND active=TRUE ORDER BY id")
     return render_template("minebank_portal.html",mode="account",account=account,accounts=get_accounts(session["minebank_client_id"]),
-                           business_tiers=business_tiers,account_error=error,portal_active="account")
+                           business_tiers=business_tiers,form_data=form_data,account_error=error,portal_active="account")
 
 @app.route("/portal/business/<int:account_id>/members",methods=["GET","POST"])
 @require_login
