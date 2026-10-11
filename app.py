@@ -633,10 +633,16 @@ def minebank_accounts_page():
             # Higher products can be opened directly only when the customer's
             # existing Business relationship meets the configured eligibility rules.
             if tier!="BUSINESS":
-                business_accounts=[a for a in get_accounts(session["minebank_client_id"]) if a.get("account_type")=="BUSINESS"]
-                if not business_accounts:
-                    raise ValueError("Open Business Standard first. Business Pro eligibility is assessed against an established Business account.")
-                eligible,reason=evaluate_tier_eligibility(current_client(),business_accounts[0],dict(available_tiers[0],code=tier))
+                customer_accounts=get_accounts(session["minebank_client_id"])
+                business_accounts=[a for a in customer_accounts if a.get("account_type")=="BUSINESS"]
+                # For a new Business relationship, assess the customer's existing
+                # MineBank position rather than requiring a Business account first.
+                reference=business_accounts[0] if business_accounts else (customer_accounts[0] if customer_accounts else None)
+                if not reference:
+                    raise ValueError("An existing funded MineBank account is required to qualify for Business Pro.")
+                aggregate_balance=sum(int(a.get("balance") or 0) for a in customer_accounts if a.get("status","ACTIVE")=="ACTIVE")
+                eligibility_account=dict(reference,account_type="BUSINESS",balance=aggregate_balance)
+                eligible,reason=evaluate_tier_eligibility(current_client(),eligibility_account,dict(available_tiers[0],code=tier))
                 if not eligible:
                     raise ValueError(reason)
             account_id,number=create_account(session["minebank_client_id"],"BUSINESS",tier)
