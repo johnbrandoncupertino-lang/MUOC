@@ -22,7 +22,7 @@ from bank_lib.minebank_core import (
     reject_transfer, reject_business_transfer, approve_business_transfer,
     repay_credit, transfer, cancel_transfer,
     accrue_daily_credit_interest, generate_cashline_statement, disburse_loan, repay_loan_installment,
-    auto_pay_due_loans, repay_loan_fraction,
+    auto_pay_due_loans, repay_loan_fraction, process_loan_delinquency, process_credit_delinquency,
 )
 from bank_lib.minebank_requests import create_request, list_requests, create_notification
 from bank_lib.minebank_messaging import (
@@ -1801,6 +1801,8 @@ def minebank_cron():
             return jsonify(error="MineBank database is unavailable"),503
         interest=accrue_daily_credit_interest()
         loan_auto_payments=auto_pay_due_loans()
+        loan_delinquency=process_loan_delinquency()
+        credit_delinquency=process_credit_delinquency()
         billing=[]
         statements=[]
         if datetime.now(timezone.utc).day == 1:
@@ -1815,7 +1817,9 @@ def minebank_cron():
             statements=[generate_cashline_statement(int(x["account_id"]),prev_start,prev_end) for x in facilities]
             from bank_lib.minebank_core import process_monthly_billing
             billing=process_monthly_billing()
-        return jsonify(interest=interest,loan_auto_payments=loan_auto_payments,billing=billing,statements=statements,scheduled=process_due_scheduled_transfers())
+        return jsonify(interest=interest,loan_auto_payments=loan_auto_payments,
+                       loan_delinquency=loan_delinquency,credit_delinquency=credit_delinquency,
+                       billing=billing,statements=statements,scheduled=process_due_scheduled_transfers())
     except Exception as exc:
         return jsonify(error=str(exc)),500
 

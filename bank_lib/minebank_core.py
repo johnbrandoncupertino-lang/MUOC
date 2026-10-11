@@ -769,21 +769,46 @@ def auto_pay_due_loans():
         with conn:
             with conn.cursor() as cur:
                 _assert_system_active(cur)
-                cur.execute("""SELECT id FROM minebank_loans WHERE status='ACTIVE' AND installments_paid < term_days AND next_due_date IS NOT NULL AND next_due_date <= CURRENT_DATE ORDER BY next_due_date,id FOR UPDATE SKIP LOCKED""")
+                cur.execute("""SELECT id FROM minebank_loans
+                               WHERE status IN ('ACTIVE','OVERDUE','DEFAULTED')
+                                 AND installments_paid < term_days AND next_due_date IS NOT NULL
+                                 AND next_due_date <= CURRENT_DATE
+                               ORDER BY next_due_date,id FOR UPDATE SKIP LOCKED""")
                 for row in cur.fetchall():
                     loan_id=row[0]
                     cur.execute("""SELECT id,client_id,destination_account_id,installment_amount,installments_paid,term_days,total_cost,loan_number,next_due_date FROM minebank_loans WHERE id=%s FOR UPDATE""",(loan_id,))
                     loan=cur.fetchone()
                     if not loan: continue
                     source=_lock_account(cur,loan[2])
-                    if not source or source[6]!="ACTIVE": continue
+                    if not source or source[6]!="ACTIVE":
+                        cur.execute("""UPDATE minebank_loans
+                                       SET status=CASE WHEN status='DEFAULTED' THEN status ELSE 'OVERDUE' END,
+                                           overdue_since=COALESCE(overdue_since,CURRENT_TIMESTAMP)
+                                       WHERE id=%s""",(loan_id,))
+                        continue
                     paid=int(loan[4]); term=int(loan[5]); total_cost=int(loan[6]); due_date=loan[8]
+                    available_balance=int(source[5])
                     while paid < term and due_date and due_date <= _now().date():
                         remaining=max(0,total_cost-paid*int(loan[3]))
                         installment=min(int(loan[3]),remaining) if paid+1 < term else remaining
-                        if installment <= 0 or int(source[5]) < installment: break
+                        if installment <= 0 or available_balance < installment:
+                            cur.execute("""UPDATE minebank_loans
+                                           SET status=CASE WHEN status='DEFAULTED' THEN status ELSE 'OVERDUE' END,
+                                               overdue_since=COALESCE(overdue_since,CURRENT_TIMESTAMP)
+                                           WHERE id=%s""",(loan_id,))
+                            cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
+                                           SELECT %s,%s,'LOAN_PAYMENT_MISSED','Loan repayment missed',
+                                                  'A scheduled Loan installment could not be collected because the repayment account has insufficient available balance. Add funds to catch up.'
+                                           WHERE NOT EXISTS (
+                                               SELECT 1 FROM bank_notifications
+                                               WHERE client_id=%s AND account_id=%s
+                                                 AND notification_type='LOAN_PAYMENT_MISSED'
+                                                 AND created_at >= CURRENT_TIMESTAMP - INTERVAL '1 day'
+                                           )""",(loan[1],loan[2],loan[1],loan[2]))
+                            break
                         txid=next_transaction_id(cur)
                         cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(installment,source[0]))
+                        available_balance -= installment
                         create_ledger_transaction(cur,transaction_id=txid,transaction_type="LOAN_REPAYMENT",amount=installment,sender_account_id=source[0],description=f"Automatic loan repayment {loan[7]}",reference_id=loan[7])
                         _record_credicheck_activity(cur, loan[1], "LOAN_REPAYMENT", -1, "Automatic scheduled Loan installment paid successfully.", txid, credicheck_ready)
                         paid += 1
@@ -793,8 +818,118 @@ def auto_pay_due_loans():
                         cur.execute("UPDATE minebank_loans SET installments_paid=%s,next_due_date=next_due_date+1 WHERE id=%s RETURNING next_due_date",(paid,loan_id))
                         due_date=cur.fetchone()[0]
                         results.append({"loan_number":loan[7],"amount":installment,"status":"ACTIVE"})
+                    if due_date and due_date > _now().date():
+                        cur.execute("""UPDATE minebank_loans SET status='ACTIVE',overdue_since=NULL
+                                       WHERE id=%s AND status='OVERDUE'""",(loan_id,))
         return results
     finally: release_db_connection(conn)
+
+def process_loan_delinquency():
+    """Mark Loans defaulted after 30 days overdue; keep repayments enabled."""
+    conn=get_db_connection()
+    if conn is None: return []
+    results=[]
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""UPDATE minebank_loans SET status='DEFAULTED'
+                               WHERE status='OVERDUE'
+                                 AND overdue_since <= CURRENT_TIMESTAMP - INTERVAL '30 days'
+                               RETURNING id,client_id,destination_account_id,loan_number""")
+                for loan_id,client_id,account_id,loan_number in cur.fetchall():
+                    cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
+                                   SELECT %s,%s,'LOAN_DEFAULTED','Loan in default',
+                                          'A Loan installment has remained overdue for 30 days. New credit access may be restricted; repayments remain available to clear the debt.'
+                                   WHERE NOT EXISTS (SELECT 1 FROM bank_notifications
+                                                     WHERE client_id=%s AND account_id=%s
+                                                       AND notification_type='LOAN_DEFAULTED'
+                                                       AND created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days')""",
+                                (client_id,account_id,client_id,account_id))
+                    results.append({"loan_number":loan_number,"status":"DEFAULTED"})
+        return results
+    finally:
+        release_db_connection(conn)
+
+
+def process_credit_delinquency():
+    """Apply CashLine arrears consequences only after a statement payment deadline passes."""
+    conn=get_db_connection()
+    if conn is None: return []
+    results=[]
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""UPDATE credit_statements SET status='OVERDUE'
+                               WHERE due_at < CURRENT_TIMESTAMP AND amount_paid < minimum_due
+                                 AND status IN ('OPEN','PARTIALLY_PAID')""")
+                cur.execute("""SELECT DISTINCT cs.account_id
+                               FROM credit_statements cs
+                               WHERE cs.status='OVERDUE' AND cs.due_at < CURRENT_TIMESTAMP
+                                 AND cs.amount_paid < cs.minimum_due""")
+                overdue_accounts=[int(row[0]) for row in cur.fetchall()]
+                # Clear the delinquency clock once every overdue statement has at least
+                # its required minimum paid; a later missed payment starts a new clock.
+                cur.execute("""UPDATE credit_facilities cf SET overdue_since=NULL
+                               WHERE cf.overdue_since IS NOT NULL
+                                 AND NOT EXISTS (SELECT 1 FROM credit_statements cs
+                                                 WHERE cs.account_id=cf.account_id
+                                                   AND cs.status='OVERDUE' AND cs.due_at<CURRENT_TIMESTAMP
+                                                   AND cs.amount_paid < cs.minimum_due)""")
+                cur.execute("""UPDATE dynamic_cashlines dc SET overdue_since=NULL
+                               WHERE dc.overdue_since IS NOT NULL
+                                 AND NOT EXISTS (SELECT 1 FROM credit_statements cs
+                                                 WHERE cs.account_id=dc.account_id
+                                                   AND cs.status='OVERDUE' AND cs.due_at<CURRENT_TIMESTAMP
+                                                   AND cs.amount_paid < cs.minimum_due)""")
+                for account_id in overdue_accounts:
+                    cur.execute("SELECT client_id FROM bank_accounts WHERE id=%s FOR UPDATE",(account_id,))
+                    account=cur.fetchone()
+                    if not account: continue
+                    client_id=account[0]
+                    cur.execute("""UPDATE credit_facilities
+                                   SET overdue_since=COALESCE(overdue_since,
+                                       (SELECT MIN(due_at) FROM credit_statements
+                                        WHERE account_id=%s AND status='OVERDUE'
+                                          AND amount_paid < minimum_due))
+                                   WHERE account_id=%s AND status IN ('ACTIVE','SUSPENDED')""",
+                                (account_id,account_id))
+                    cur.execute("""UPDATE dynamic_cashlines
+                                   SET overdue_since=COALESCE(overdue_since,
+                                       (SELECT MIN(due_at) FROM credit_statements
+                                        WHERE account_id=%s AND status='OVERDUE'
+                                          AND amount_paid < minimum_due))
+                                   WHERE account_id=%s AND status IN ('ACTIVE','SUSPENDED')""",
+                                (account_id,account_id))
+                    cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
+                                   SELECT %s,%s,'CREDIT_STATEMENT_OVERDUE','CashLine payment overdue',
+                                          'Your CashLine minimum payment is overdue. The credit facility may be suspended if arrears remain unpaid for 30 days.'
+                                   WHERE NOT EXISTS (SELECT 1 FROM bank_notifications
+                                                     WHERE client_id=%s AND account_id=%s
+                                                       AND notification_type='CREDIT_STATEMENT_OVERDUE'
+                                                       AND created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days')""",
+                                (client_id,account_id,client_id,account_id))
+                    cur.execute("""UPDATE credit_facilities SET status='SUSPENDED'
+                                   WHERE account_id=%s AND status='ACTIVE'
+                                     AND overdue_since <= CURRENT_TIMESTAMP - INTERVAL '30 days'""",(account_id,))
+                    standard_suspended=cur.rowcount
+                    cur.execute("""UPDATE dynamic_cashlines SET status='SUSPENDED'
+                                   WHERE account_id=%s AND status='ACTIVE'
+                                     AND overdue_since <= CURRENT_TIMESTAMP - INTERVAL '30 days'""",(account_id,))
+                    dynamic_suspended=cur.rowcount
+                    if standard_suspended or dynamic_suspended:
+                        cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
+                                       SELECT %s,%s,'CREDIT_SUSPENDED','CashLine suspended',
+                                              'CashLine access has been suspended because a statement remained overdue for 30 days. Your bank account remains usable so you can repay the debt or contact the bank.'
+                                       WHERE NOT EXISTS (SELECT 1 FROM bank_notifications
+                                                         WHERE client_id=%s AND account_id=%s
+                                                           AND notification_type='CREDIT_SUSPENDED'
+                                                           AND created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days')""",
+                                    (client_id,account_id,client_id,account_id))
+                        results.append({"account_id":account_id,"status":"SUSPENDED"})
+        return results
+    finally:
+        release_db_connection(conn)
+
 
 def repay_loan_fraction(loan_id, source_account_id, actor_client_id, numerator=1, denominator=4):
     """Repay a selected fraction of the remaining Loan from MineBank Balance only."""
@@ -808,7 +943,7 @@ def repay_loan_fraction(loan_id, source_account_id, actor_client_id, numerator=1
             with conn.cursor() as cur:
                 cur.execute("""SELECT id,client_id,installment_amount,installments_paid,term_days,total_cost,status,loan_number,principal FROM minebank_loans WHERE id=%s FOR UPDATE""",(loan_id,))
                 loan=cur.fetchone()
-                if not loan or loan[6]!="ACTIVE": raise ValueError("Loan is not active.")
+                if not loan or loan[6] not in ("ACTIVE","OVERDUE","DEFAULTED"): raise ValueError("Loan is not active or repayable.")
                 if int(loan[1])!=int(actor_client_id): raise ValueError("Loan does not belong to this client.")
                 remaining=max(0,int(loan[5])-int(loan[2])*int(loan[3]))
                 if remaining<=0: raise ValueError("This Loan has already been fully repaid.")
@@ -835,7 +970,7 @@ def repay_loan_fraction(loan_id, source_account_id, actor_client_id, numerator=1
                     new_installment=max(1,(new_remaining+remaining_days-1)//remaining_days)
                     new_total=new_remaining + new_installment*int(loan[3])
                     cur.execute("UPDATE minebank_loans SET total_cost=%s,installment_amount=%s WHERE id=%s",(new_total,new_installment,loan_id))
-                    status="ACTIVE"
+                    status=loan[6] if loan[6] in ("OVERDUE","DEFAULTED") else "ACTIVE"
                 return {"transaction_id":txid,"amount":amount,"status":status,"remaining":max(0,remaining-amount)}
     finally: release_db_connection(conn)
 
@@ -851,7 +986,7 @@ def repay_loan_installment(loan_id, source_account_id, actor_client_id):
                                       status,loan_number
                                FROM minebank_loans WHERE id=%s FOR UPDATE""",(loan_id,))
                 loan=cur.fetchone()
-                if not loan or loan[10]!="ACTIVE": raise ValueError("Loan is not active.")
+                if not loan or loan[10] not in ("ACTIVE","OVERDUE","DEFAULTED"): raise ValueError("Loan is not active or repayable.")
                 if int(loan[1])!=int(actor_client_id): raise ValueError("Loan does not belong to this client.")
                 if int(loan[5])>=int(loan[6]):
                     raise ValueError("All loan installments have already been paid.")
@@ -868,7 +1003,7 @@ def repay_loan_installment(loan_id, source_account_id, actor_client_id):
                                           description=f"Loan repayment {loan[11]}",reference_id=loan[11])
                 _record_credicheck_activity(cur, actor_client_id, "LOAN_REPAYMENT", -1, "Customer paid a scheduled Loan installment.", txid, credicheck_ready)
                 paid=int(loan[5])+1
-                status="COMPLETED" if paid>=int(loan[6]) else "ACTIVE"
+                status="COMPLETED" if paid>=int(loan[6]) else (loan[10] if loan[10] in ("OVERDUE","DEFAULTED") else "ACTIVE")
                 cur.execute("""UPDATE minebank_loans SET installments_paid=%s,status=%s,
                                   next_due_date=CASE WHEN %s='ACTIVE' THEN CURRENT_DATE+1 ELSE NULL END,
                                   completed_at=CASE WHEN %s='COMPLETED' THEN CURRENT_TIMESTAMP ELSE completed_at END
@@ -892,7 +1027,7 @@ def repay_credit(account_id, amount, source_account_id):
                 if source_account_id==account_id: raise ValueError("Repayment requires a separate source account.")
                 cur.execute("SELECT status FROM credit_facilities WHERE account_id=%s FOR UPDATE",(account_id,))
                 standard=cur.fetchone()
-                cur.execute("SELECT status FROM dynamic_cashlines WHERE account_id=%s AND status='ACTIVE' FOR UPDATE",(account_id,))
+                cur.execute("SELECT status FROM dynamic_cashlines WHERE account_id=%s AND status IN ('ACTIVE','SUSPENDED') FOR UPDATE",(account_id,))
                 dynamic=cur.fetchone()
                 if (not standard or standard[0] not in ("ACTIVE","SUSPENDED")) and not dynamic:
                     raise ValueError("CashLine is not active on this account.")
@@ -1042,6 +1177,37 @@ def accrue_daily_credit_interest(account_id=None):
                     create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_INTEREST",amount=interest,recipient_account_id=aid,description=f"CashLine interest ({days} day(s))")
                     cur.execute("UPDATE credit_facilities SET last_interest_at=CURRENT_TIMESTAMP WHERE account_id=%s",(aid,))
                     results.append({"account_id":aid,"interest":interest,"days":days,"transaction_id":txid})
+                # Dynamic CashLine is stored separately from Standard CashLine.
+                dynamic_where = "" if account_id is None else " AND dc.account_id=%s"
+                dynamic_params = () if account_id is None else (account_id,)
+                cur.execute(f"""SELECT a.id,a.account_type,dc.last_interest_at,dc.activated_at,dc.interest_annual_bps
+                                FROM bank_accounts a
+                                JOIN dynamic_cashlines dc ON dc.account_id=a.id
+                                WHERE dc.status='ACTIVE'
+                                  AND NOT EXISTS (SELECT 1 FROM credit_facilities cf
+                                                  WHERE cf.account_id=a.id AND cf.status='ACTIVE')
+                                  {dynamic_where}
+                                FOR UPDATE OF a,dc""", dynamic_params)
+                for aid,atype,last_interest,activated,annual_bps in cur.fetchall():
+                    outstanding=cashline_outstanding(cur,aid)
+                    if outstanding<=0:
+                        cur.execute("UPDATE dynamic_cashlines SET last_interest_at=CURRENT_TIMESTAMP WHERE account_id=%s",(aid,))
+                        continue
+                    start=last_interest or activated
+                    days=(_now()-start).days if start else 0
+                    if days<=0: continue
+                    rate=int(annual_bps or cashline_annual_bps(atype))
+                    interest=(outstanding*rate*days+3650000-1)//3650000
+                    if interest<=0:
+                        cur.execute("UPDATE dynamic_cashlines SET last_interest_at=CURRENT_TIMESTAMP WHERE account_id=%s",(aid,))
+                        continue
+                    txid=next_transaction_id(cur)
+                    create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_INTEREST",
+                                              amount=interest,recipient_account_id=aid,
+                                              description=f"Dynamic CashLine interest ({days} day(s))")
+                    cur.execute("UPDATE dynamic_cashlines SET last_interest_at=CURRENT_TIMESTAMP WHERE account_id=%s",(aid,))
+                    results.append({"account_id":aid,"product":"DYNAMIC_CASHLINE","interest":interest,
+                                    "days":days,"transaction_id":txid})
         return results
     finally: release_db_connection(conn)
 
@@ -1127,36 +1293,7 @@ def process_monthly_billing():
                                                       amount=int(credit_fee),recipient_account_id=account_id,
                                                       description=f"Monthly credit activation fee {period}")
                             fees.append(int(credit_fee))
-                    cur.execute("""UPDATE credit_statements SET status='OVERDUE'
-                                   WHERE account_id=%s AND due_at<CURRENT_TIMESTAMP
-                                     AND amount_paid<minimum_due AND status IN ('OPEN','PARTIALLY_PAID')""",(account_id,))
-                    cur.execute("SELECT EXISTS(SELECT 1 FROM credit_statements WHERE account_id=%s AND status='OVERDUE')",(account_id,))
-                    statement_overdue=bool(cur.fetchone()[0])
-                    if statement_overdue:
-                        cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
-                                       VALUES(%s,%s,'CREDIT_STATEMENT_OVERDUE','CashLine payment overdue',
-                                       'Your CashLine minimum payment is overdue. Please make the required payment.')""",
-                                    (client_id,account_id))
-                    cur.execute("SELECT balance FROM bank_accounts WHERE id=%s FOR UPDATE",(account_id,))
-                    current_balance=0
-                    debt=cashline_outstanding(cur,account_id)
-                    if credit_status=="ACTIVE" and debt>0:
-                        if not overdue:
-                            cur.execute("UPDATE credit_facilities SET overdue_since=CURRENT_TIMESTAMP WHERE account_id=%s",(account_id,))
-                            cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
-                                           VALUES(%s,%s,'CREDIT_OVERDUE','Credit repayment due',
-                                           'Your account has outstanding credit debt. Repay it within one month to avoid suspension and account freeze.')""",
-                                        (client_id,account_id))
-                        else:
-                            cur.execute("""SELECT CASE WHEN overdue_since <= CURRENT_TIMESTAMP - INTERVAL '1 month'
-                                           THEN TRUE ELSE FALSE END FROM credit_facilities WHERE account_id=%s""",(account_id,))
-                            if cur.fetchone()[0]:
-                                cur.execute("UPDATE credit_facilities SET status='SUSPENDED' WHERE account_id=%s",(account_id,))
-                                cur.execute("UPDATE bank_accounts SET status='FROZEN' WHERE id=%s",(account_id,))
-                                cur.execute("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
-                                               VALUES(%s,%s,'ACCOUNT_FROZEN','Account frozen',
-                                               'Credit debt remained unpaid for one month. All credit lines are suspended pending bank intervention.')""",
-                                            (client_id,account_id))
+                    # Daily process_credit_delinquency() handles arrears only after a statement due date.
                     results.append({"account_id":account_id,"fees":fees})
         return results
     finally:

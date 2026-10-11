@@ -148,6 +148,7 @@ def ensure_minebank_schema():
             try:
                 from .credicheck import ensure_credicheck_schema
                 ensure_credicheck_schema()
+                ensure_loan_schema()
             except Exception as exc:
                 print(f"CrediCheck schema probe warning: {type(exc).__name__}: {exc}")
             _SCHEMA_READY = True
@@ -187,6 +188,7 @@ def ensure_minebank_schema():
         ensure_security_schema()
         from .credicheck import ensure_credicheck_schema
         ensure_credicheck_schema()
+        ensure_loan_schema()
 
         _SCHEMA_READY = True
         return True
@@ -274,6 +276,7 @@ def ensure_loan_schema():
             notes VARCHAR(1000)
         )""", fetch=False, commit=True)
         execute_query("CREATE INDEX IF NOT EXISTS minebank_loans_client_idx ON minebank_loans(client_id,status,requested_at DESC)", fetch=False, commit=True)
+        execute_query("ALTER TABLE minebank_loans ADD COLUMN IF NOT EXISTS overdue_since TIMESTAMPTZ", fetch=False, commit=True)
         execute_query("CREATE INDEX IF NOT EXISTS minebank_loans_account_idx ON minebank_loans(account_id,status)", fetch=False, commit=True)
         _LOAN_SCHEMA_READY = True
         return True

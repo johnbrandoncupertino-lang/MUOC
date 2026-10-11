@@ -81,6 +81,7 @@ def ensure_credicheck_schema():
             UNIQUE(account_id)
         )""", fetch=False, commit=True)
         execute_query("ALTER TABLE dynamic_cashlines ADD COLUMN IF NOT EXISTS last_interest_at TIMESTAMPTZ", fetch=False, commit=True)
+        execute_query("ALTER TABLE dynamic_cashlines ADD COLUMN IF NOT EXISTS overdue_since TIMESTAMPTZ", fetch=False, commit=True)
         execute_query("""CREATE TABLE IF NOT EXISTS credicheck_product_access (
             id BIGSERIAL PRIMARY KEY,
             client_id BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
@@ -246,7 +247,7 @@ def automatic_credit_eligibility(client_id, account, product_type, requested_amo
             reasons.append("Automatic Loan approval is limited to Loans up to 20,000 Emerald.")
         # Any overdue active Loan blocks automatic approval.
         overdue = execute_query(
-            "SELECT COUNT(*) FROM minebank_loans WHERE client_id=%s AND status='ACTIVE' AND next_due_date < CURRENT_DATE",
+            "SELECT COUNT(*) FROM minebank_loans WHERE client_id=%s AND status IN ('ACTIVE','OVERDUE') AND next_due_date < CURRENT_DATE",
             (client_id,),
         )
         if overdue and int(overdue[0][0] or 0) > 0:
