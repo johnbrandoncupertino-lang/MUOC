@@ -40,7 +40,103 @@ document.querySelectorAll('[data-range]').forEach(b=>b.addEventListener('click',
 {% for a in minebank_accounts %}<section class="panel account-card"><div><b>{{ a.display_name }}</b><div class="account-no">{{ a.account_number }}</div>{% if a.account_type=="BUSINESS" %}<a href="{{ url_for('minebank_business_members',account_id=a.id) }}">Manage Business Team</a>{% endif %}</div><div class="account-balance">{{ a.balance }} <small>Emerald</small></div><div class="account-meta">{{ a.account_type }} · Monthly fee: {{ a.monthly_fee }} · Outgoing: {{ a.monthly_outgoing_limit if a.monthly_outgoing_limit is not none else 'Unlimited' }} · CashLine: {{ a.available_credit if a.credit_status=='ACTIVE' else 'Not available' }}</div></section>{% endfor %}
 {% if account_error %}<div class="notice error">{{ account_error }}</div>{% endif %}
 {% if account %}<section class="panel"><div class="panel-title">Selected account — {{ account.account_number }}</div><div class="grid two"><div><p><b>{{ account.display_name }}</b> · {{ account.account_type }}</p><p>Balance: <b>{{ account.balance }} Emerald</b></p><p>Outgoing this month: {{ account.monthly_outgoing_used }} / {{ account.monthly_outgoing_limit if account.monthly_outgoing_limit is not none else 'Unlimited' }}</p></div><div><b>Account plan</b><p class="muted">{{ account.tier_name or account.tier_code }} · {{ account.monthly_fee }} Emerald/month</p><a class="button primary" href="{{ url_for('minebank_plans_page',account_id=account.id) }}">Change plan</a><p class="muted">Review eligibility and submit a plan change from the Banking Plans wizard.</p></div></div></section>{% endif %}
-<section class="panel account-opening-wizard"><div class="panel-title">Open a Business Account <span class="live-indicator">Choose a product</span></div><p class="muted">Select the product before opening the account. Opening fees and eligibility rules apply.</p><form method="post" action="{{ url_for('minebank_accounts_page') }}" class="guided-form"><input type="hidden" name="action" value="open_business"><div class="product-choice-grid">{% for tier in business_tiers %}<label class="product-choice"><input type="radio" name="tier_code" value="{{ tier.code }}" {% if tier.code=='BUSINESS' %}checked{% endif %} {% if tier.code=='CORPORATE' %}disabled{% endif %}><span class="product-choice-title">{{ tier.display_name }}</span><span class="product-choice-meta">Opening fee: {{ tier.opening_fee }} Emerald</span><span class="product-choice-meta">Monthly fee: {{ tier.monthly_fee }} Emerald</span>{% if tier.code=='CORPORATE' %}<span class="product-choice-note">Requires bank approval</span>{% elif tier.code=='BUSINESS_PRO' %}<span class="product-choice-note">Eligibility checked before opening</span>{% endif %}</label>{% endfor %}</div><label>Business legal name</label><input name="legal_name" maxlength="200" required><label>Trading name</label><input name="trading_name" maxlength="200"><label>Registered address</label><input name="address" maxlength="300"><button class="button primary">Continue to Open Account</button></form><p class="muted">Maximum five active Business accounts. Business ownership and employee roles are managed from the same Accounts area.</p></section>{% elif mode=='transfer' %}
+<section class="panel account-opening-wizard" id="accountOpeningWizard">
+  <div class="account-wizard-heading"><div><div class="account-wizard-kicker">ACCOUNT OPENING</div><div class="panel-title">Open a Business Account</div><p class="muted">Choose a product, enter the business details and review everything before submitting.</p></div><span class="live-indicator">Guided process</span></div>
+  <div class="account-wizard-progress" id="business-progress" aria-label="Account opening steps"><div class="is-active"><i>01</i><span>Product</span></div><b></b><div><i>02</i><span>Details</span></div><b></b><div><i>03</i><span>Review</span></div></div>
+  <form method="post" action="{{ url_for('minebank_accounts_page') }}" class="guided-form account-wizard-form" id="business-account-wizard">
+    <input type="hidden" name="action" value="open_business">
+    <section class="account-wizard-step is-active" data-step="1">
+      <div class="account-wizard-step-title"><span>01</span><div><h3>Choose your Business product</h3><p>Opening and monthly fees are shown for each available option.</p></div></div>
+      <div class="product-choice-grid">{% for tier in business_tiers %}<label class="product-choice"><input type="radio" name="tier_code" value="{{ tier.code }}" {% if tier.code==form_data.tier_code|default('BUSINESS') %}checked{% endif %} required {% if tier.code=='CORPORATE' %}disabled{% endif %}><span class="product-choice-title">{{ tier.display_name }}</span><span class="product-choice-meta">Opening fee <b>{{ tier.opening_fee }} Emerald</b></span><span class="product-choice-meta">Monthly fee <b>{{ tier.monthly_fee }} Emerald</b></span>{% if tier.code=='BUSINESS' %}<span class="product-choice-note">Standard entry product</span>{% elif tier.code=='BUSINESS_PRO' %}<span class="product-choice-note">Subject to eligibility checks</span>{% elif tier.code=='CORPORATE' %}<span class="product-choice-note">Requires bank approval</span>{% endif %}</label>{% endfor %}</div>
+      <div class="account-wizard-hint"><span aria-hidden="true">i</span><p>Business Pro eligibility is checked on submission. Corporate applications must be handled by MineBank staff.</p></div>
+    </section>
+    <section class="account-wizard-step" data-step="2">
+      <div class="account-wizard-step-title"><span>02</span><div><h3>Business details</h3><p>Enter the business information that will be associated with the account.</p></div></div>
+      <div class="account-wizard-fields">
+        <div class="account-wizard-field"><label for="business-legal-name">Business legal name</label><input id="business-legal-name" name="legal_name" maxlength="200" required value="{{ form_data.legal_name|default('') }}" placeholder="Registered legal name"></div>
+        <div class="account-wizard-field"><label for="business-trading-name">Trading name <span>Optional</span></label><input id="business-trading-name" name="trading_name" maxlength="200" value="{{ form_data.trading_name|default('') }}" placeholder="Name customers know"></div>
+        <div class="account-wizard-field account-wizard-field-full"><label for="business-address">Registered address <span>Optional</span></label><input id="business-address" name="address" maxlength="300" value="{{ form_data.address|default('') }}" placeholder="Street, city and postcode"></div>
+      </div>
+      <div class="account-wizard-hint"><span aria-hidden="true">i</span><p>The account owner will be assigned automatically. You can manage Business team permissions after the account is opened.</p></div>
+    </section>
+    <section class="account-wizard-step" data-step="3">
+      <div class="account-wizard-step-title"><span>03</span><div><h3>Review and submit</h3><p>Check the selected product and business details before creating the account.</p></div></div>
+      <div class="account-opening-review">
+        <div class="account-opening-review-head"><span>SELECTED PRODUCT</span><strong id="business-review-product">Business Standard</strong></div>
+        <div class="account-opening-review-row"><span>Opening fee</span><strong id="business-review-opening">—</strong></div>
+        <div class="account-opening-review-row"><span>Monthly fee</span><strong id="business-review-monthly">—</strong></div>
+        <div class="account-opening-review-divider"></div>
+        <div class="account-opening-review-row"><span>Legal name</span><strong id="business-review-legal">—</strong></div>
+        <div class="account-opening-review-row"><span>Trading name</span><strong id="business-review-trading">Not provided</strong></div>
+        <div class="account-opening-review-row"><span>Registered address</span><strong id="business-review-address">Not provided</strong></div>
+      </div>
+      <div class="account-wizard-hint"><span aria-hidden="true">✓</span><p>On submission, MineBank checks eligibility and available funds for any opening fee. The account is created only when those checks pass.</p></div>
+    </section>
+    <div class="account-wizard-actions">
+      <button class="button small" id="business-wizard-back" type="button">← Back</button>
+      <span class="account-wizard-action-spacer"></span>
+      <button class="button primary" id="business-wizard-next" type="button">Continue →</button>
+      <button class="button primary" id="business-wizard-submit" type="submit">Create Business Account →</button>
+    </div>
+  </form>
+  <p class="muted account-opening-footnote">Maximum five active Business accounts per customer. Business ownership and employee roles are managed from this Accounts area.</p>
+</section>
+<script>
+(function(){
+  const form=document.getElementById('business-account-wizard');
+  if(!form) return;
+  const panes=Array.from(form.querySelectorAll('.account-wizard-step'));
+  const progress=Array.from(document.querySelectorAll('#business-progress > div'));
+  const back=document.getElementById('business-wizard-back');
+  const next=document.getElementById('business-wizard-next');
+  const submit=document.getElementById('business-wizard-submit');
+  let current=0;
+  function selectedTier(){
+    const radio=form.querySelector('input[name="tier_code"]:checked');
+    if(!radio) return null;
+    const card=radio.closest('.product-choice');
+    return {code:radio.value,title:card.querySelector('.product-choice-title')?.textContent.trim()||radio.value,
+      opening:card.querySelectorAll('.product-choice-meta')[0]?.textContent.replace('Opening fee','').trim()||'—',
+      monthly:card.querySelectorAll('.product-choice-meta')[1]?.textContent.replace('Monthly fee','').trim()||'—'};
+  }
+  function syncReview(){
+    const tier=selectedTier();
+    document.getElementById('business-review-product').textContent=tier?tier.title:'Choose a product';
+    document.getElementById('business-review-opening').textContent=tier?tier.opening:'—';
+    document.getElementById('business-review-monthly').textContent=tier?tier.monthly:'—';
+    document.getElementById('business-review-legal').textContent=document.getElementById('business-legal-name').value.trim()||'—';
+    document.getElementById('business-review-trading').textContent=document.getElementById('business-trading-name').value.trim()||'Not provided';
+    document.getElementById('business-review-address').textContent=document.getElementById('business-address').value.trim()||'Not provided';
+  }
+  function showStep(index){
+    current=index;
+    panes.forEach((pane,i)=>{pane.hidden=i!==index;pane.classList.toggle('is-active',i===index);});
+    progress.forEach((item,i)=>{item.classList.toggle('is-active',i===index);item.classList.toggle('is-complete',i<index);});
+    back.hidden=index===0;
+    next.hidden=index===panes.length-1;
+    submit.hidden=index!==panes.length-1;
+    syncReview();
+  }
+  function validateStep(){
+    const fields=Array.from(panes[current].querySelectorAll('input,select,textarea'));
+    for(const field of fields){if(field.disabled) continue;if(!field.checkValidity()){field.reportValidity();return false;}}
+    return true;
+  }
+  next.addEventListener('click',function(){if(validateStep())showStep(Math.min(panes.length-1,current+1));});
+  back.addEventListener('click',function(){showStep(Math.max(0,current-1));});
+  form.querySelectorAll('input').forEach(input=>input.addEventListener('input',syncReview));
+  form.addEventListener('submit',function(event){
+    if(current!==panes.length-1){event.preventDefault();if(validateStep())showStep(current+1);return;}
+    syncReview();
+    if(!validateStep()){event.preventDefault();return;}
+    submit.disabled=true;
+    submit.textContent='Opening account…';
+  });
+  form.classList.add('js-enabled');
+  showStep(current);
+})();
+</script>
+{% elif mode=='transfer' %}
 <style>
 .transfer-shell{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(260px,.8fr);gap:18px;align-items:start}
 .transfer-panel{overflow:hidden}
