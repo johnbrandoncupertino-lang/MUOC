@@ -143,6 +143,8 @@ def ensure_minebank_schema():
                     ADD COLUMN IF NOT EXISTS main_language VARCHAR(80)""", fetch=False, commit=True)
                 execute_query("""ALTER TABLE minebank_scheduled_transfers
                     ADD COLUMN IF NOT EXISTS funding_source VARCHAR(20) NOT NULL DEFAULT 'BALANCE'""", fetch=False, commit=True)
+                execute_query("ALTER TABLE settings ADD COLUMN IF NOT EXISTS system_suspended BOOLEAN NOT NULL DEFAULT FALSE", fetch=False, commit=True)
+                execute_query("ALTER TABLE settings ADD COLUMN IF NOT EXISTS suspension_message TEXT NOT NULL DEFAULT ''", fetch=False, commit=True)
             except Exception as exc:
                 print(f"MineBank profile/payment migration warning: {type(exc).__name__}: {exc}")
             try:

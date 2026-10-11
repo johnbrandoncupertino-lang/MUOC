@@ -398,6 +398,26 @@ def preview_transfer(actor_client_id, sender_account_id, recipient_account_numbe
     finally:
         release_db_connection(conn)
 
+def _notify_incoming_transfer(cur, sender, recipient, amount):
+    """Write an inbox notification atomically when an external transfer reaches an account."""
+    if not sender or not recipient or int(sender[1]) == int(recipient[1]):
+        return
+    cur.execute("SAVEPOINT minebank_incoming_notification")
+    try:
+        cur.execute(
+            """INSERT INTO bank_notifications
+               (client_id,account_id,notification_type,title,message)
+               VALUES (%s,%s,'TRANSFER_RECEIVED','Incoming transfer received',%s)""",
+            (recipient[1], recipient[0],
+             f"{int(amount):,} Emerald has arrived in account {recipient[2]} from {sender[2]}."),
+        )
+        cur.execute("RELEASE SAVEPOINT minebank_incoming_notification")
+    except Exception as exc:
+        cur.execute("ROLLBACK TO SAVEPOINT minebank_incoming_notification")
+        cur.execute("RELEASE SAVEPOINT minebank_incoming_notification")
+        print(f"MineBank incoming-transfer notification warning: {type(exc).__name__}: {exc}")
+
+
 def transfer(*, sender_account_id, recipient_account_number, amount,
              description=None, reference=None, causal=None, currency=CURRENCY, idempotency_key=None,
              actor_client_id=None, ip_address=None, transfer_kind=None, extra_fee=0, funding_source="BALANCE"):
@@ -497,6 +517,8 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                     cur,transaction_id=txid,transaction_type="TRANSFER",amount=amount,fee=fee,
                     currency=currency,sender_account_id=sender[0],recipient_account_id=recipient[0],
                     status=status,description=description,reference_id=reference,transfer_kind=transfer_kind,causal=causal)
+                if status == "COMPLETED":
+                    _notify_incoming_transfer(cur, sender, recipient, amount)
                 if status == "PENDING_BUSINESS_APPROVAL":
                     cur.execute("""INSERT INTO minebank_business_payment_approvals(transaction_id,account_id,requested_by,risk_score)
                                    VALUES(%s,%s,%s,%s)""",(txid,sender[0],actor_client_id,risk_score))
@@ -540,6 +562,9 @@ def approve_business_transfer(transaction_id, approver_client_id, ip_address=Non
                     if max_balance is not None and int(recipient[5])+int(row[5])>int(max_balance):
                         raise ValueError("Recipient account balance limit exceeded.")
                     cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(row[5],row[8]))
+                    cur.execute("SELECT id,client_id,account_number FROM bank_accounts WHERE id=%s", (row[7],))
+                    sender = cur.fetchone()
+                    _notify_incoming_transfer(cur, sender, recipient, row[5])
                 cur.execute("UPDATE minebank_business_payment_approvals SET status='APPROVED',approved_by=%s,reviewed_at=CURRENT_TIMESTAMP WHERE id=%s",(approver_client_id,row[0]))
                 cur.execute("UPDATE ledger_transactions SET status=%s,approved_by=%s,approved_at=CURRENT_TIMESTAMP WHERE transaction_id=%s",(next_status,approver_client_id,transaction_id))
                 audit_event(cur,actor_client_id=approver_client_id,action="BUSINESS_TRANSFER_APPROVED",target_type="TRANSACTION",target_id=transaction_id,account_id=row[1],transaction_id=transaction_id,ip_address=ip_address,context={"next_status":next_status})
@@ -611,6 +636,7 @@ def approve_transfer(transaction_id, actor_user_id, ip_address=None):
                     raise ValueError("Recipient account balance limit exceeded; transfer remains pending.")
                 cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
                             (tx[3],tx[2]))
+                _notify_incoming_transfer(cur, sender, recipient, tx[3])
                 cur.execute("""UPDATE ledger_transactions SET status='COMPLETED',approved_by=%s,
                                approved_at=CURRENT_TIMESTAMP WHERE id=%s""", (actor_user_id,tx[0]))
                 cur.execute("""UPDATE minebank_payment_requests

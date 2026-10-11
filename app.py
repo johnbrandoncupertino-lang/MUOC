@@ -88,6 +88,7 @@ def bank_label(value):
         "SUSPENDED": "Suspended",
         "CLOSED": "Closed",
         "TRANSFER": "Transfer",
+        "TRANSFER_RECEIVED": "Incoming transfer",
         "CREDIT_DRAW": "CashLine draw",
         "CREDIT_REPAYMENT": "CashLine repayment",
         "CREDIT_INTEREST": "CashLine interest",
@@ -627,11 +628,13 @@ def minebank_dashboard():
     chart_rows = execute_query_dict("""
         SELECT d::date AS day,
                COALESCE(SUM(CASE WHEN l.recipient_account_id=%s AND l.status='COMPLETED' THEN l.amount ELSE 0 END),0) AS incoming,
-               COALESCE(SUM(CASE WHEN l.sender_account_id=%s AND l.status='COMPLETED' THEN l.amount+l.fee ELSE 0 END),0) AS outgoing
+               COALESCE(SUM(CASE WHEN l.sender_account_id=%s AND l.status='COMPLETED' THEN l.amount+l.fee ELSE 0 END),0) AS outgoing,
+               COALESCE(SUM(CASE WHEN l.sender_account_id=%s AND l.status='COMPLETED' THEN l.fee ELSE 0 END),0) AS fees,
+               COUNT(l.transaction_id) FILTER (WHERE l.status='COMPLETED' AND (l.sender_account_id=%s OR l.recipient_account_id=%s)) AS transaction_count
         FROM generate_series(CURRENT_DATE-INTERVAL '29 days',CURRENT_DATE,INTERVAL '1 day') d
         LEFT JOIN ledger_transactions l ON l.created_at::date=d::date
         GROUP BY d::date ORDER BY d::date
-    """,(account["id"],account["id"])) if account else []
+    """,(account["id"],account["id"],account["id"],account["id"],account["id"])) if account else []
     return render_template("minebank_portal.html", mode="dashboard", account=account,
                            accounts=accounts, total_balance=total_balance, balance_breakdown=balance_breakdown,
                            cashline_accounts=cashline_accounts, total_cashline_credit=total_cashline_credit,
@@ -2102,6 +2105,10 @@ def ensure_admin_bank_state():
         allow_self_review BOOLEAN DEFAULT FALSE,
         maximum_currency DOUBLE PRECISION DEFAULT 1000000.0
     )""", commit=True)
+    execute_query("""ALTER TABLE settings
+                     ADD COLUMN IF NOT EXISTS system_suspended BOOLEAN NOT NULL DEFAULT FALSE""", commit=True)
+    execute_query("""ALTER TABLE settings
+                     ADD COLUMN IF NOT EXISTS suspension_message TEXT NOT NULL DEFAULT ''""", commit=True)
     execute_query("""INSERT INTO settings(bank_name,currency_name,admin_password)
                      SELECT 'MineBank','Emerald',''
                      WHERE NOT EXISTS (SELECT 1 FROM settings)""", commit=True)
