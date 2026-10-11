@@ -2,92 +2,113 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#071b30">
-  <title>Sign in · MineBank</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#07549a">
+  <title>MineBank Secure Login</title>
   <link rel="stylesheet" href="{{ url_for('static',filename='css/minebank-rebuilt.css') }}">
+  <style>
+    .mb-login-page{box-sizing:border-box;min-height:100vh;margin:0;padding:28px 16px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:linear-gradient(rgba(255,255,255,.2) 1px,transparent 1px),linear-gradient(90deg,rgba(110,145,170,.05) 1px,transparent 1px),#dce7f2;background-size:24px 24px;color:#16324a;font:13px Tahoma,Arial,sans-serif}
+    .mb-login-card{width:min(100%,440px);overflow:hidden;border:1px solid #8fa9bd;border-radius:3px;background:linear-gradient(#fff,#f1f6f9);box-shadow:0 3px 12px #b0bfcb,inset 0 1px #fff}
+    .mb-login-head{display:flex;align-items:center;gap:12px;padding:17px 21px;background:linear-gradient(#1971bd,#07539a 48%,#064581);border-bottom:1px solid #043968;color:#fff}
+    .mb-login-mark{display:grid;place-items:center;width:37px;height:37px;flex:0 0 37px;border:1px solid #83b4d8;background:linear-gradient(#3b8bca,#07539a);box-shadow:inset 0 1px rgba(255,255,255,.35);color:#fff;font:22px Arial}
+    .mb-login-brand{display:flex;flex-direction:column;gap:3px;min-width:0}
+    .mb-login-brand strong{font:bold 22px Arial,sans-serif;letter-spacing:-.3px;text-shadow:0 1px #00345f}
+    .mb-login-brand small{color:#d8ecff;font-size:10px}
+    .mb-login-head-tag{margin-left:auto;padding:5px 7px;border:1px solid rgba(255,255,255,.35);background:rgba(0,35,70,.18);color:#eaf5ff;font:bold 9px Arial,sans-serif;letter-spacing:.7px;white-space:nowrap}
+    .mb-login-content{padding:23px 25px 20px}
+    .mb-login-section-title{margin:0 0 5px;padding-bottom:9px;border-bottom:1px solid #c4d1dc;color:#315c7e;font:bold 12px Arial,sans-serif;text-transform:uppercase}
+    .mb-login-heading{margin:15px 0 6px;color:#173f65;font:bold 23px Arial,sans-serif}
+    .mb-login-intro{margin:0 0 19px;color:#60778b;font-size:12px;line-height:1.55}
+    .mb-login-error{display:flex;gap:9px;margin:0 0 15px;padding:10px 11px;border:1px solid #d7a4a4;background:#fff0f0;color:#8b2323;line-height:1.45}
+    .mb-login-error strong{display:grid;place-items:center;width:17px;height:17px;flex:0 0 17px;border:1px solid #d9a5a5;background:#fff;color:#8b2323;font:bold 11px Arial}
+    .mb-login-field{margin:0 0 15px}
+    .mb-login-field label{display:block;margin:0 0 5px;color:#35566f;font-weight:bold;font-size:12px}
+    .mb-login-input-wrap{display:flex;align-items:stretch;min-width:0;border:1px solid #9eb1c1;background:#fff;box-shadow:inset 1px 1px 3px #d5dfe7}
+    .mb-login-input-icon{display:grid;place-items:center;width:35px;flex:0 0 35px;border-right:1px solid #d0dce5;background:linear-gradient(#f8fbfd,#e7eff5);color:#55758e;font-size:15px}
+    .mb-login-input-wrap input{box-sizing:border-box;width:100%;min-width:0;height:38px;padding:8px 10px;border:0;outline:0;background:#fff;color:#16324a;font:12px Tahoma,Arial,sans-serif;box-shadow:none}
+    .mb-login-input-wrap:focus-within{outline:2px solid #c5e0f4;outline-offset:0;border-color:#397eae}
+    .mb-login-reveal{min-width:51px;padding:0 9px;border:0;border-left:1px solid #d0dce5;background:linear-gradient(#fff,#e1e8ee);color:#175a8b;font:bold 11px Tahoma,Arial,sans-serif;cursor:pointer}
+    .mb-login-hint{display:block;margin-top:5px;color:#718596;font-size:10px}
+    .mb-login-captcha{padding:10px;border:1px solid #c3d2de;background:#edf4f9}
+    .mb-login-captcha label span{display:inline-block;margin-left:5px;padding:3px 7px;border:1px solid #b4c7d6;background:#fff;color:#173f65;font:bold 12px Arial}
+    .mb-login-submit{display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:41px;margin-top:5px;padding:10px 13px;border:1px solid #22679d;border-radius:3px;background:linear-gradient(#78b8ea,#2f79b9 52%,#17629f);box-shadow:inset 0 1px rgba(255,255,255,.5),0 1px 2px #b6c2cb;color:#fff;font:bold 12px Tahoma,Arial,sans-serif;text-align:left;cursor:pointer}
+    .mb-login-submit:hover{background:linear-gradient(#8bc5f0,#347fbd 52%,#1a69a8)}
+    .mb-login-submit:focus-visible,.mb-login-reveal:focus-visible{outline:2px solid #174f7d;outline-offset:2px}
+    .mb-login-submit:disabled{opacity:.78;cursor:wait}
+    .mb-login-submit .mb-login-arrow{font-size:17px;font-weight:normal}
+    .mb-login-submit .mb-login-spinner{display:none;width:13px;height:13px;border:2px solid rgba(255,255,255,.5);border-top-color:#fff;border-radius:50%;animation:mbLoginSpin .7s linear infinite}
+    .mb-login-submit.connecting .mb-login-spinner{display:block}
+    .mb-login-submit.connecting .mb-login-arrow{display:none}
+    .mb-login-new{margin-top:18px;padding-top:14px;border-top:1px solid #cbd8e2;text-align:center}
+    .mb-login-new small{display:block;margin-bottom:8px;color:#718596;font-size:11px}
+    .mb-login-secondary{display:block;padding:9px 12px;border:1px solid #a7bac9;border-radius:3px;background:linear-gradient(#fff,#e7eef4);box-shadow:inset 0 1px #fff;color:#175486;font-weight:bold;font-size:12px}
+    .mb-login-secondary:hover{background:linear-gradient(#fff,#d9e9f5);text-decoration:none}
+    .mb-login-security{display:flex;align-items:flex-start;gap:7px;margin:16px 0 0;color:#718596;font-size:10px;line-height:1.5}
+    .mb-login-security span{color:#2f6d9c}
+    .mb-login-foot{display:flex;justify-content:space-between;gap:10px;padding:11px 25px;border-top:1px solid #d0dce5;background:linear-gradient(#f1f6f9,#e5edf3);color:#718596;font-size:10px}
+    .mb-login-page-foot{margin-top:14px;color:#718596;font-size:10px;text-align:center}
+    @keyframes mbLoginSpin{to{transform:rotate(360deg)}}
+    @media(max-width:480px){.mb-login-page{padding:12px}.mb-login-head{padding:14px 15px}.mb-login-content{padding:19px 17px 17px}.mb-login-head-tag{font-size:8px;padding:4px 5px}.mb-login-brand strong{font-size:20px}.mb-login-foot{padding:10px 17px}}
+    @media(prefers-reduced-motion:reduce){.mb-login-submit .mb-login-spinner{animation:none}}
+  </style>
 </head>
-<body class="login-body auth-body auth-login">
-  <div class="auth-orb auth-orb-one" aria-hidden="true"></div>
-  <div class="auth-orb auth-orb-two" aria-hidden="true"></div>
-  <main class="auth-shell">
-    <section class="auth-story" aria-label="MineBank introduction">
-      <header class="auth-brand">
-        <span class="auth-brand-mark" aria-hidden="true">◆</span>
-        <span class="auth-brand-copy"><strong>MineBank</strong><small>The New Bank</small></span>
-        <span class="auth-brand-tag">ONLINE BANKING</span>
-      </header>
-      <div class="auth-story-main">
-        <div class="auth-eyebrow"><span class="auth-eyebrow-dot"></span> YOUR BANKING, CONNECTED</div>
-        <h1>Make room for<br><span>what comes next.</span></h1>
-        <p class="auth-lead">One clear place to manage your accounts, move Emerald and keep an eye on your financial activity.</p>
-        <div class="auth-preview" aria-label="Illustration of the MineBank account interface">
-          <div class="auth-preview-top"><span class="auth-preview-label"><i></i> ACCOUNT OVERVIEW</span><span class="auth-preview-dots">•••</span></div>
-          <div class="auth-preview-balance-label">Your banking, at a glance</div>
-          <div class="auth-preview-balance">MineBank <span>◆</span></div>
-          <div class="auth-preview-rule"></div>
-          <div class="auth-preview-bottom"><span><b>01</b><small>Accounts</small></span><span><b>02</b><small>Transfers</small></span><span><b>03</b><small>CashLine</small></span></div>
-          <svg class="auth-preview-chart" viewBox="0 0 420 82" role="img" aria-label="Decorative rising line chart">
-            <defs><linearGradient id="authChartFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#69d6ba" stop-opacity=".28"/><stop offset="1" stop-color="#69d6ba" stop-opacity="0"/></linearGradient></defs>
-            <path d="M0 68 C25 64 32 48 57 51 S94 65 121 47 S161 55 188 35 S225 45 250 28 S296 42 322 21 S365 30 390 10 L420 14 L420 82 L0 82 Z" fill="url(#authChartFill)"/>
-            <path d="M0 68 C25 64 32 48 57 51 S94 65 121 47 S161 55 188 35 S225 45 250 28 S296 42 322 21 S365 30 390 10 L420 14" fill="none" stroke="#69d6ba" stroke-width="2.5" stroke-linecap="round"/>
-            <circle cx="390" cy="10" r="4" fill="#69d6ba" stroke="#102b42" stroke-width="3"/>
-          </svg>
+<body class="mb-login-page">
+  <main class="mb-login-card">
+    <header class="mb-login-head">
+      <span class="mb-login-mark" aria-hidden="true">◆</span>
+      <span class="mb-login-brand"><strong>MineBank</strong><small>The New Bank</small></span>
+      <span class="mb-login-head-tag">ONLINE BANKING</span>
+    </header>
+    <section class="mb-login-content" aria-labelledby="login-title">
+      <div class="mb-login-section-title">Secure Banking Area</div>
+      <h1 class="mb-login-heading" id="login-title">Welcome back</h1>
+      <p class="mb-login-intro">Sign in with your MineBank email and password to access your accounts and banking services.</p>
+      {% if error %}<div class="mb-login-error" role="alert"><strong aria-hidden="true">!</strong><div>{{ error }}</div></div>{% endif %}
+      <form method="post" id="login-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <div class="mb-login-field">
+          <label for="login-email">Email address</label>
+          <div class="mb-login-input-wrap"><span class="mb-login-input-icon" aria-hidden="true">✉</span><input id="login-email" type="email" name="email" required autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="you@example.com"></div>
         </div>
-      </div>
-      <footer class="auth-story-foot"><span><i></i> MineBank secure portal</span><span>Built for clarity and control</span></footer>
+        <div class="mb-login-field">
+          <label for="login-password">Password</label>
+          <div class="mb-login-input-wrap"><span class="mb-login-input-icon" aria-hidden="true">▣</span><input id="login-password" type="password" name="password" required autocomplete="current-password" placeholder="Enter your password"><button class="mb-login-reveal" type="button" id="password-reveal" aria-label="Show password">Show</button></div>
+        </div>
+        {% if captcha_question %}
+        <div class="mb-login-field mb-login-captcha">
+          <label for="captcha-answer">Security check <span>{{ captcha_question }}</span></label>
+          <div class="mb-login-input-wrap"><span class="mb-login-input-icon" aria-hidden="true">✓</span><input id="captcha-answer" name="captcha_answer" inputmode="numeric" autocomplete="off" required placeholder="Enter your answer"></div>
+        </div>
+        {% endif %}
+        <button id="login-submit" class="mb-login-submit" type="submit"><span id="login-button-label">Access MineBank</span><span class="mb-login-arrow" aria-hidden="true">→</span><span class="mb-login-spinner" aria-hidden="true"></span></button>
+      </form>
+      <div class="mb-login-new"><small>New to MineBank?</small><a class="mb-login-secondary" href="{{ url_for('minebank_register') }}">Create a Personal Account</a></div>
+      <p class="mb-login-security"><span aria-hidden="true">◆</span> Never share your password or Wallet PIN. Always sign out when using a shared device.</p>
     </section>
-
-    <section class="auth-panel" aria-labelledby="login-title">
-      <div class="auth-panel-top"><span class="auth-panel-kicker">CLIENT ACCESS</span><span class="auth-secure-pill"><i></i> SECURE SIGN-IN</span></div>
-      <div class="auth-form-wrap">
-        <div class="auth-form-symbol" aria-hidden="true">↗</div>
-        <h2 id="login-title">Welcome back.</h2>
-        <p class="auth-form-intro">Sign in with your MineBank credentials to continue.</p>
-        {% if error %}<div class="auth-error" role="alert"><span aria-hidden="true">!</span><div>{{ error }}</div></div>{% endif %}
-        <form method="post" class="auth-form" id="login-form">
-          <div class="auth-field">
-            <label for="login-email">Email address</label>
-            <div class="auth-input-wrap"><span class="auth-input-icon" aria-hidden="true">✉</span><input id="login-email" type="email" name="email" required autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="you@example.com"></div>
-          </div>
-          <div class="auth-field">
-            <div class="auth-label-row"><label for="login-password">Password</label><span class="auth-field-hint">Your account password</span></div>
-            <div class="auth-input-wrap"><span class="auth-input-icon" aria-hidden="true">⌑</span><input id="login-password" type="password" name="password" required autocomplete="current-password" placeholder="Enter your password"><button class="auth-reveal" type="button" data-reveal="login-password" aria-label="Show password">Show</button></div>
-          </div>
-          {% if captcha_question %}
-          <div class="auth-field auth-captcha"><label for="captcha-answer">Security check <span>{{ captcha_question }}</span></label><div class="auth-input-wrap"><span class="auth-input-icon" aria-hidden="true">✓</span><input id="captcha-answer" name="captcha_answer" inputmode="numeric" autocomplete="off" required placeholder="Enter your answer"></div></div>
-          {% endif %}
-          <button id="login-submit" class="auth-submit" type="submit"><span class="login-button-label">Sign in to MineBank</span><span class="auth-submit-arrow" aria-hidden="true">→</span><span class="login-spinner" aria-hidden="true"></span></button>
-        </form>
-        <div class="auth-separator"><span>NEW TO MINEBANK?</span></div>
-        <a class="auth-secondary-link" href="{{ url_for('minebank_register') }}">Create your Personal account <span aria-hidden="true">↗</span></a>
-        <p class="auth-assurance"><span aria-hidden="true">◆</span> Never share your password or Wallet PIN with anyone.</p>
-      </div>
-      <footer class="auth-panel-foot"><span>MineBank · The New Bank</span><span>Account access</span></footer>
-    </section>
+    <footer class="mb-login-foot"><span>MineBank · The New Bank</span><span>Currency: Emerald</span></footer>
   </main>
-  <footer class="auth-page-footer">© {{ 2026 }} MineBank <span>·</span> Emerald banking services <span>·</span> Please sign out on shared devices.</footer>
+  <div class="mb-login-page-foot">© {{ 2026 }} MineBank · Secure online banking</div>
   <script>
-  (function(){
-    document.querySelectorAll('[data-reveal]').forEach(function(toggle){
-      toggle.addEventListener('click',function(){
-        const input=document.getElementById(toggle.getAttribute('data-reveal'));
-        if(!input) return;
-        const show=input.type==='password';
+    (function(){
+      var reveal=document.getElementById('password-reveal');
+      if(reveal) reveal.addEventListener('click',function(){
+        var input=document.getElementById('login-password');
+        if(!input)return;
+        var show=input.type==='password';
         input.type=show?'text':'password';
-        toggle.textContent=show?'Hide':'Show';
-        toggle.setAttribute('aria-label',show?'Hide password':'Show password');
+        reveal.textContent=show?'Hide':'Show';
+        reveal.setAttribute('aria-label',show?'Hide password':'Show password');
       });
-    });
-    const form=document.getElementById('login-form');
-    if(form) form.addEventListener('submit',function(){
-      const button=document.getElementById('login-submit');
-      if(!button) return;
-      button.disabled=true;
-      button.classList.add('connecting');
-      button.querySelector('.login-button-label').textContent='Establishing secure connection…';
-    });
-  })();
+      var form=document.getElementById('login-form');
+      if(form) form.addEventListener('submit',function(){
+        var button=document.getElementById('login-submit');
+        var label=document.getElementById('login-button-label');
+        if(!button||!label)return;
+        button.disabled=true;
+        button.classList.add('connecting');
+        label.textContent='Connecting securely…';
+      });
+    })();
   </script>
 </body>
 </html>
