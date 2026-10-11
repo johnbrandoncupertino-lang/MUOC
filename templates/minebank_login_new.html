@@ -1,10 +1,93 @@
-<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>MineBank Secure Login</title><link rel="stylesheet" href="{{ url_for('static',filename='css/minebank-rebuilt.css') }}"></head><body class="login-body"><div class="login-card"><div class="public-logo">◆ MineBank <small>The New Bank</small></div><h2>Secure Banking Area</h2><div class="login-status"><span></span> MineBank secure connection</div>{% if error %}<div class="notice error">{{ error }}</div>{% endif %}<form method="post"><label>Email</label><input type="email" name="email" required><label>Password</label><input type="password" name="password" required>{% if captcha_question %}<label>Security check: {{ captcha_question }}</label><input name="captcha_answer" inputmode="numeric" required>{% endif %}<button id="login-submit" class="button primary full" type="submit"><span class="login-button-label">Access MineBank</span><span class="login-spinner" aria-hidden="true"></span></button></form><p class="center"><a href="{{ url_for('minebank_register') }}">Create a Personal Account</a></p>
-<script>
-document.querySelector('.login-card form').addEventListener('submit',function(){
-  const button=document.getElementById('login-submit');
-  if(!button) return;
-  button.disabled=true;
-  button.classList.add('connecting');
-  button.querySelector('.login-button-label').textContent='Establishing secure connection…';
-});
-</script></div></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#071b30">
+  <title>Sign in · MineBank</title>
+  <link rel="stylesheet" href="{{ url_for('static',filename='css/minebank-rebuilt.css') }}">
+</head>
+<body class="login-body auth-body auth-login">
+  <div class="auth-orb auth-orb-one" aria-hidden="true"></div>
+  <div class="auth-orb auth-orb-two" aria-hidden="true"></div>
+  <main class="auth-shell">
+    <section class="auth-story" aria-label="MineBank introduction">
+      <header class="auth-brand">
+        <span class="auth-brand-mark" aria-hidden="true">◆</span>
+        <span class="auth-brand-copy"><strong>MineBank</strong><small>The New Bank</small></span>
+        <span class="auth-brand-tag">ONLINE BANKING</span>
+      </header>
+      <div class="auth-story-main">
+        <div class="auth-eyebrow"><span class="auth-eyebrow-dot"></span> YOUR BANKING, CONNECTED</div>
+        <h1>Make room for<br><span>what comes next.</span></h1>
+        <p class="auth-lead">One clear place to manage your accounts, move Emerald and keep an eye on your financial activity.</p>
+        <div class="auth-preview" aria-label="Illustration of the MineBank account interface">
+          <div class="auth-preview-top"><span class="auth-preview-label"><i></i> ACCOUNT OVERVIEW</span><span class="auth-preview-dots">•••</span></div>
+          <div class="auth-preview-balance-label">Your banking, at a glance</div>
+          <div class="auth-preview-balance">MineBank <span>◆</span></div>
+          <div class="auth-preview-rule"></div>
+          <div class="auth-preview-bottom"><span><b>01</b><small>Accounts</small></span><span><b>02</b><small>Transfers</small></span><span><b>03</b><small>CashLine</small></span></div>
+          <svg class="auth-preview-chart" viewBox="0 0 420 82" role="img" aria-label="Decorative rising line chart">
+            <defs><linearGradient id="authChartFill" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#69d6ba" stop-opacity=".28"/><stop offset="1" stop-color="#69d6ba" stop-opacity="0"/></linearGradient></defs>
+            <path d="M0 68 C25 64 32 48 57 51 S94 65 121 47 S161 55 188 35 S225 45 250 28 S296 42 322 21 S365 30 390 10 L420 14 L420 82 L0 82 Z" fill="url(#authChartFill)"/>
+            <path d="M0 68 C25 64 32 48 57 51 S94 65 121 47 S161 55 188 35 S225 45 250 28 S296 42 322 21 S365 30 390 10 L420 14" fill="none" stroke="#69d6ba" stroke-width="2.5" stroke-linecap="round"/>
+            <circle cx="390" cy="10" r="4" fill="#69d6ba" stroke="#102b42" stroke-width="3"/>
+          </svg>
+        </div>
+      </div>
+      <footer class="auth-story-foot"><span><i></i> MineBank secure portal</span><span>Built for clarity and control</span></footer>
+    </section>
+
+    <section class="auth-panel" aria-labelledby="login-title">
+      <div class="auth-panel-top"><span class="auth-panel-kicker">CLIENT ACCESS</span><span class="auth-secure-pill"><i></i> SECURE SIGN-IN</span></div>
+      <div class="auth-form-wrap">
+        <div class="auth-form-symbol" aria-hidden="true">↗</div>
+        <h2 id="login-title">Welcome back.</h2>
+        <p class="auth-form-intro">Sign in with your MineBank credentials to continue.</p>
+        {% if error %}<div class="auth-error" role="alert"><span aria-hidden="true">!</span><div>{{ error }}</div></div>{% endif %}
+        <form method="post" class="auth-form" id="login-form">
+          <div class="auth-field">
+            <label for="login-email">Email address</label>
+            <div class="auth-input-wrap"><span class="auth-input-icon" aria-hidden="true">✉</span><input id="login-email" type="email" name="email" required autocomplete="username" autocapitalize="none" spellcheck="false" placeholder="you@example.com"></div>
+          </div>
+          <div class="auth-field">
+            <div class="auth-label-row"><label for="login-password">Password</label><span class="auth-field-hint">Your account password</span></div>
+            <div class="auth-input-wrap"><span class="auth-input-icon" aria-hidden="true">⌑</span><input id="login-password" type="password" name="password" required autocomplete="current-password" placeholder="Enter your password"><button class="auth-reveal" type="button" data-reveal="login-password" aria-label="Show password">Show</button></div>
+          </div>
+          {% if captcha_question %}
+          <div class="auth-field auth-captcha"><label for="captcha-answer">Security check <span>{{ captcha_question }}</span></label><div class="auth-input-wrap"><span class="auth-input-icon" aria-hidden="true">✓</span><input id="captcha-answer" name="captcha_answer" inputmode="numeric" autocomplete="off" required placeholder="Enter your answer"></div></div>
+          {% endif %}
+          <button id="login-submit" class="auth-submit" type="submit"><span class="login-button-label">Sign in to MineBank</span><span class="auth-submit-arrow" aria-hidden="true">→</span><span class="login-spinner" aria-hidden="true"></span></button>
+        </form>
+        <div class="auth-separator"><span>NEW TO MINEBANK?</span></div>
+        <a class="auth-secondary-link" href="{{ url_for('minebank_register') }}">Create your Personal account <span aria-hidden="true">↗</span></a>
+        <p class="auth-assurance"><span aria-hidden="true">◆</span> Never share your password or Wallet PIN with anyone.</p>
+      </div>
+      <footer class="auth-panel-foot"><span>MineBank · The New Bank</span><span>Account access</span></footer>
+    </section>
+  </main>
+  <footer class="auth-page-footer">© {{ 2026 }} MineBank <span>·</span> Emerald banking services <span>·</span> Please sign out on shared devices.</footer>
+  <script>
+  (function(){
+    document.querySelectorAll('[data-reveal]').forEach(function(toggle){
+      toggle.addEventListener('click',function(){
+        const input=document.getElementById(toggle.getAttribute('data-reveal'));
+        if(!input) return;
+        const show=input.type==='password';
+        input.type=show?'text':'password';
+        toggle.textContent=show?'Hide':'Show';
+        toggle.setAttribute('aria-label',show?'Hide password':'Show password');
+      });
+    });
+    const form=document.getElementById('login-form');
+    if(form) form.addEventListener('submit',function(){
+      const button=document.getElementById('login-submit');
+      if(!button) return;
+      button.disabled=true;
+      button.classList.add('connecting');
+      button.querySelector('.login-button-label').textContent='Establishing secure connection…';
+    });
+  })();
+  </script>
+</body>
+</html>
