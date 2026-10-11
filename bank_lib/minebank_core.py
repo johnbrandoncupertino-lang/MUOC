@@ -42,10 +42,39 @@ def _now():
 
 
 
+def _assert_system_active(cur):
+    cur.execute("SELECT COALESCE(system_suspended,FALSE),COALESCE(suspension_message,'') FROM settings ORDER BY id LIMIT 1")
+    row = cur.fetchone()
+    if row and row[0]:
+        raise ValueError((row[1] or "").strip() or "MineBank banking operations are temporarily suspended by an administrator.")
+
 def _assert_banking_unlocked(cur, client_id):
+    _assert_system_active(cur)
     cur.execute("SELECT 1 FROM minebank_banking_locks WHERE client_id=%s AND unlocked_at IS NULL", (client_id,))
     if cur.fetchone():
         raise ValueError("Banking operations are temporarily locked for this client.")
+
+def _ensure_credicheck_activity_schema():
+    try:
+        from .credicheck import ensure_credicheck_schema
+        return bool(ensure_credicheck_schema())
+    except Exception as exc:
+        print(f"CrediCheck activity schema warning: {type(exc).__name__}: {exc}")
+        return False
+
+def _record_credicheck_activity(cur, client_id, event_type, points=0, description="", reference_id=None, enabled=True):
+    if not enabled or not client_id:
+        return
+    cur.execute("INSERT INTO credicheck_profiles(client_id,score,risk_level,credit_status) VALUES(%s,5,'GOOD','ACTIVE') ON CONFLICT(client_id) DO NOTHING", (client_id,))
+    cur.execute("SELECT score FROM credicheck_profiles WHERE client_id=%s FOR UPDATE", (client_id,))
+    row = cur.fetchone()
+    previous = max(0, int(row[0] if row and row[0] is not None else 5))
+    score = max(0, previous + int(points))
+    risk = 'GOOD' if score <= 5 else ('STANDARD' if score <= 10 else ('MODERATE' if score <= 15 else ('HIGH' if score <= 20 else 'NO_CREDIT')))
+    cur.execute("UPDATE credicheck_profiles SET score=%s,risk_level=%s,last_evaluated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP WHERE client_id=%s", (score,risk,client_id))
+    cur.execute("""INSERT INTO credicheck_events(client_id,event_type,points,previous_score,new_score,reference_type,reference_id,source,description)
+                   VALUES(%s,%s,%s,%s,%s,'TRANSACTION',%s,'SYSTEM',%s)""",
+                (client_id,event_type,int(points),previous,score,str(reference_id) if reference_id is not None else None,(description or "")[:1000]))
 
 def _lock_account(cur, account_id):
     cur.execute("""SELECT id,client_id,account_number,account_type,tier_id,balance,status,
@@ -373,6 +402,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
              description=None, reference=None, causal=None, currency=CURRENCY, idempotency_key=None,
              actor_client_id=None, ip_address=None, transfer_kind=None, extra_fee=0, funding_source="BALANCE"):
     amount = _positive_integer_amount(amount)
+    credicheck_ready = _ensure_credicheck_activity_schema()
     funding_source=(funding_source or "BALANCE").upper()
     if funding_source not in ("BALANCE","CASHLINE","DYNAMIC_CASHLINE"): raise ValueError("Invalid payment source.")
     if not recipient_account_number:
@@ -474,6 +504,9 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                     cur.execute("INSERT INTO transfer_idempotency(idempotency_key,client_id,transaction_id) VALUES(%s,%s,%s)",
                                 (idempotency_key,sender[1],txid))
                 audit_event(cur,actor_client_id=actor_client_id,action="TRANSFER_CREATED",target_type="TRANSACTION",target_id=txid,account_id=sender[0],transaction_id=txid,ip_address=ip_address,context={"recipient_account":recipient[2],"status":status})
+                score_points = 2 if risk_score >= 60 else (1 if risk_score >= 30 else (-1 if status == "COMPLETED" and risk_score == 0 and amount >= 300 else 0))
+                _record_credicheck_activity(cur, sender[1], "TRANSFER_ACTIVITY", score_points,
+                    "; ".join(risk_reasons) if risk_reasons else "Transfer reviewed; no elevated risk indicators.", txid, credicheck_ready)
                 return {"transaction_id":txid,"ledger_id":ledger_id,"status":status,"amount":amount,"fee":fee}
     finally:
         release_db_connection(conn)
@@ -484,6 +517,7 @@ def approve_business_transfer(transaction_id, approver_client_id, ip_address=Non
     try:
         with conn:
             with conn.cursor() as cur:
+                _assert_system_active(cur)
                 cur.execute("""SELECT b.id,b.account_id,b.requested_by,b.status,b.risk_score,l.amount,l.fee,l.sender_account_id,l.recipient_account_id
                                FROM minebank_business_payment_approvals b
                                JOIN ledger_transactions l ON l.transaction_id=b.transaction_id
@@ -544,6 +578,7 @@ def reject_business_transfer(transaction_id, approver_client_id, reason=None, ip
         release_db_connection(conn)
 
 def approve_transfer(transaction_id, actor_user_id, ip_address=None):
+    credicheck_ready = _ensure_credicheck_activity_schema()
     conn = get_db_connection()
     try:
         with conn:
@@ -553,10 +588,15 @@ def approve_transfer(transaction_id, actor_user_id, ip_address=None):
                 tx = cur.fetchone()
                 if not tx or tx[4] != "PENDING_APPROVAL":
                     raise ValueError("Pending transfer not found.")
+                _assert_banking_unlocked(cur, actor_user_id)
                 sender = _lock_account(cur, tx[1])
                 recipient = _lock_account(cur, tx[2])
-                if sender and sender[1] == actor_user_id:
-                    raise ValueError("The person who initiated a transfer cannot approve their own transfer.")
+                self_authorised = bool(sender and sender[1] == actor_user_id)
+                cur.execute("SELECT role FROM bank_clients WHERE id=%s", (actor_user_id,))
+                actor_role_row = cur.fetchone()
+                actor_role = actor_role_row[0] if actor_role_row else None
+                if not self_authorised and actor_role not in ("ADMIN","OPERATOR"):
+                    raise ValueError("Only the transfer owner or an authorised bank operator can approve this transfer.")
                 if recipient and recipient[6]=="FROZEN":
                     cur.execute("SELECT freeze_type FROM bank_accounts WHERE id=%s",(recipient[0],))
                     freeze_type=cur.fetchone()[0]
@@ -579,7 +619,8 @@ def approve_transfer(transaction_id, actor_user_id, ip_address=None):
                                          FROM transfer_idempotency WHERE transaction_id=%s
                                            AND idempotency_key LIKE 'PAYREQ-%')
                                  AND status='PENDING'""",(transaction_id,transaction_id))
-                audit_event(cur,actor_client_id=actor_user_id,action="TRANSFER_APPROVED",target_type="TRANSACTION",target_id=transaction_id,account_id=tx[2],transaction_id=transaction_id,ip_address=ip_address)
+                audit_event(cur,actor_client_id=actor_user_id,action="TRANSFER_SELF_AUTHORISED" if self_authorised else "TRANSFER_APPROVED",target_type="TRANSACTION",target_id=transaction_id,account_id=tx[2],transaction_id=transaction_id,ip_address=ip_address,context={"self_authorised":self_authorised})
+                _record_credicheck_activity(cur, sender[1] if sender else None, "TRANSFER_AUTHORISED", 0, "Pending transfer authorised.", transaction_id, credicheck_ready)
                 return transaction_id
     finally:
         release_db_connection(conn)
@@ -700,6 +741,7 @@ def disburse_loan(loan_id, approved_by=None):
                 cur.execute("SELECT id,client_id,destination_account_id,principal,status,loan_number,installment_amount,term_days FROM minebank_loans WHERE id=%s FOR UPDATE",(loan_id,))
                 loan=cur.fetchone()
                 if not loan: raise ValueError("Loan not found.")
+                _assert_system_active(cur)
                 if loan[4] not in ("PENDING","APPROVED"): raise ValueError("Loan is no longer awaiting disbursement.")
                 destination=_lock_account(cur,loan[2])
                 if not destination or destination[6] not in ("ACTIVE","LIMITED"):
@@ -720,11 +762,13 @@ def disburse_loan(loan_id, approved_by=None):
 
 def auto_pay_due_loans():
     """Collect due daily loan installments automatically when the repayment account has enough balance."""
+    credicheck_ready = _ensure_credicheck_activity_schema()
     conn=get_db_connection(); results=[]
     if conn is None: return results
     try:
         with conn:
             with conn.cursor() as cur:
+                _assert_system_active(cur)
                 cur.execute("""SELECT id FROM minebank_loans WHERE status='ACTIVE' AND installments_paid < term_days AND next_due_date IS NOT NULL AND next_due_date <= CURRENT_DATE ORDER BY next_due_date,id FOR UPDATE SKIP LOCKED""")
                 for row in cur.fetchall():
                     loan_id=row[0]
@@ -741,6 +785,7 @@ def auto_pay_due_loans():
                         txid=next_transaction_id(cur)
                         cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(installment,source[0]))
                         create_ledger_transaction(cur,transaction_id=txid,transaction_type="LOAN_REPAYMENT",amount=installment,sender_account_id=source[0],description=f"Automatic loan repayment {loan[7]}",reference_id=loan[7])
+                        _record_credicheck_activity(cur, loan[1], "LOAN_REPAYMENT", -1, "Automatic scheduled Loan installment paid successfully.", txid, credicheck_ready)
                         paid += 1
                         if paid >= term:
                             cur.execute("UPDATE minebank_loans SET installments_paid=%s,status='COMPLETED',next_due_date=NULL,completed_at=CURRENT_TIMESTAMP WHERE id=%s",(paid,loan_id))
@@ -753,6 +798,7 @@ def auto_pay_due_loans():
 
 def repay_loan_fraction(loan_id, source_account_id, actor_client_id, numerator=1, denominator=4):
     """Repay a selected fraction of the remaining Loan from MineBank Balance only."""
+    credicheck_ready = _ensure_credicheck_activity_schema()
     numerator=int(numerator); denominator=int(denominator)
     if denominator != 4 or numerator not in (1,2,3,4):
         raise ValueError("Choose 1/4, 1/2, 3/4, or the full remaining balance.")
@@ -774,6 +820,7 @@ def repay_loan_fraction(loan_id, source_account_id, actor_client_id, numerator=1
                 txid=next_transaction_id(cur)
                 cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(amount,source[0]))
                 create_ledger_transaction(cur,transaction_id=txid,transaction_type="LOAN_REPAYMENT",amount=amount,sender_account_id=source[0],description=f"Loan repayment {loan[7]} ({numerator}/4)",reference_id=loan[7])
+                _record_credicheck_activity(cur, actor_client_id, "LOAN_REPAYMENT", -1, "Customer made a voluntary Loan repayment.", txid, credicheck_ready)
                 if numerator==4 or amount>=remaining:
                     # Preserve the original principal for audit/history and to
                     # satisfy minebank_loans_principal_check after settlement.
@@ -794,6 +841,7 @@ def repay_loan_fraction(loan_id, source_account_id, actor_client_id, numerator=1
 
 def repay_loan_installment(loan_id, source_account_id, actor_client_id):
     """Atomically collect one daily loan installment from another owned account."""
+    credicheck_ready = _ensure_credicheck_activity_schema()
     conn=get_db_connection()
     try:
         with conn:
@@ -818,6 +866,7 @@ def repay_loan_installment(loan_id, source_account_id, actor_client_id):
                 create_ledger_transaction(cur,transaction_id=txid,transaction_type="LOAN_REPAYMENT",
                                           amount=installment,sender_account_id=source_account_id,
                                           description=f"Loan repayment {loan[11]}",reference_id=loan[11])
+                _record_credicheck_activity(cur, actor_client_id, "LOAN_REPAYMENT", -1, "Customer paid a scheduled Loan installment.", txid, credicheck_ready)
                 paid=int(loan[5])+1
                 status="COMPLETED" if paid>=int(loan[6]) else "ACTIVE"
                 cur.execute("""UPDATE minebank_loans SET installments_paid=%s,status=%s,
@@ -831,6 +880,7 @@ def repay_loan_installment(loan_id, source_account_id, actor_client_id):
 
 def repay_credit(account_id, amount, source_account_id):
     if not isinstance(amount,int) or amount<=0: raise ValueError("Repayment must be a positive integer Emerald amount.")
+    credicheck_ready = _ensure_credicheck_activity_schema()
     conn=get_db_connection()
     try:
         with conn:
@@ -852,7 +902,9 @@ def repay_credit(account_id, amount, source_account_id):
                 if int(source[5])<amount: raise ValueError("Source account does not have enough positive balance.")
                 cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(amount,source_account_id))
                 txid=next_transaction_id(cur)
+                _assert_banking_unlocked(cur, debt_account[1])
                 lid=create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_REPAYMENT",amount=amount,sender_account_id=source_account_id,recipient_account_id=account_id,description="CashLine repayment")
+                _record_credicheck_activity(cur, debt_account[1], "CASHLINE_REPAYMENT", -1, "Customer repaid outstanding CashLine principal.", txid, credicheck_ready)
                 remaining=amount
                 cur.execute("""SELECT id,total_due,amount_paid FROM credit_statements WHERE account_id=%s AND status IN ('OPEN','PARTIALLY_PAID','OVERDUE') ORDER BY due_at,id FOR UPDATE""",(account_id,))
                 for sid,total_due,paid in cur.fetchall():

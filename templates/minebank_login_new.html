@@ -19,7 +19,7 @@
     .mb-login-section-title{margin:0 0 5px;padding-bottom:9px;border-bottom:1px solid #c4d1dc;color:#315c7e;font:bold 12px Arial,sans-serif;text-transform:uppercase}
     .mb-login-heading{margin:15px 0 6px;color:#173f65;font:bold 23px Arial,sans-serif}
     .mb-login-intro{margin:0 0 19px;color:#60778b;font-size:12px;line-height:1.55}
-    .mb-login-error{display:flex;gap:9px;margin:0 0 15px;padding:10px 11px;border:1px solid #d7a4a4;background:#fff0f0;color:#8b2323;line-height:1.45}
+     .mb-login-maintenance{display:flex;gap:9px;margin:0 0 14px;padding:11px;border:1px solid #c58c49;background:#fff4e5;color:#7a4b12;line-height:1.5}.mb-login-maintenance strong{font-family:Arial,sans-serif}.mb-login-error{display:flex;gap:9px;margin:0 0 15px;padding:10px 11px;border:1px solid #d7a4a4;background:#fff0f0;color:#8b2323;line-height:1.45}
     .mb-login-error strong{display:grid;place-items:center;width:17px;height:17px;flex:0 0 17px;border:1px solid #d9a5a5;background:#fff;color:#8b2323;font:bold 11px Arial}
     .mb-login-field{margin:0 0 15px}
     .mb-login-field label{display:block;margin:0 0 5px;color:#35566f;font-weight:bold;font-size:12px}
@@ -63,6 +63,7 @@
       <div class="mb-login-section-title">Secure Banking Area</div>
       <h1 class="mb-login-heading" id="login-title">Welcome back</h1>
       <p class="mb-login-intro">Sign in with your MineBank email and password to access your accounts and banking services.</p>
+      {% if system_status and system_status.suspended %}<div class="mb-login-maintenance" role="status"><strong>Banking operations temporarily suspended</strong><div>{{ system_status.message or 'MineBank banking operations are temporarily suspended by an administrator. You can still sign in, but financial operations are unavailable.' }}</div></div>{% endif %}
       {% if error %}<div class="mb-login-error" role="alert"><strong aria-hidden="true">!</strong><div>{{ error }}</div></div>{% endif %}
       <form method="post" id="login-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

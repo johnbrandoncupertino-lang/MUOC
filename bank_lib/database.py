@@ -177,6 +177,8 @@ def ensure_minebank_schema():
             commit=True,
         )
 
+        execute_query("ALTER TABLE settings ADD COLUMN IF NOT EXISTS system_suspended BOOLEAN NOT NULL DEFAULT FALSE", fetch=False, commit=True)
+        execute_query("ALTER TABLE settings ADD COLUMN IF NOT EXISTS suspension_message TEXT NOT NULL DEFAULT ''", fetch=False, commit=True)
         from .minebank_schema import init_minebank_v2
         init_minebank_v2()
 

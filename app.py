@@ -383,6 +383,16 @@ def csrf_check():
         return redirect(request.referrer or url_for("minebank_dashboard"))
     return None
 
+def get_bank_system_status():
+    try:
+        ensure_minebank_schema()
+        rows = execute_query_dict("SELECT COALESCE(system_suspended,FALSE) AS suspended,COALESCE(suspension_message,'') AS message FROM settings ORDER BY id LIMIT 1")
+        if rows:
+            return {"suspended": bool(rows[0].get("suspended")), "message": (rows[0].get("message") or "").strip()}
+    except Exception as exc:
+        print(f"MineBank system status warning: {type(exc).__name__}: {exc}")
+    return {"suspended": False, "message": ""}
+
 @app.before_request
 def prepare_request():
     if request.endpoint == "static":
@@ -413,6 +423,25 @@ def prepare_request():
     failed = csrf_check()
     if failed:
         return failed
+    if request.method == "POST" and session.get("minebank_role") != "ADMIN":
+        path = request.path
+        financial_post = (
+            path in {"/portal/accounts", "/portal/transfer", "/portal/loans", "/portal/credit",
+                     "/portal/credit/dynamic/activate", "/portal/credit/dynamic/close",
+                     "/portal/plans", "/portal/scheduled", "/portal/payment-requests",
+                     "/portal/recipients", "/portal/bonus", "/api/transfer/bank", "/api/v1/transfers"}
+            or path.startswith("/portal/payment-requests/")
+            or (path.startswith("/portal/transactions/") and path.endswith(("/cancel", "/refund", "/authorise")))
+            or (path.startswith("/portal/business/") and "/payments/" in path)
+        )
+        if financial_post:
+            status = get_bank_system_status()
+            if status["suspended"]:
+                message = status["message"] or "MineBank banking operations are temporarily suspended."
+                if path.startswith("/api/"):
+                    return jsonify(error=message), 503
+                flash(message, "error")
+                return redirect(request.referrer or url_for("minebank_dashboard"))
     return None
 
 @app.route("/")
@@ -426,6 +455,7 @@ def legacy_login():
 @app.route("/portal/login", methods=["GET","POST"])
 def minebank_login():
     error = None
+    system_status = get_bank_system_status()
     if request.method == "POST":
         ok, message = login_client(request.form.get("email",""), request.form.get("password",""), request.form.get("captcha_answer"))
         if ok:
@@ -435,7 +465,7 @@ def minebank_login():
                 return redirect(url_for("minebank_security_page"))
             return redirect(request.args.get("next") or url_for("minebank_dashboard"))
         error = message or "Invalid credentials."
-    return render_template("minebank_login_new.html", error=error, captcha_question=session.get("login_captcha_question"))
+    return render_template("minebank_login_new.html", error=error, captcha_question=session.get("login_captcha_question"), system_status=system_status)
 
 @app.route("/portal/logout")
 def minebank_logout():
@@ -446,6 +476,7 @@ def minebank_logout():
 @app.route("/portal/register", methods=["GET","POST"])
 def minebank_register():
     error = None
+    system_status = get_bank_system_status()
     registration_step = 1
 
     def issue_registration_captcha():
@@ -454,7 +485,10 @@ def minebank_register():
         session["registration_captcha_answer"] = str(left + right)
         session["registration_captcha_question"] = f"{left} + {right} = ?"
 
-    if request.method == "GET":
+    if request.method == "POST" and system_status["suspended"]:
+        error = system_status["message"] or "MineBank is temporarily not accepting new registrations while banking operations are suspended."
+        issue_registration_captcha()
+    elif request.method == "GET":
         issue_registration_captcha()
     else:
         email = request.form.get("email", "").strip().lower()
@@ -546,6 +580,7 @@ def minebank_register():
         registration_step=registration_step,
         registration_captcha_question=session.get("registration_captcha_question"),
         registration_max_date=datetime.now(timezone.utc).date().isoformat(),
+        system_status=system_status,
     )
 
 @app.route("/portal", endpoint="minebank_dashboard")
@@ -1096,6 +1131,27 @@ def minebank_transaction_category(transaction_id):
         flash("Transaction categories updated.","success")
     else:
         flash("One or more categories are not valid.","error")
+    return redirect(url_for("minebank_transaction_detail",transaction_id=transaction_id))
+
+@app.route("/portal/transactions/<transaction_id>/authorise",methods=["POST"])
+@require_login
+def minebank_authorise_own_transfer(transaction_id):
+    client_id=session["minebank_client_id"]
+    own=execute_query_dict("""SELECT l.transaction_id FROM ledger_transactions l
+        JOIN bank_accounts a ON a.id=l.sender_account_id
+        WHERE l.transaction_id=%s AND a.client_id=%s AND l.status='PENDING_APPROVAL'""",(transaction_id,client_id))
+    if not own:
+        flash("This pending transfer is not available for your authorisation.","error")
+        return redirect(url_for("minebank_transactions_page"))
+    ok,message=verify_wallet_pin(client_id,request.form.get("wallet_pin",""))
+    if not ok:
+        flash(message or "Wallet PIN verification failed.","error")
+        return redirect(url_for("minebank_transaction_detail",transaction_id=transaction_id))
+    try:
+        approve_transfer(transaction_id,client_id,request.remote_addr)
+        flash("Your pending transfer has been authorised.","success")
+    except Exception as exc:
+        flash(f"Transfer authorisation failed: {exc}","error")
     return redirect(url_for("minebank_transaction_detail",transaction_id=transaction_id))
 
 @app.route("/portal/transactions/<transaction_id>/cancel",methods=["POST"])
@@ -2176,8 +2232,14 @@ def admin_minebank_settings():
         bank_name=request.form.get("bank_name","MineBank").strip()[:100] or "MineBank"
         currency=request.form.get("currency_name","Emerald").strip()[:50] or "Emerald"
         maximum=int(request.form.get("maximum_currency","0") or 0)
-        execute_query("UPDATE settings SET bank_name=%s,currency_name=%s,maximum_currency=%s",(bank_name,currency,maximum),commit=True)
-        flash("Bank ownership settings saved.","success")
+        suspended=request.form.get("system_suspended")=="true"
+        suspension_message=request.form.get("suspension_message","").strip()[:1000]
+        if suspended and not suspension_message:
+            suspension_message="MineBank banking operations are temporarily suspended by an administrator."
+        execute_query("""UPDATE settings SET bank_name=%s,currency_name=%s,maximum_currency=%s,
+                         system_suspended=%s,suspension_message=%s""",
+                      (bank_name,currency,maximum,suspended,suspension_message),commit=True)
+        flash("Bank ownership and operational settings saved.","success")
     setting=execute_query_dict("SELECT * FROM settings ORDER BY id LIMIT 1")[0]
     return render_template("minebank_admin_new.html",mode="settings",setting=setting,
                            requests=[],transfers=[],portal_active="settings")

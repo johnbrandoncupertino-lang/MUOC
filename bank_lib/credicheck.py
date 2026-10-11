@@ -304,7 +304,7 @@ def set_score(client_id, admin_id, new_score, reason):
         value = max(MIN_SCORE, int(raw_score))
     except (TypeError, ValueError, OverflowError):
         raise ValueError("CrediCheck score must be a whole number.")
-    execute_query("""UPDATE credicheck_profiles SET score=%s,risk_level=%s,updated_at=CURRENT_TIMESTAMP
+    execute_query("""UPDATE credicheck_profiles SET score=%s,risk_level=%s,last_evaluated_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
                      WHERE client_id=%s""",(value,_risk(value),client_id),commit=True)
     execute_query("""INSERT INTO credicheck_overrides
                      (client_id,admin_id,override_type,previous_value,new_value,reason)
