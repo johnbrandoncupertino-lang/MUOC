@@ -38,7 +38,7 @@
         <h2 id="register-title">Let’s get started.</h2>
         <p class="auth-form-intro">Create your secure MineBank login.</p>
         {% if error %}<div class="auth-error" role="alert"><span aria-hidden="true">!</span><div>{{ error }}</div></div>{% endif %}
-        <form method="post" class="auth-wizard" id="registration-wizard" data-start-step="{{ registration_step|default(1) }}">
+        <form method="post" class="auth-wizard" id="registration-wizard" novalidate data-start-step="{{ registration_step|default(1) }}">
           <section class="auth-wizard-step is-active" data-step="1" aria-labelledby="register-step-one">
             <div class="auth-step-heading"><span>01</span><div><h3 id="register-step-one">Account details</h3><p>Start with an email address you can access.</p></div></div>
             <div class="auth-field">
@@ -147,8 +147,9 @@
     if(confirm) confirm.addEventListener('input',checkPasswordMatch);
     if(email) email.addEventListener('input',syncReview);
     form.addEventListener('submit',function(event){
-      if(current!==2||!currentIsValid()){event.preventDefault();if(current!==2) showStep(current+1);}
-      else {submit.disabled=true;submit.classList.add('is-loading');submit.querySelector('span').textContent='Creating your account…';}
+      if(current!==2){event.preventDefault();if(currentIsValid()) showStep(current+1);return;}
+      if(!currentIsValid()){event.preventDefault();return;}
+      submit.disabled=true;submit.classList.add('is-loading');submit.querySelector('span').textContent='Creating your account…';
     });
     form.classList.add('js-ready');
     showStep(current);
