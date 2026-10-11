@@ -617,20 +617,33 @@ def minebank_accounts_page():
             if action=="tier_change":
                 account_id=int(request.form.get("account_id","0") or 0)
                 return redirect(url_for("minebank_plans_page",account_id=account_id))
-            # Business accounts are opened at Standard only. Upgrades are
-            # requested from the account after the eligibility checks pass.
-            tier="BUSINESS"
+            tier=request.form.get("tier_code","BUSINESS").strip().upper()
             legal=request.form.get("legal_name","").strip()[:200]
             trading=request.form.get("trading_name","").strip()[:200]
             if not legal:
                 raise ValueError("Business legal name is required.")
-            if not tier.startswith("BUSINESS"):
-                raise ValueError("Only Business tiers can be opened from this page.")
+            available_tiers=execute_query_dict(
+                "SELECT code,eligibility_config FROM account_tiers_v2 WHERE code=%s AND account_type='BUSINESS' AND active=TRUE",
+                (tier,)
+            )
+            if not available_tiers:
+                raise ValueError("Choose an available Business product.")
+            if tier=="CORPORATE":
+                raise ValueError("Corporate accounts require bank approval. Open a Business account first, then request Corporate from Account Plans.")
+            # Higher products can be opened directly only when the customer's
+            # existing Business relationship meets the configured eligibility rules.
+            if tier!="BUSINESS":
+                business_accounts=[a for a in get_accounts(session["minebank_client_id"]) if a.get("account_type")=="BUSINESS"]
+                if not business_accounts:
+                    raise ValueError("Open Business Standard first. Business Pro eligibility is assessed against an established Business account.")
+                eligible,reason=evaluate_tier_eligibility(current_client(),business_accounts[0],dict(available_tiers[0],code=tier))
+                if not eligible:
+                    raise ValueError(reason)
             account_id,number=create_account(session["minebank_client_id"],"BUSINESS",tier)
             execute_query("""INSERT INTO minebank_business_profiles(account_id,legal_name,trading_name,address,contact_email)
                              VALUES(%s,%s,%s,%s,%s)""",
                           (account_id,legal,trading,request.form.get("address","")[:300],session.get("minebank_email","")),commit=True)
-            flash(f"Business account {number} created.","success")
+            flash(f"{tier.replace('_',' ').title()} account {number} created.","success")
             return redirect(url_for("minebank_accounts_page"))
         except Exception as exc:
             error=str(exc)
