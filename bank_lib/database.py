@@ -290,6 +290,26 @@ def ensure_transaction_schema():
         execute_query("ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS causal VARCHAR(500)", fetch=False, commit=True)
         execute_query("ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS category VARCHAR(60)", fetch=False, commit=True)
         execute_query("ALTER TABLE ledger_transactions ADD COLUMN IF NOT EXISTS transfer_kind VARCHAR(30)", fetch=False, commit=True)
+        # Legacy deployments can skip the full schema file once core tables exist.
+        # Add every tier field used by transfer validation before changing monetary types.
+        execute_query("""ALTER TABLE account_tiers_v2
+            ADD COLUMN IF NOT EXISTS monthly_fee BIGINT NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS max_balance BIGINT,
+            ADD COLUMN IF NOT EXISTS monthly_outgoing_limit BIGINT,
+            ADD COLUMN IF NOT EXISTS daily_outgoing_limit BIGINT,
+            ADD COLUMN IF NOT EXISTS single_transfer_limit BIGINT,
+            ADD COLUMN IF NOT EXISTS credit_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS default_credit_limit BIGINT NOT NULL DEFAULT 0,
+            ADD COLUMN IF NOT EXISTS private_or_corporate BOOLEAN NOT NULL DEFAULT FALSE,
+            ADD COLUMN IF NOT EXISTS eligibility_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+            ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE""", fetch=False, commit=True)
+        execute_query("""ALTER TABLE account_tiers_v2
+            ALTER COLUMN monthly_fee TYPE BIGINT,
+            ALTER COLUMN max_balance TYPE BIGINT,
+            ALTER COLUMN monthly_outgoing_limit TYPE BIGINT,
+            ALTER COLUMN daily_outgoing_limit TYPE BIGINT,
+            ALTER COLUMN single_transfer_limit TYPE BIGINT,
+            ALTER COLUMN default_credit_limit TYPE BIGINT""", fetch=False, commit=True)
         execute_query("ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS interest_annual_bps INTEGER NOT NULL DEFAULT 1830", fetch=False, commit=True)
         execute_query("ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS minimum_due_percent_bps INTEGER NOT NULL DEFAULT 500", fetch=False, commit=True)
         execute_query("ALTER TABLE credit_facilities ADD COLUMN IF NOT EXISTS minimum_due_floor INTEGER NOT NULL DEFAULT 40", fetch=False, commit=True)

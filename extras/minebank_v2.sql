@@ -49,13 +49,13 @@ CREATE TABLE IF NOT EXISTS account_tiers_v2 (
     code VARCHAR(40) UNIQUE NOT NULL,
     account_type VARCHAR(20) NOT NULL CHECK (account_type IN ('PERSONAL','BUSINESS')),
     display_name VARCHAR(80) NOT NULL,
-    monthly_fee INTEGER NOT NULL DEFAULT 0 CHECK (monthly_fee >= 0),
-    max_balance INTEGER CHECK (max_balance IS NULL OR max_balance >= 0),
-    monthly_outgoing_limit INTEGER CHECK (monthly_outgoing_limit IS NULL OR monthly_outgoing_limit >= 0),
-    daily_outgoing_limit INTEGER CHECK (daily_outgoing_limit IS NULL OR daily_outgoing_limit >= 0),
-    single_transfer_limit INTEGER CHECK (single_transfer_limit IS NULL OR single_transfer_limit >= 0),
+    monthly_fee BIGINT NOT NULL DEFAULT 0 CHECK (monthly_fee >= 0),
+    max_balance BIGINT CHECK (max_balance IS NULL OR max_balance >= 0),
+    monthly_outgoing_limit BIGINT CHECK (monthly_outgoing_limit IS NULL OR monthly_outgoing_limit >= 0),
+    daily_outgoing_limit BIGINT CHECK (daily_outgoing_limit IS NULL OR daily_outgoing_limit >= 0),
+    single_transfer_limit BIGINT CHECK (single_transfer_limit IS NULL OR single_transfer_limit >= 0),
     credit_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-    default_credit_limit INTEGER NOT NULL DEFAULT 0 CHECK (default_credit_limit >= 0),
+    default_credit_limit BIGINT NOT NULL DEFAULT 0 CHECK (default_credit_limit >= 0),
     private_or_corporate BOOLEAN NOT NULL DEFAULT FALSE,
     eligibility_config JSONB NOT NULL DEFAULT '{}'::jsonb,
     active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -67,9 +67,9 @@ CREATE TABLE IF NOT EXISTS account_tiers_v2 (
 ALTER TABLE account_tiers_v2
     ADD COLUMN IF NOT EXISTS monthly_outgoing_limit INTEGER,
     ADD COLUMN IF NOT EXISTS daily_outgoing_limit INTEGER,
-    ADD COLUMN IF NOT EXISTS single_transfer_limit INTEGER,
+    ADD COLUMN IF NOT EXISTS single_transfer_limit BIGINT,
     ADD COLUMN IF NOT EXISTS credit_enabled BOOLEAN NOT NULL DEFAULT FALSE,
-    ADD COLUMN IF NOT EXISTS default_credit_limit INTEGER NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS default_credit_limit BIGINT NOT NULL DEFAULT 0,
     ADD COLUMN IF NOT EXISTS private_or_corporate BOOLEAN NOT NULL DEFAULT FALSE,
     ADD COLUMN IF NOT EXISTS eligibility_config JSONB NOT NULL DEFAULT '{}'::jsonb,
     ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -186,6 +186,14 @@ CREATE TABLE IF NOT EXISTS ledger_transactions (
     approved_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+
+ALTER TABLE account_tiers_v2
+    ALTER COLUMN monthly_fee TYPE BIGINT,
+    ALTER COLUMN max_balance TYPE BIGINT,
+    ALTER COLUMN monthly_outgoing_limit TYPE BIGINT,
+    ALTER COLUMN daily_outgoing_limit TYPE BIGINT,
+    ALTER COLUMN single_transfer_limit TYPE BIGINT,
+    ALTER COLUMN default_credit_limit TYPE BIGINT;
 
 CREATE INDEX IF NOT EXISTS ledger_sender_idx ON ledger_transactions(sender_account_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS ledger_recipient_idx ON ledger_transactions(recipient_account_id, created_at DESC);

@@ -70,6 +70,44 @@ app.config.update(
     SESSION_COOKIE_SECURE=True,
 )
 
+@app.template_filter("bank_label")
+def bank_label(value):
+    """Render internal enum values as concise, customer-safe banking language."""
+    raw = str(value or "").strip()
+    labels = {
+        "PENDING_REQUEST": "Pending request",
+        "PENDING": "Pending",
+        "PENDING_APPROVAL": "Awaiting bank review",
+        "PENDING_BUSINESS_APPROVAL": "Awaiting business approval",
+        "COMPLETED": "Completed",
+        "REJECTED": "Declined",
+        "CANCELLED": "Cancelled",
+        "ACTIVE": "Active",
+        "AVAILABLE": "Available",
+        "RESTRICTED": "Restricted",
+        "SUSPENDED": "Suspended",
+        "CLOSED": "Closed",
+        "TRANSFER": "Transfer",
+        "CREDIT_DRAW": "CashLine draw",
+        "CREDIT_REPAYMENT": "CashLine repayment",
+        "CREDIT_INTEREST": "CashLine interest",
+        "CREDIT_FEE": "CashLine fee",
+        "REQUEST_UPDATE": "Request update",
+        "LOAN_REQUEST": "Loan request",
+        "CREDIT_LINE": "CashLine request",
+        "DYNAMIC_CASHLINE": "Dynamic CashLine",
+        "CASHLINE": "CashLine",
+        "BANK_REVIEW": "Bank review",
+    }
+    if raw in labels:
+        return labels[raw]
+    for token, label in sorted(labels.items(), key=lambda item: len(item[0]), reverse=True):
+        raw = raw.replace(token, label)
+    if raw.isupper() and "_" in raw and len(raw) < 100:
+        return raw.replace("_", " ").title()
+    return raw
+
+
 def csrf_token():
     token = session.get("csrf")
     if not token:

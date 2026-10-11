@@ -32,6 +32,8 @@ def _positive_integer_amount(value):
         raise ValueError("Transfer amount must be a positive integer Emerald amount.")
     if amount <= 0:
         raise ValueError("Transfer amount must be a positive integer Emerald amount.")
+    if amount > 9223372036854775807:
+        raise ValueError("Amount exceeds MineBank's maximum supported monetary value.")
     return amount
 
 
@@ -175,6 +177,30 @@ def _cashline_repayment_suggestion(cur, account_id, incoming_amount):
                  f"You have {outstanding} Emerald outstanding on CashLine and just received {int(incoming_amount)} Emerald. You have enough available funds to repay the CashLine balance if you wish. No automatic repayment has been made."))
 
 
+def _assert_credicheck_product_access(cur, client_id, product_type):
+    """Apply the same CrediCheck standing and product-access policy to credit usage."""
+    if client_id is None:
+        return 5
+    cur.execute("""INSERT INTO credicheck_profiles(client_id,score,risk_level,credit_status)
+                   VALUES(%s,5,'GOOD','ACTIVE') ON CONFLICT(client_id) DO NOTHING""", (client_id,))
+    cur.execute("SELECT score,credit_status FROM credicheck_profiles WHERE client_id=%s", (client_id,))
+    profile = cur.fetchone()
+    if not profile:
+        raise ValueError("CrediCheck authorisation could not be verified. Please contact MineBank Support.")
+    try:
+        score = int(profile[0]) if profile[0] is not None else 5
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError("CrediCheck profile could not be verified. Please contact MineBank Support.")
+    if str(profile[1] or "").upper() != "ACTIVE" or score > 10:
+        raise ValueError("CrediCheck has not authorised this credit product. Check your Inbox for details.")
+    cur.execute("SELECT status FROM credicheck_product_access WHERE client_id=%s AND product_type=%s",
+                (client_id, str(product_type or "").upper()))
+    access = cur.fetchone()
+    if access and str(access[0] or "").upper() not in ("AVAILABLE", "ACTIVE"):
+        raise ValueError("This credit product is restricted by MineBank. Check your Inbox for details.")
+    return score
+
+
 def _dynamic_cashline_capacity(cur, account_id, requested_amount=0):
     """Return the current transaction-by-transaction Dynamic CashLine capacity."""
     cur.execute("""SELECT d.client_id,a.tier_id,t.code
@@ -186,19 +212,8 @@ def _dynamic_cashline_capacity(cur, account_id, requested_amount=0):
     if not row:
         return None
     client_id, tier_id, tier_code = row
-    cur.execute("SELECT score,credit_status FROM credicheck_profiles WHERE client_id=%s",(client_id,))
-    profile=cur.fetchone()
-    if not profile or str(profile[1] or '').upper()!="ACTIVE":
-        raise ValueError("Dynamic CashLine is not currently available for this account.")
-    # Legacy databases may contain a blank score despite the current schema
-    # declaring this field INTEGER. Use the neutral default rather than leaking
-    # a low-level int('') exception into a customer transfer.
-    try:
-        raw_score = str(profile[0]).strip() if profile[0] is not None else ""
-        score = int(raw_score) if raw_score else 5
-    except (TypeError, ValueError, OverflowError):
-        raise ValueError("Dynamic CashLine profile score is invalid. Please contact MineBank support.")
-    if score < 0 or score > 10:
+    score = _assert_credicheck_product_access(cur, client_id, "DYNAMIC_CASHLINE")
+    if score < 0:
         raise ValueError("Dynamic CashLine profile score is outside the supported range.")
     cur.execute("""SELECT COUNT(*) FROM minebank_loans
                    WHERE client_id=%s AND status='ACTIVE' AND next_due_date<CURRENT_DATE""",(client_id,))
@@ -306,6 +321,7 @@ def _validate_transfer_request(cur, *, actor_client_id, sender, recipient, amoun
             raise ValueError(f"Dynamic CashLine does not have enough available capacity. Available: {dynamic_capacity} Emerald.")
         available_after = dynamic_capacity - total
     else:
+        _assert_credicheck_product_access(cur, sender[1], "CASHLINE")
         cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE", (sender[0],))
         facility = cur.fetchone()
         if not facility or facility[1] != "ACTIVE":
