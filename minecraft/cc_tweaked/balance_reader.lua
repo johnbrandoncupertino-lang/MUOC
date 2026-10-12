@@ -43,6 +43,12 @@ print("MineBank | Account reader")
 print("The New Bank")
 print("------------------------------")
 
+if not API_BASE:match("^https://") then
+  print("SECURITY ERROR: API_BASE must use HTTPS.")
+  pause()
+  return
+end
+
 if API_BASE:find("YOUR%-MINEBANK%-DOMAIN") then
   print("SETUP REQUIRED: edit API_BASE in this program first.")
   pause()
