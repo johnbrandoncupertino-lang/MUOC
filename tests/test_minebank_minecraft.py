@@ -8,7 +8,6 @@ from bank_lib.minebank_minecraft import (
     minecraft_enabled,
 )
 from bank_lib import minebank_minecraft as minecraft_api
-#)
 
 
 def test_minecraft_feature_flag_fails_closed(monkeypatch):
