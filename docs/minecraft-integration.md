@@ -2,7 +2,7 @@
 
 ## Status
 
-This is a **database foundation only**. It does not enable Minecraft access, issue cards, expose balance endpoints, or process payments. Do not describe the integration as live until the API routes, authentication controls, tests, and operator setup are merged separately.
+This is an **initial API foundation**. The code now includes feature-flagged card issuance, card revocation, and read-only linked-account access. It is not live by default, and it cannot process payments. Do not enable it in production until the schema migration has been applied, CI and security review pass, and the operator has verified the deployment's HTTPS/proxy configuration.
 
 The feature must remain disabled unless the deployment explicitly sets:
 
@@ -18,6 +18,16 @@ The application must treat a missing, empty, or unrecognized value as disabled.
 4. The disk never contains the account password or Wallet PIN. It should contain only the card credential and non-sensitive display metadata.
 5. A read-only endpoint validates the card credential, checks its active/revoked state and account status, then returns only the minimum account information needed by the terminal.
 6. Card revocation must invalidate the credential immediately. Lost disks are treated as lost cards.
+
+## Initial API contract
+
+All routes are under `/api/v1/minecraft` and return 404 unless `MINEBANK_MINECRAFT_ENABLED=true` is set explicitly. Requests require HTTPS.
+
+- `POST /cards`: JSON body with `email`, `password`, `wallet_pin`, `account_id`, optional `label`, and optional `captcha_answer`. Returns the raw card credential exactly once, along with a card ID and issue timestamp. Keep the credential only on the floppy disk.
+- `GET /account`: `Authorization: Bearer <card credential>`. Returns the linked account's type, tier, status, account number, and Emerald balance. This is read-only.
+- `POST /cards/revoke`: JSON body with `email`, `password`, `wallet_pin`, and `card_id`. Revokes a card owned by the authenticated customer.
+
+Card issuance reuses MineBank's existing login checks and Wallet PIN lockout, restricts each customer to five active cards, and records issuance, read, and revocation audit events. The account lookup is always scoped to the authenticated customer. The raw credential is never written to the database or application logs.
 
 ## Data model
 
@@ -44,11 +54,10 @@ The migration is additive and does not reset or delete existing banking data. It
 
 ## Planned implementation sequence
 
-1. Add reviewed card schema (this change).
-2. Implement authentication and card issuance using existing MineBank security controls.
-3. Implement read-only card/account access and revocation.
-4. Add isolated tests for ownership, disabled-by-default behavior, token hashing, revoked cards, locked accounts, and authentication lockout.
-5. Only after that passes review, design idempotent payment authorization and settlement as a separate change.
+1. Add reviewed card schema and initial API implementation (this draft PR).
+2. Confirm CI passes and review the authentication/session behavior and Vercel HTTPS forwarding before applying the migration.
+3. Add deeper database-backed tests for account ownership, card issuance/revocation, revoked tokens, and locked accounts.
+4. Only after that passes review, design idempotent payment authorization and settlement as a separate change.
 
 ## CC: Tweaked terminal contract
 
