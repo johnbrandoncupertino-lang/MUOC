@@ -115,7 +115,7 @@ def issue_card():
 
         label = str(data.get("label") or "Minecraft card").strip()[:80] or "Minecraft card"
         token = "mbmc_" + secrets.token_urlsafe(32)
-        prefix = token[:12]
+        prefix = token[:16]
         digest = hash_card_token(token)
 
         conn = get_db_connection()
@@ -216,7 +216,7 @@ def read_card_account():
                        WHERE c.card_prefix=%s AND c.status='ACTIVE'
                          AND (c.revoked_at IS NULL)
                        LIMIT 5""",
-                    (token[:12],),
+                    (token[:16],),
                 )
                 rows = cur.fetchall()
                 token_hash = hash_card_token(token)
