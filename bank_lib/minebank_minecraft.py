@@ -36,6 +36,19 @@ def _authorized_card_token():
     return token
 
 
+def _request_is_secure():
+    # Vercel terminates TLS before forwarding requests to Flask. Accept its
+    # forwarded-proto marker as well as Flask's native secure flag.
+    forwarded = request.headers.get("X-Forwarded-Proto", "").split(",", 1)[0].strip().lower()
+    return request.is_secure or forwarded == "https"
+
+
+def _transport_unavailable():
+    if not _request_is_secure():
+        return jsonify(error="Minecraft integration requires HTTPS."), 400
+    return None
+
+
 def _feature_unavailable():
     if not minecraft_enabled():
         return jsonify(error="Minecraft integration is disabled."), 404
@@ -76,6 +89,9 @@ def issue_card():
     unavailable = _feature_unavailable()
     if unavailable:
         return unavailable
+    insecure = _transport_unavailable()
+    if insecure:
+        return insecure
 
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -143,6 +159,13 @@ def issue_card():
                         (client_id, account_id, prefix, digest, label),
                     )
                     card_id, issued_at = cur.fetchone()
+                    cur.execute(
+                        """INSERT INTO audit_events
+                               (actor_client_id,action,target_type,target_id,account_id,ip_address,context)
+                           VALUES(%s,'MINECRAFT_CARD_ISSUED','MINECRAFT_CARD',%s,%s,%s::inet,
+                                  jsonb_build_object('source','minecraft'))""",
+                        (client_id, str(card_id), account_id, request.remote_addr),
+                    )
             return jsonify(
                 card={
                     "id": card_id,
@@ -169,6 +192,9 @@ def read_card_account():
     unavailable = _feature_unavailable()
     if unavailable:
         return unavailable
+    insecure = _transport_unavailable()
+    if insecure:
+        return insecure
     token = _authorized_card_token()
     if not token:
         return jsonify(error="A valid card credential is required."), 401
@@ -208,6 +234,13 @@ def read_card_account():
                     "UPDATE minebank_minecraft_cards SET last_used_at=CURRENT_TIMESTAMP WHERE id=%s",
                     (row[0],),
                 )
+                cur.execute(
+                    """INSERT INTO audit_events
+                           (actor_client_id,action,target_type,target_id,account_id,ip_address,context)
+                       VALUES(%s,'MINECRAFT_CARD_READ','MINECRAFT_CARD',%s,%s,%s::inet,
+                              jsonb_build_object('source','minecraft'))""",
+                    (row[2], str(row[0]), row[3], request.remote_addr),
+                )
             return jsonify(
                 account={
                     "account_number": row[4],
@@ -230,6 +263,9 @@ def revoke_card():
     unavailable = _feature_unavailable()
     if unavailable:
         return unavailable
+    insecure = _transport_unavailable()
+    if insecure:
+        return insecure
 
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
@@ -264,6 +300,14 @@ def revoke_card():
                         (card_id, client_id),
                     )
                     revoked = cur.fetchone()
+                    if revoked:
+                        cur.execute(
+                            """INSERT INTO audit_events
+                                   (actor_client_id,action,target_type,target_id,ip_address,context)
+                               VALUES(%s,'MINECRAFT_CARD_REVOKED','MINECRAFT_CARD',%s,%s::inet,
+                                      jsonb_build_object('source','minecraft'))""",
+                            (client_id, str(card_id), request.remote_addr),
+                        )
             if not revoked:
                 return jsonify(error="Active card not found for this MineBank customer."), 404
             return jsonify(card_id=card_id, status="REVOKED")
