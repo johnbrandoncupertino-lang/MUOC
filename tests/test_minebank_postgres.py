@@ -258,6 +258,7 @@ def test_web_smoke_routes_import_and_render():
 
 
 def test_minecraft_card_issuance_read_and_revocation(accounts, monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     alice, bob, alice_account_id, _, bob_account_id, _ = accounts
 
     # Exercise the real route/database operations while isolating credential
