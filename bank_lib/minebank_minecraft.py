@@ -94,6 +94,71 @@ def _clear_temporary_login_session():
         session.clear()
 
 
+@minecraft_bp.post("/accounts")
+def list_customer_accounts():
+    """Authenticate a customer and list only their active accounts for card selection."""
+    unavailable = _feature_unavailable()
+    if unavailable:
+        return unavailable
+    insecure = _transport_unavailable()
+    if insecure:
+        return insecure
+
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify(error="A JSON request body is required."), 400
+    client_id, failure = _authenticate_player(data)
+    if failure:
+        return failure
+
+    try:
+        pin = str(data.get("wallet_pin", ""))
+        if len(pin) != 6 or not pin.isdigit():
+            return jsonify(error="Wallet PIN must contain exactly six digits."), 400
+        pin_ok, pin_message = verify_wallet_pin(client_id, pin)
+        if not pin_ok:
+            return jsonify(error=pin_message or "Wallet PIN verification failed."), 401
+
+        conn = get_db_connection()
+        if conn is None:
+            return jsonify(error="MineBank is temporarily unavailable."), 503
+        try:
+            with conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        """SELECT a.id,a.account_number,a.account_type,t.display_name,
+                                  a.balance,a.status
+                           FROM bank_accounts a
+                           JOIN account_tiers_v2 t ON t.id=a.tier_id
+                           JOIN bank_clients bc ON bc.id=a.client_id
+                           WHERE a.client_id=%s
+                             AND a.status='ACTIVE'
+                             AND bc.status='ACTIVE'
+                           ORDER BY a.created_at,a.id""",
+                        (client_id,),
+                    )
+                    accounts = [
+                        {
+                            "id": row[0],
+                            "account_number": row[1],
+                            "account_type": row[2],
+                            "tier": row[3],
+                            "balance": int(row[4]),
+                            "status": row[5],
+                            "currency": "emerald",
+                        }
+                        for row in cur.fetchall()
+                    ]
+            return jsonify(accounts=accounts)
+        finally:
+            release_db_connection(conn)
+    except Exception as exc:
+        current_app.logger.error("Minecraft account listing failed: %s", type(exc).__name__)
+        return jsonify(error="MineBank account data is temporarily unavailable."), 503
+    finally:
+        _clear_temporary_login_session()
+
+
 @minecraft_bp.post("/cards")
 def issue_card():
     unavailable = _feature_unavailable()
