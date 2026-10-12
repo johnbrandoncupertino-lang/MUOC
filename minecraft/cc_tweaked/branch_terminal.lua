@@ -2,7 +2,7 @@
 -- Configure API_BASE to the HTTPS origin of your MineBank deployment.
 -- Passwords and Wallet PINs stay in RAM only and are never written to disk.
 
-local API_BASE = "https://YOUR-MINEBANK-DOMAIN/api/v1/minecraft"
+local API_BASE = "https://vercel.com/pietro-apple/minebanksecurearea/2jLj1Ba2PB3kZrHzHNPx8aR6LNUH/api/v1/minecraft"
 local CARD_FILE = "minebank.card"
 
 local function pause()
