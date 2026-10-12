@@ -17,7 +17,6 @@ from bank_lib.minebank_auth import create_account, set_wallet_pin, verify_wallet
 from bank_lib.minebank_core import (
     activate_credit,
     accrue_daily_credit_interest,
-    draw_credit,
     preview_transfer,
     transfer,
 )
@@ -159,8 +158,16 @@ def test_transfer_over_5000_is_pending_approval(accounts):
         fetch=False,
         commit=True,
     )
-    # Personal has a 1,000 Emerald daily limit, so use Personal Private for
-    # the approval-threshold test.
+    # Use a recipient tier that can accept an amount above the Personal
+    # account's 5,000 Emerald balance cap; this test targets approval logic.
+    recipient_id, recipient_number = create_account(bob, "BUSINESS", "BUSINESS")
+    execute_query(
+        "UPDATE bank_accounts SET balance=100 WHERE id=%s",
+        (recipient_id,),
+        fetch=False,
+        commit=True,
+    )
+    # Personal has a 1,000 Emerald daily limit, so use a Business Pro sender.
     private_id, private_number = create_account(alice, "BUSINESS", "BUSINESS_PRO")
     execute_query(
         "UPDATE bank_accounts SET balance=20000,last_outgoing_at=NULL WHERE id=%s",
@@ -170,7 +177,7 @@ def test_transfer_over_5000_is_pending_approval(accounts):
     )
     result = transfer(
         sender_account_id=private_id,
-        recipient_account_number=bob_number,
+        recipient_account_number=recipient_number,
         amount=5001,
         actor_client_id=alice,
         idempotency_key="ci-approval-5001",
@@ -186,15 +193,25 @@ def test_transfer_over_5000_is_pending_approval(accounts):
 
 
 def test_cashline_limits_and_daily_interest(accounts):
-    alice, _, alice_id, _, _, _ = accounts
+    alice, _, alice_id, _, _, bob_number = accounts
     execute_query("UPDATE bank_accounts SET balance=0 WHERE id=%s", (alice_id,), fetch=False, commit=True)
     activation = activate_credit(alice_id, 500)
     assert activation["credit_limit"] == 500
     assert activation["interest_annual_bps"] == 1830
     assert activation["monthly_activation_fee"] == 10
 
-    draw = draw_credit(alice_id, 300, actor_client_id=alice)
-    assert draw["available_credit"] == 200
+    # CashLine is drawn by selecting it as the transfer funding source;
+    # the ordinary account balance must not become negative.
+    payment = transfer(
+        sender_account_id=alice_id,
+        recipient_account_number=bob_number,
+        amount=300,
+        actor_client_id=alice,
+        funding_source="CASHLINE",
+        idempotency_key="ci-cashline-300",
+    )
+    assert payment["status"] == "COMPLETED"
+    assert payment["amount"] == 300
 
     execute_query(
         "UPDATE credit_facilities SET last_interest_at=%s WHERE account_id=%s",
@@ -208,7 +225,7 @@ def test_cashline_limits_and_daily_interest(accounts):
     balance = execute_query_dict(
         "SELECT balance FROM bank_accounts WHERE id=%s", (alice_id,)
     )[0]["balance"]
-    assert balance < 0
+    assert balance == 0
 
     with pytest.raises(ValueError, match="between 300 and 1800"):
         activate_credit(alice_id, 2000)
