@@ -37,3 +37,14 @@ def test_minecraft_routes_are_hidden_when_feature_disabled(monkeypatch):
 
     response = client.post("/api/v1/minecraft/cards", json={})
     assert response.status_code == 404
+
+
+def test_minecraft_api_rejects_plain_http_when_enabled(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    app = Flask(__name__)
+    app.register_blueprint(minecraft_bp)
+    client = app.test_client()
+
+    response = client.get("/api/v1/minecraft/account")
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "Minecraft integration requires HTTPS."
