@@ -23,6 +23,7 @@ The application must treat a missing, empty, or unrecognized value as disabled.
 
 All routes are under `/api/v1/minecraft` and return 404 unless `MINEBANK_MINECRAFT_ENABLED=true` is set explicitly. Requests require HTTPS.
 
+- `POST /accounts`: JSON body with `email`, `password`, `wallet_pin`, and optional `captcha_answer`. Returns only the authenticated customer's active accounts for branch-terminal selection.
 - `POST /cards`: JSON body with `email`, `password`, `wallet_pin`, `account_id`, optional `label`, and optional `captcha_answer`. Returns the raw card credential exactly once, along with a card ID and issue timestamp. Keep the credential only on the floppy disk.
 - `GET /account`: `Authorization: Bearer <card credential>`. Returns the linked account's type, tier, status, account number, and Emerald balance. This is read-only.
 - `POST /cards/revoke`: JSON body with `email`, `password`, `wallet_pin`, and `card_id`. Revokes a card owned by the authenticated customer.
