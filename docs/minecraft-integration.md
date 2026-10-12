@@ -27,7 +27,7 @@ All routes are under `/api/v1/minecraft` and return 404 unless `MINEBANK_MINECRA
 - `GET /account`: `Authorization: Bearer <card credential>`. Returns the linked account's type, tier, status, account number, and Emerald balance. This is read-only.
 - `POST /cards/revoke`: JSON body with `email`, `password`, `wallet_pin`, and `card_id`. Revokes a card owned by the authenticated customer.
 
-Card issuance reuses MineBank's existing login checks and Wallet PIN lockout, restricts each customer to five active cards, and records issuance, read, and revocation audit events. The account lookup is always scoped to the authenticated customer. The raw credential is never written to the database or application logs.
+Card issuance reuses MineBank's existing login checks and Wallet PIN lockout, accepts customer-role identities only, restricts each customer to five active cards and ten issuances per rolling 24 hours (including revoked cards), and records issuance, read, and revocation audit events. The account lookup is always scoped to the authenticated customer. The raw credential is never written to the database or application logs.
 
 ## Data model
 
