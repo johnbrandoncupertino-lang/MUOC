@@ -266,6 +266,7 @@ def test_minecraft_card_issuance_read_and_revocation(accounts, monkeypatch):
     def fake_login(email, password, captcha_answer=None):
         if email == "alice@minebank.test" and password == "alice-password":
             session["minebank_client_id"] = alice
+            session["minebank_role"] = "CLIENT"
             return True, None
         return False, "Invalid credentials."
 
