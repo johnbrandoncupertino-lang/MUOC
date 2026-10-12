@@ -282,6 +282,17 @@ def test_minecraft_card_issuance_read_and_revocation(accounts, monkeypatch):
     client = app.test_client()
     secure_headers = {"X-Forwarded-Proto": "https"}
 
+    listed = client.post(
+        "/api/v1/minecraft/accounts",
+        json={"email": "alice@minebank.test", "password": "alice-password",
+              "wallet_pin": "123456"},
+        headers=secure_headers,
+    )
+    assert listed.status_code == 200, listed.get_json()
+    listed_accounts = listed.get_json()["accounts"]
+    assert [account["id"] for account in listed_accounts] == [alice_account_id]
+    assert listed_accounts[0]["balance"] == 2000
+
     # A customer's credentials must not authorize another customer's account.
     wrong_owner = client.post(
         "/api/v1/minecraft/cards",
