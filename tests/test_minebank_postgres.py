@@ -241,3 +241,47 @@ def test_web_smoke_routes_import_and_render():
     for path in ("/", "/about", "/login", "/portal/login", "/portal/register"):
         response = client.get(path, follow_redirects=False)
         assert response.status_code < 500, (path, response.status_code, response.get_data(as_text=True)[:500])
+
+
+
+def test_transfer_idempotency_prevents_double_post_and_notifies_recipient(accounts):
+    alice, bob, alice_id, _, bob_id, bob_number = accounts
+    first = transfer(
+        sender_account_id=alice_id,
+        recipient_account_number=bob_number,
+        amount=100,
+        actor_client_id=alice,
+        idempotency_key="ci-transfer-replay-100",
+    )
+    replay = transfer(
+        sender_account_id=alice_id,
+        recipient_account_number=bob_number,
+        amount=100,
+        actor_client_id=alice,
+        idempotency_key="ci-transfer-replay-100",
+    )
+
+    assert first["status"] == "COMPLETED"
+    assert replay["transaction_id"] == first["transaction_id"]
+    assert replay["idempotent_replay"] is True
+
+    sender_balance = execute_query_dict(
+        "SELECT balance FROM bank_accounts WHERE id=%s", (alice_id,)
+    )[0]["balance"]
+    recipient_balance = execute_query_dict(
+        "SELECT balance FROM bank_accounts WHERE id=%s", (bob_id,)
+    )[0]["balance"]
+    tx_count = execute_query_dict(
+        "SELECT COUNT(*) AS count FROM ledger_transactions WHERE transaction_id=%s",
+        (first["transaction_id"],),
+    )[0]["count"]
+    notifications = execute_query_dict(
+        """SELECT COUNT(*) AS count FROM bank_notifications
+           WHERE client_id=%s AND account_id=%s AND notification_type='TRANSFER_RECEIVED'""",
+        (bob, bob_id),
+    )[0]["count"]
+
+    assert sender_balance == 1900
+    assert recipient_balance == 200
+    assert tx_count == 1
+    assert notifications == 1
