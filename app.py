@@ -70,6 +70,11 @@ app.config.update(
     SESSION_COOKIE_SECURE=True,
 )
 
+# Minecraft card API is registered but remains unavailable unless its explicit
+# feature flag is enabled. Its schema migration is applied separately.
+from bank_lib.minebank_minecraft import minecraft_bp
+app.register_blueprint(minecraft_bp)
+
 @app.template_filter("bank_label")
 def bank_label(value):
     """Render internal enum values as concise, customer-safe banking language."""
