@@ -15,6 +15,7 @@ from .minebank_auth import login_client, logout_client, verify_wallet_pin
 
 minecraft_bp = Blueprint("minebank_minecraft", __name__, url_prefix="/api/v1/minecraft")
 MAX_ACTIVE_CARDS_PER_CLIENT = 5
+MAX_CARD_ISSUANCES_PER_24H = 10
 
 
 def minecraft_enabled():
@@ -68,6 +69,15 @@ def _authenticate_player(data):
         # and temporary-block information); never log the supplied credentials.
         return None, (jsonify(error=message or "Invalid credentials."), 401)
     client_id = session.get("minebank_client_id")
+    # Minecraft cards are customer instruments, not operator/admin credentials.
+    # Fail closed if the existing login helper does not establish a normal client
+    # identity in the session.
+    if not client_id or session.get("minebank_role") != "CLIENT":
+        try:
+            logout_client()
+        except Exception:
+            session.clear()
+        return None, (jsonify(error="Only an active MineBank customer can manage Minecraft cards."), 403)
     return client_id, None
 
 
@@ -102,8 +112,8 @@ def issue_card():
 
     try:
         pin = str(data.get("wallet_pin", ""))
-        if not pin:
-            return jsonify(error="Wallet PIN is required."), 400
+        if len(pin) != 6 or not pin.isdigit():
+            return jsonify(error="Wallet PIN must contain exactly six digits."), 400
         pin_ok, pin_message = verify_wallet_pin(client_id, pin)
         if not pin_ok:
             return jsonify(error=pin_message or "Wallet PIN verification failed."), 401
@@ -150,6 +160,17 @@ def issue_card():
                     active_count = int(cur.fetchone()[0])
                     if active_count >= MAX_ACTIVE_CARDS_PER_CLIENT:
                         return jsonify(error="The maximum of five active Minecraft cards has been reached."), 409
+
+                    # Include revoked cards in the issuance count so repeatedly
+                    # revoking and reissuing cannot bypass this daily throttle.
+                    cur.execute(
+                        """SELECT COUNT(*) FROM minebank_minecraft_cards
+                           WHERE client_id=%s AND issued_at >= CURRENT_TIMESTAMP - INTERVAL '24 hours'""",
+                        (client_id,),
+                    )
+                    recent_issuances = int(cur.fetchone()[0])
+                    if recent_issuances >= MAX_CARD_ISSUANCES_PER_24H:
+                        return jsonify(error="Card issuance limit reached. Try again later."), 429
 
                     cur.execute(
                         """INSERT INTO minebank_minecraft_cards
