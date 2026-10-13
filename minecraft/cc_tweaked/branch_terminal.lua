@@ -18,11 +18,17 @@ local function secret(prompt)
 end
 
 local function requestJson(url, body, headers)
-  local response, err = http.post(
+  local response, err, failedResponse = http.post(
     url,
     textutils.serializeJSON(body),
     headers or { ["Content-Type"] = "application/json" }
   )
+
+  -- CC:Tweaked can return non-2xx HTTP responses as the third result.
+  -- Read that response so the actual MineBank error is not hidden as "Bad Request".
+  if not response and failedResponse then
+    response = failedResponse
+  end
   if not response then
     return nil, tostring(err or "The server could not be reached.")
   end
@@ -33,7 +39,8 @@ local function requestJson(url, body, headers)
 
   local ok, decoded = pcall(textutils.unserializeJSON, raw)
   if not ok or type(decoded) ~= "table" then
-    return nil, "MineBank returned an invalid response (HTTP " .. tostring(status) .. ")."
+    local detail = tostring(raw or ""):gsub("[%c]", " "):sub(1, 240)
+    return nil, "MineBank returned a non-JSON response (HTTP " .. tostring(status) .. "): " .. detail
   end
   if status < 200 or status >= 300 then
     local message = tostring(decoded.error or "The server rejected the request.")
