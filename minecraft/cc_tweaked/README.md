@@ -14,7 +14,7 @@ These programs connect CC:Tweaked computers/turtles to the feature-flagged MineB
 1. Review the code and run the repository tests before enabling the integration.
 2. Apply `extras/minebank_minecraft.sql` to the intended PostgreSQL database through the normal reviewed migration process. This is separate from `extras/minebank_v2.sql`; application requests do not apply this migration automatically.
 3. Confirm the schema includes `minebank_minecraft_cards`, `minebank_minecraft_operations`, `minebank_minecraft_merchants`, and `minebank_minecraft_checkouts`.
-4. Keep `MINEBANK_MINECRAFT_ENABLED` unset or false until migration and staging verification are complete. Enable it explicitly only for the intended deployment.
+4. Keep `MINEBANK_MINECRAFT_ENABLED` unset or false until the card schema is migrated and staging is verified. Keep `MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED` unset/false until the transaction schema is migrated and money-movement tests pass; set it to `true` only for the intended deployment after explicit review.
 5. Confirm HTTPS forwarding is correct at the Vercel deployment. All Lua programs require HTTPS.
 
 ## Merchant provisioning
