@@ -56,6 +56,15 @@ def _feature_unavailable():
     return None
 
 
+def _transactions_unavailable():
+    """Require a separate opt-in for any endpoint that moves money."""
+    if not minecraft_enabled():
+        return jsonify(error="Minecraft integration is disabled."), 404
+    if os.environ.get("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "").strip().lower() != "true":
+        return jsonify(error="Minecraft transactions are disabled."), 404
+    return None
+
+
 def _authenticate_player(data):
     """Reuse the portal's login controls, then remove the temporary web session."""
     email = str(data.get("email", "")).strip()
@@ -532,7 +541,7 @@ def _replay_operation(cur, client_id, key, op_type, request_hash):
 @minecraft_bp.post("/merchant/checkouts")
 def create_merchant_checkout():
     """Create a short-lived, merchant-authorized checkout with a fixed server amount."""
-    unavailable = _feature_unavailable()
+    unavailable = _transactions_unavailable()
     if unavailable:
         return unavailable
     insecure = _transport_unavailable()
@@ -619,7 +628,7 @@ def create_merchant_checkout():
 @minecraft_bp.post("/payments")
 def pay_merchant_checkout():
     """Pay the fixed amount in an open checkout, atomically and idempotently."""
-    unavailable = _feature_unavailable()
+    unavailable = _transactions_unavailable()
     if unavailable:
         return unavailable
     insecure = _transport_unavailable()
@@ -749,7 +758,7 @@ def pay_merchant_checkout():
 @minecraft_bp.post("/withdrawals")
 def withdraw_emerald_items():
     """Atomically debit MineBank balance and issue a single-use ATM dispense ticket."""
-    unavailable = _feature_unavailable()
+    unavailable = _transactions_unavailable()
     if unavailable:
         return unavailable
     insecure = _transport_unavailable()
