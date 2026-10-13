@@ -17,6 +17,15 @@ def ensure_security_schema():
     if _SECURITY_SCHEMA_READY:
         return
 
+    minecraft_request = False
+    try:
+        from flask import has_request_context, request
+        minecraft_request = has_request_context() and request.path.startswith("/api/v1/minecraft/")
+    except (ImportError, RuntimeError):
+        pass
+    if minecraft_request:
+        print("Minecraft authentication stage=security_schema_probe_started")
+
     # Avoid replaying many CREATE/ALTER statements on every login.
     # This catalog probe is read-only and fast on PostgreSQL/Neon.
     try:
@@ -43,10 +52,16 @@ def ensure_security_schema():
         """)
         if rows and rows[0][0]:
             _SECURITY_SCHEMA_READY = True
+            if minecraft_request:
+                print("Minecraft authentication stage=security_schema_probe_completed")
             return
     except Exception as exc:
         print(f"MineBank security schema probe warning: {type(exc).__name__}: {exc}")
+        if minecraft_request:
+            print(f"Minecraft authentication stage=security_schema_probe_failed error={type(exc).__name__}")
 
+    if minecraft_request:
+        print("Minecraft authentication stage=security_schema_migration_started")
     execute_query("""CREATE TABLE IF NOT EXISTS minebank_security_events (
         id BIGSERIAL PRIMARY KEY,
         client_id BIGINT REFERENCES bank_clients(id) ON DELETE SET NULL,
@@ -89,6 +104,8 @@ def ensure_security_schema():
     execute_query("""ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS login_failed_attempts INTEGER NOT NULL DEFAULT 0""", commit=True)
     execute_query("""ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS login_blocked_until TIMESTAMPTZ""", commit=True)
     execute_query("""ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS login_captcha_required BOOLEAN NOT NULL DEFAULT FALSE""", commit=True)
+    if minecraft_request:
+        print("Minecraft authentication stage=security_schema_migration_completed")
 
 def client_session_hash():
     token = session.get("minebank_session_token")
