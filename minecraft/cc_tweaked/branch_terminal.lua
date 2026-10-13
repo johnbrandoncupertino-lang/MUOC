@@ -36,7 +36,8 @@ local function requestJson(url, body, headers)
     return nil, "MineBank returned an invalid response (HTTP " .. tostring(status) .. ")."
   end
   if status < 200 or status >= 300 then
-    return nil, tostring(decoded.error or ("MineBank returned HTTP " .. tostring(status) .. "."))
+    local message = tostring(decoded.error or "The server rejected the request.")
+    return nil, message .. " (HTTP " .. tostring(status) .. ")"
   end
   return decoded, nil
 end
@@ -59,7 +60,8 @@ local function getJson(url, token)
     return nil, "MineBank returned an invalid response (HTTP " .. tostring(status) .. ")."
   end
   if status < 200 or status >= 300 then
-    return nil, tostring(decoded.error or ("MineBank returned HTTP " .. tostring(status) .. "."))
+    local message = tostring(decoded.error or "The server rejected the request.")
+    return nil, message .. " (HTTP " .. tostring(status) .. ")"
   end
   return decoded, nil
 end
