@@ -80,3 +80,45 @@ CREATE INDEX IF NOT EXISTS minebank_minecraft_operations_card_idx
 
 COMMENT ON TABLE minebank_minecraft_operations IS
     'Idempotency envelope for future Minecraft payments/withdrawals. The handler must validate active card and account ownership, lock the operation key, and atomically commit ledger changes before enabling execution.';
+
+
+-- Trusted merchant credentials and server-authoritative checkout intents.
+-- Provision merchant tokens out-of-band: store only SHA-256(token), never the raw token.
+CREATE TABLE IF NOT EXISTS minebank_minecraft_merchants (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT NOT NULL REFERENCES bank_clients(id),
+    account_id BIGINT NOT NULL,
+    token_hash CHAR(64) NOT NULL UNIQUE,
+    display_name VARCHAR(120) NOT NULL,
+    active BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT minebank_minecraft_merchant_owner_fk
+        FOREIGN KEY (account_id, client_id)
+        REFERENCES bank_accounts(id, client_id)
+);
+CREATE INDEX IF NOT EXISTS minebank_minecraft_merchants_account_idx
+    ON minebank_minecraft_merchants(account_id, active);
+
+CREATE TABLE IF NOT EXISTS minebank_minecraft_checkouts (
+    id BIGSERIAL PRIMARY KEY,
+    merchant_id BIGINT NOT NULL REFERENCES minebank_minecraft_merchants(id),
+    merchant_idempotency_key VARCHAR(128) NOT NULL,
+    amount BIGINT NOT NULL CHECK (amount > 0 AND amount <= 1000000),
+    description VARCHAR(200) NOT NULL,
+    merchant_reference VARCHAR(100),
+    status VARCHAR(12) NOT NULL DEFAULT 'OPEN'
+        CHECK (status IN ('OPEN','PAID','EXPIRED','CANCELLED')),
+    transaction_id VARCHAR(80),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    expires_at TIMESTAMPTZ NOT NULL,
+    paid_at TIMESTAMPTZ,
+    UNIQUE (merchant_id, merchant_idempotency_key),
+    UNIQUE (transaction_id)
+);
+CREATE INDEX IF NOT EXISTS minebank_minecraft_checkouts_expiry_idx
+    ON minebank_minecraft_checkouts(status, expires_at);
+
+COMMENT ON TABLE minebank_minecraft_merchants IS
+    'Trusted merchant terminal credentials. Only SHA-256 token hashes are stored; provision and rotate tokens out-of-band.';
+COMMENT ON TABLE minebank_minecraft_checkouts IS
+    'Short-lived, merchant-authorized fixed-amount checkouts. Cardholders can pay a checkout but cannot change its amount.';
