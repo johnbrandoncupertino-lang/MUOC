@@ -56,6 +56,30 @@ def _feature_unavailable():
     return None
 
 
+@minecraft_bp.get("/diagnostics")
+def minecraft_diagnostics():
+    """Temporary, non-sensitive diagnostic for deployment/proxy troubleshooting."""
+    forwarded_proto = request.headers.get("X-Forwarded-Proto", "")
+    payload = {
+        "diagnostics": "minebank-minecraft-v1",
+        "integration_enabled": minecraft_enabled(),
+        "request_is_secure": bool(request.is_secure),
+        "forwarded_proto": forwarded_proto[:80],
+        "content_type": request.content_type,
+        "https_check_passes": bool(
+            request.is_secure
+            or forwarded_proto.split(",", 1)[0].strip().lower() == "https"
+        ),
+    }
+    current_app.logger.warning(
+        "Minecraft diagnostic endpoint checked: enabled=%s secure=%s forwarded_proto=%r.",
+        payload["integration_enabled"],
+        payload["request_is_secure"],
+        payload["forwarded_proto"],
+    )
+    return jsonify(payload), 200
+
+
 def _authenticate_player(data):
     """Reuse the portal's login controls, then remove the temporary web session."""
     email = str(data.get("email", "")).strip()
