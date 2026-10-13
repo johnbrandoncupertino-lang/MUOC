@@ -37,6 +37,9 @@ COMMENT ON TABLE minebank_minecraft_cards IS
     'Revocable card credentials for MineBank Minecraft integration. Store only SHA-256 token hashes; never store raw card tokens, passwords, or Wallet PINs.';
 
 
+CREATE UNIQUE INDEX IF NOT EXISTS minebank_minecraft_cards_id_client_id_uq
+    ON minebank_minecraft_cards(id, client_id);
+
 -- Durable idempotency envelope for future Minecraft payment/withdrawal handlers.
 -- Financial handlers must lock this key and commit its state together with the
 -- corresponding ledger mutation; this table alone does not enable money movement.
@@ -62,9 +65,6 @@ CREATE TABLE IF NOT EXISTS minebank_minecraft_operations (
         FOREIGN KEY (card_id, client_id)
         REFERENCES minebank_minecraft_cards(id, client_id)
 );
-
-CREATE UNIQUE INDEX IF NOT EXISTS minebank_minecraft_cards_id_client_id_uq
-    ON minebank_minecraft_cards(id, client_id);
 
 CREATE INDEX IF NOT EXISTS minebank_minecraft_operations_client_idx
     ON minebank_minecraft_operations(client_id, created_at DESC);
