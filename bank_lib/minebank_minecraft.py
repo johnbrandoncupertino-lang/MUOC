@@ -102,18 +102,39 @@ def list_customer_accounts():
         return unavailable
     insecure = _transport_unavailable()
     if insecure:
+        current_app.logger.warning(
+            "Minecraft accounts request rejected: HTTPS check failed "
+            "(request.is_secure=%s, forwarded_proto=%r).",
+            request.is_secure,
+            request.headers.get("X-Forwarded-Proto", ""),
+        )
         return insecure
 
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
+        current_app.logger.warning(
+            "Minecraft accounts request rejected: invalid/missing JSON "
+            "(content_type=%r, content_length=%r).",
+            request.content_type,
+            request.content_length,
+        )
         return jsonify(error="A JSON request body is required."), 400
     client_id, failure = _authenticate_player(data)
     if failure:
+        current_app.logger.warning(
+            "Minecraft accounts request rejected during customer authentication."
+        )
         return failure
 
     try:
         pin = str(data.get("wallet_pin", ""))
         if len(pin) != 6 or not pin.isdigit():
+            current_app.logger.warning(
+                "Minecraft accounts request rejected: Wallet PIN format invalid "
+                "(length=%d, digits_only=%s).",
+                len(pin),
+                pin.isdigit(),
+            )
             return jsonify(error="Wallet PIN must contain exactly six digits."), 400
         pin_ok, pin_message = verify_wallet_pin(client_id, pin)
         if not pin_ok:
