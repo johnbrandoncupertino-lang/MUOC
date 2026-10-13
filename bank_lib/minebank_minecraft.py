@@ -380,8 +380,8 @@ def read_card_account():
                 )
                 if not row:
                     return jsonify(error="Card credential is invalid or revoked."), 401
-                if row[7] != "ACTIVE" or row[9] not in ("ACTIVE", "LIMITED"):
-                    return jsonify(error="This card's linked account is not available."), 403
+                if row[7] != "ACTIVE" or row[9] != "ACTIVE":
+                    return jsonify(error="This card or its MineBank profile is not active."), 403
 
                 cur.execute(
                     "UPDATE minebank_minecraft_cards SET last_used_at=CURRENT_TIMESTAMP WHERE id=%s",
