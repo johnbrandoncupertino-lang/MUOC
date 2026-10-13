@@ -539,8 +539,9 @@ def create_merchant_checkout():
         return insecure
     token = _merchant_token()
     data = request.get_json(silent=True)
-    if not token or not isinstance(data, dict):
-        return jsonify(error="Merchant authorization and a JSON body are required."), 401
+    key = _request_idempotency_key()
+    if not token or not isinstance(data, dict) or not key:
+        return jsonify(error="Merchant authorization, JSON body, and Idempotency-Key are required."), 400
     try:
         amount = int(data.get("amount"))
     except (TypeError, ValueError, OverflowError):
@@ -548,6 +549,11 @@ def create_merchant_checkout():
     if isinstance(data.get("amount"), bool) or amount < 1 or amount > MAX_MINECRAFT_CHECKOUT:
         return jsonify(error="Checkout amount is outside the permitted range."), 400
     digest = hash_card_token(token)
+    description = str(data.get("description") or "Minecraft shop purchase").strip()[:200]
+    reference = str(data.get("reference") or "").strip()[:100] or None
+    request_hash = hashlib.sha256(
+        (str(amount) + ":" + description + ":" + (reference or "")).encode("utf-8")
+    ).hexdigest()
     conn = get_db_connection()
     if conn is None:
         return jsonify(error="MineBank is temporarily unavailable."), 503
@@ -556,7 +562,7 @@ def create_merchant_checkout():
             with conn.cursor() as cur:
                 cur.execute(
                     """SELECT m.id,m.client_id,m.account_id,a.status,bc.status,
-                              t.max_balance,a.balance
+                              t.max_balance,a.balance,m.display_name
                        FROM minebank_minecraft_merchants m
                        JOIN bank_accounts a ON a.id=m.account_id AND a.client_id=m.client_id
                        JOIN bank_clients bc ON bc.id=m.client_id
@@ -570,19 +576,33 @@ def create_merchant_checkout():
                     return jsonify(error="Merchant credential is invalid or revoked."), 401
                 if merchant[3] != "ACTIVE" or merchant[4] != "ACTIVE":
                     return jsonify(error="Merchant account is not active."), 403
-                description = str(data.get("description") or "Minecraft shop purchase").strip()[:200]
-                reference = str(data.get("reference") or "").strip()[:100] or None
+                cur.execute(
+                    """SELECT id,request_hash,amount,description,merchant_reference,status,expires_at
+                       FROM minebank_minecraft_checkouts
+                       WHERE merchant_id=%s AND merchant_idempotency_key=%s FOR UPDATE""",
+                    (merchant[0], key),
+                )
+                old = cur.fetchone()
+                if old:
+                    if not hmac.compare_digest(str(old[1]), request_hash):
+                        return jsonify(error="This Idempotency-Key was used for a different checkout."), 409
+                    return jsonify(
+                        checkout_id=str(old[0]), amount=int(old[2]), currency="emerald",
+                        description=old[3], status=old[5], expires_at=old[6].isoformat(),
+                        payment_endpoint="/api/v1/minecraft/payments", idempotent_replay=True,
+                    ), 200
                 cur.execute(
                     """INSERT INTO minebank_minecraft_checkouts
-                       (merchant_id,amount,description,merchant_reference,expires_at)
-                       VALUES(%s,%s,%s,%s,CURRENT_TIMESTAMP+INTERVAL '5 minutes')
+                       (merchant_id,merchant_idempotency_key,request_hash,amount,description,
+                        merchant_reference,expires_at)
+                       VALUES(%s,%s,%s,%s,%s,%s,CURRENT_TIMESTAMP+INTERVAL '5 minutes')
                        RETURNING id,expires_at""",
-                    (merchant[0], amount, description, reference),
+                    (merchant[0], key, request_hash, amount, description, reference),
                 )
                 checkout_id, expires_at = cur.fetchone()
         return jsonify(
             checkout_id=str(checkout_id), amount=amount, currency="emerald",
-            description=description, expires_at=expires_at.isoformat(),
+            merchant=merchant[7], description=description, expires_at=expires_at.isoformat(),
             payment_endpoint="/api/v1/minecraft/payments",
         ), 201
     except Exception as exc:
