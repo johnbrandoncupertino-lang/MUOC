@@ -72,3 +72,58 @@ def test_minecraft_api_rejects_plain_http_when_enabled(monkeypatch):
     response = client.get("/api/v1/minecraft/account")
     assert response.status_code == 400
     assert response.get_json()["error"] == "Minecraft integration requires HTTPS."
+
+
+
+def test_minecraft_withdrawal_requires_idempotency_key(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+    client = app.test_client()
+
+    response = client.post(
+        "/api/v1/minecraft/withdrawals",
+        json={"amount": 10},
+        headers={"Authorization": "Bearer mbmc_" + "x" * 48, "X-Forwarded-Proto": "https"},
+    )
+    assert response.status_code == 400
+    assert "Idempotency-Key" in response.get_json()["error"]
+
+
+def test_minecraft_withdrawal_rejects_non_integer_amounts(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+    client = app.test_client()
+
+    response = client.post(
+        "/api/v1/minecraft/withdrawals",
+        json={"amount": 10.5},
+        headers={
+            "Authorization": "Bearer mbmc_" + "x" * 48,
+            "Idempotency-Key": "atm-test-1",
+            "X-Forwarded-Proto": "https",
+        },
+    )
+    assert response.status_code == 400
+
+
+def test_minecraft_merchant_checkout_rejects_fractional_amounts(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+    client = app.test_client()
+
+    response = client.post(
+        "/api/v1/minecraft/merchant/checkouts",
+        json={"amount": 10.5},
+        headers={
+            "Authorization": "Bearer mbmerchant_" + "x" * 48,
+            "Idempotency-Key": "shop-test-1",
+            "X-Forwarded-Proto": "https",
+        },
+    )
+    assert response.status_code == 400
