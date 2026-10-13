@@ -89,8 +89,16 @@ def _authenticate_player(data):
         return None, (jsonify(error="Invalid credentials."), 401)
     ok, message = login_client(email, password, captcha_answer)
     if not ok:
-        # Preserve the existing login-protection message (including challenge
-        # and temporary-block information); never log the supplied credentials.
+        # A database outage is not an authentication failure. Keep the existing
+        # login-protection messages, but return a retryable server status when
+        # the canonical login helper cannot obtain a database connection.
+        if message and "temporarily unavailable" in message.lower():
+            current_app.logger.error(
+                "Minecraft customer authentication unavailable: login helper reported a service outage."
+            )
+            return None, (jsonify(error=message), 503)
+        # Preserve login-protection messages (including challenge and temporary
+        # block information); never log the supplied credentials.
         return None, (jsonify(error=message or "Invalid credentials."), 401)
     client_id = session.get("minebank_client_id")
     # Minecraft cards are customer instruments, not operator/admin credentials.
