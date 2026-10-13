@@ -2,7 +2,7 @@
 
 ## Status and deployment gates
 
-The integration now supports card issuance/revocation, live balance reads, merchant-authorized fixed-amount checkout payments, and ATM withdrawals. Money movement remains unavailable unless `MINEBANK_MINECRAFT_ENABLED=true` is explicitly configured.
+The integration now supports card issuance/revocation, live balance reads, merchant-authorized fixed-amount checkout payments, and ATM withdrawals. Card/read endpoints require `MINEBANK_MINECRAFT_ENABLED=true`. Money movement additionally requires the separate `MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED=true` opt-in.
 
 Before enabling it:
 1. Apply `extras/minebank_minecraft.sql` to the intended PostgreSQL database through the normal migration process.
@@ -66,4 +66,4 @@ The merchant terminal must be trusted and locked down. Its merchant token must n
 - `POST /payments`: settle a checkout using card credential and idempotency key.
 - `POST /withdrawals`: atomically debit balance and return a stable ATM dispense record.
 
-All routes remain hidden while the feature flag is unset/false.
+Card/read routes remain hidden while `MINEBANK_MINECRAFT_ENABLED` is unset/false. Checkout/payment/withdrawal routes also remain hidden unless `MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED=true`.
