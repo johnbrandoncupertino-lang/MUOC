@@ -83,9 +83,14 @@ local function dispense(amount)
     if item and item.name == "minecraft:emerald" then
       turtle.select(slot)
       local toDrop = math.min(remaining, item.count, 64)
+      local before = turtle.getItemCount(slot)
       local ok = turtle.drop(toDrop)
+      local after = turtle.getItemCount(slot)
       if not ok then return false, "The turtle could not dispense emeralds. Do not retry automatically." end
-      remaining = remaining - toDrop
+      local moved = before - after
+      if moved <= 0 or moved > toDrop then return false, "The dispense count could not be verified. Do not retry automatically." end
+      remaining = remaining - moved
+      if moved < toDrop then return false, "The output accepted only part of the withdrawal. Do not retry automatically." end
     end
   end
   if remaining > 0 then return false, "Dispensing stopped early. Do not retry automatically." end
