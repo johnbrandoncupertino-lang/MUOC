@@ -26,10 +26,9 @@ def get_db_connection():
         print("MineBank database URL is not configured")
         return None
     try:
-        conn = psycopg2.connect(url, connect_timeout=8)
-        conn.autocommit = False
-        # Neon pooled connections reject statement_timeout when sent as a
-        # startup option. Set Minecraft-only limits after connecting instead.
+        # Neon pooler connections can occasionally be dropped during startup.
+        # Retry only Minecraft API connection setup once; do not change portal
+        # behavior or retry any transaction that may already have executed.
         try:
             from flask import has_request_context, request
             is_minecraft_request = (
@@ -38,13 +37,41 @@ def get_db_connection():
             )
         except (ImportError, RuntimeError):
             is_minecraft_request = False
-        if is_minecraft_request:
-            with conn.cursor() as cur:
-                cur.execute("SET statement_timeout = 12000")
-                cur.execute("SET lock_timeout = 5000")
-                cur.execute("SET idle_in_transaction_session_timeout = 15000")
-            conn.commit()
-        return conn
+
+        attempts = 2 if is_minecraft_request else 1
+        last_error = None
+        for attempt in range(attempts):
+            conn = None
+            try:
+                conn = psycopg2.connect(url, connect_timeout=8)
+                conn.autocommit = False
+                if is_minecraft_request:
+                    # Apply timeouts after connecting: Neon pooled connections
+                    # reject these when passed as startup options.
+                    with conn.cursor() as cur:
+                        cur.execute("SET statement_timeout = 12000")
+                        cur.execute("SET lock_timeout = 5000")
+                        cur.execute("SET idle_in_transaction_session_timeout = 15000")
+                        cur.execute("SELECT 1")
+                        cur.fetchone()
+                    conn.commit()
+                return conn
+            except Exception as exc:
+                last_error = exc
+                if conn is not None:
+                    try:
+                        conn.close()
+                    except Exception:
+                        pass
+                if attempt + 1 >= attempts:
+                    raise
+                print(
+                    "MineBank Minecraft database connection setup failed; "
+                    "retrying once: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+        if last_error:
+            raise last_error
     except Exception as exc:
         print(f"MineBank database connection failed: {type(exc).__name__}: {exc}")
         return None
