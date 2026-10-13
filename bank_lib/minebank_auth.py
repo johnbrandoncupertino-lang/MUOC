@@ -11,8 +11,13 @@ from flask import jsonify, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
 from .database import get_db_connection
-from .minebank_security import (clear_login_failures, create_session, login_challenge_required,
-                                check_login_challenge, record_login_failure, set_login_challenge, revoke_current_session, security_event)
+from .minebank_security import (
+    clear_login_failures,
+    create_session,
+    record_login_failure,
+    revoke_current_session,
+    security_event,
+)
 
 
 WALLET_PIN_MAX_ATTEMPTS = 3
@@ -37,6 +42,7 @@ def client_from_session(cur):
 
 
 def login_client(email, password, captcha_answer=None):
+    # The optional argument is retained for compatibility and intentionally ignored.
     # Authentication depends on the security/session tables and login-protection
     # columns. Initialize that compatibility layer before the first login so
     # an older production database cannot turn session creation into a 500.
@@ -59,11 +65,11 @@ def login_client(email, password, captcha_answer=None):
                 # unique email index first. Only legacy mixed-case records
                 # need the slower case-insensitive fallback.
                 try:
-                    cur.execute("""SELECT id,email,password_hash,role,status,login_failed_attempts,login_blocked_until,login_captcha_required,password_changed_at
+                    cur.execute("""SELECT id,email,password_hash,role,status,login_failed_attempts,login_blocked_until,password_changed_at
                                    FROM bank_clients WHERE email=%s""",(normalized_email,))
                     row=cur.fetchone()
                     if not row:
-                        cur.execute("""SELECT id,email,password_hash,role,status,login_failed_attempts,login_blocked_until,login_captcha_required,password_changed_at
+                        cur.execute("""SELECT id,email,password_hash,role,status,login_failed_attempts,login_blocked_until,password_changed_at
                                        FROM bank_clients WHERE LOWER(email)=LOWER(%s)""",(normalized_email,))
                         row=cur.fetchone()
                 except Exception as exc:
@@ -74,7 +80,7 @@ def login_client(email, password, captcha_answer=None):
                     cur.execute("""SELECT id,email,password_hash,role,status
                                    FROM bank_clients WHERE LOWER(email)=LOWER(%s)""",(normalized_email,))
                     base=cur.fetchone()
-                    row=(base[0],base[1],base[2],base[3],base[4],0,None,False,None) if base else None
+                    row=(base[0],base[1],base[2],base[3],base[4],0,None,None) if base else None
                 if not row:
                     record_login_failure(None,"UNKNOWN_ACCOUNT")
                     return False,"Invalid credentials."
@@ -86,30 +92,6 @@ def login_client(email, password, captcha_answer=None):
                 if row[6] and row[6] > now:
                     seconds=max(1,int((row[6]-now).total_seconds()))
                     return False,f"Login temporarily blocked. Try again in {seconds} seconds."
-                if row[7]:
-                    if not check_login_challenge(captcha_answer):
-                        # A missing/incorrect CAPTCHA answer is not a wrong
-                        # password. Do not increment the password-failure
-                        # counter or write to bank_clients here: Minecraft
-                        # clients may retry concurrently, and that extra write
-                        # can contend with the lockout update itself.
-                        question = set_login_challenge()
-                        try:
-                            security_event(
-                                client_id,
-                                "CAPTCHA_REQUIRED",
-                                "WARNING",
-                                {"source": "minecraft", "reason": "challenge_missing_or_invalid"},
-                            )
-                        except Exception as exc:
-                            print(
-                                "MineBank CAPTCHA audit warning: "
-                                f"{type(exc).__name__}: {exc}"
-                            )
-                        return False, (
-                            "Complete the security challenge before continuing. "
-                            + question
-                        )
                 if row[4] == "CLOSED":
                     record_login_failure(client_id,"DISABLED_ACCOUNT")
                     return False,"This account is disabled. Please contact the bank."
@@ -118,11 +100,7 @@ def login_client(email, password, captcha_answer=None):
                 if not check_password_hash(row[2],password):
                     attempts,minutes=record_login_failure(client_id,"INVALID_PASSWORD")
                     if attempts>=3:
-                        set_login_challenge()
                         return False,f"Too many failed attempts. Login is temporarily blocked for {minutes} minutes."
-                    if attempts>=2:
-                        set_login_challenge()
-                        return False,"Invalid credentials. Complete the security challenge on the next attempt."
                     return False,"Invalid credentials."
                 try:
                     clear_login_failures(client_id)
