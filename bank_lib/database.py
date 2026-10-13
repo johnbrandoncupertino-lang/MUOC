@@ -26,21 +26,24 @@ def get_db_connection():
         print("MineBank database URL is not configured")
         return None
     try:
-        connect_options = {"connect_timeout": 8}
-        # Bound database work for Minecraft API calls without changing timeout
-        # behavior for the rest of the banking portal.
+        conn = psycopg2.connect(url, connect_timeout=8)
+        conn.autocommit = False
+        # Neon pooled connections reject statement_timeout when sent as a
+        # startup option. Set Minecraft-only limits after connecting instead.
         try:
             from flask import has_request_context, request
-            if has_request_context() and request.path.startswith("/api/v1/minecraft/"):
-                connect_options["options"] = (
-                    "-c statement_timeout=12000 "
-                    "-c lock_timeout=5000 "
-                    "-c idle_in_transaction_session_timeout=15000"
-                )
+            is_minecraft_request = (
+                has_request_context()
+                and request.path.startswith("/api/v1/minecraft/")
+            )
         except (ImportError, RuntimeError):
-            pass
-        conn = psycopg2.connect(url, **connect_options)
-        conn.autocommit = False
+            is_minecraft_request = False
+        if is_minecraft_request:
+            with conn.cursor() as cur:
+                cur.execute("SET statement_timeout = 12000")
+                cur.execute("SET lock_timeout = 5000")
+                cur.execute("SET idle_in_transaction_session_timeout = 15000")
+            conn.commit()
         return conn
     except Exception as exc:
         print(f"MineBank database connection failed: {type(exc).__name__}: {exc}")
