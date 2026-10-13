@@ -1,0 +1,73 @@
+{% extends 'minebank_layout.html' %}
+{% block title %}Minecraft Cards — MineBank{% endblock %}
+{% block content %}
+<style>
+.minecraft-cards-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:14px}
+.minecraft-card-panel{min-width:0}
+.minecraft-card-visual{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:18px;border-radius:8px;background:linear-gradient(135deg,#102c27,#164b3d 65%,#1c5d49);color:#f2fff9;margin-bottom:14px;min-height:116px;box-sizing:border-box}
+.minecraft-card-visual small{display:block;opacity:.78;letter-spacing:.08em;text-transform:uppercase;font-size:10px}
+.minecraft-card-visual strong{display:block;font-size:17px;margin-top:8px;overflow-wrap:anywhere}
+.minecraft-card-diamond{font-size:25px;opacity:.9}
+.minecraft-card-details{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+.minecraft-card-detail span{display:block;font-size:11px;color:var(--muted,#6b7b8a);margin-bottom:4px}
+.minecraft-card-detail strong{overflow-wrap:anywhere;font-size:13px}
+.minecraft-card-actions{border-top:1px solid var(--border-color,rgba(120,140,160,.22));padding-top:14px;margin-top:14px}
+.minecraft-card-actions form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}
+.minecraft-card-actions label{font-size:11px;font-weight:700;display:block;margin-bottom:5px}
+.minecraft-card-actions input{width:100%;box-sizing:border-box}
+.minecraft-card-actions button{white-space:nowrap}
+.minecraft-status{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.04em;padding:4px 8px;border-radius:4px;background:rgba(38,150,100,.12);color:#26825c}
+.minecraft-status.revoked{background:rgba(160,70,70,.12);color:#b34c4c}
+@media(max-width:560px){.minecraft-card-actions form{grid-template-columns:1fr}.minecraft-card-actions button{width:100%}.minecraft-card-details{grid-template-columns:1fr 1fr}}
+</style>
+<div class="page-head">
+  <div><div class="eyebrow">MY BANKING</div><h1>Minecraft Cards</h1><p>Manage the MineBank cards issued for your CC:Tweaked terminals.</p></div>
+</div>
+{% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
+<section class="panel">
+  <div class="panel-title">Card management</div>
+  <p class="muted">Each card is independently linked to one of your MineBank accounts. Card credentials are never displayed in this portal.</p>
+  <div class="grid three">
+    <div><div class="muted">Cards issued</div><div class="big-number small">{{ cards|length }}</div></div>
+    <div><div class="muted">Active cards</div><div class="big-number small">{{ cards|selectattr('status','equalto','ACTIVE')|list|length }}</div></div>
+    <div><div class="muted">Revoked cards</div><div class="big-number small">{{ cards|selectattr('status','equalto','REVOKED')|list|length }}</div></div>
+  </div>
+</section>
+{% if cards %}
+<div class="minecraft-cards-grid">
+{% for card in cards %}
+  <section class="panel minecraft-card-panel">
+    <div class="minecraft-card-visual">
+      <div><small>MineBank · Minecraft</small><strong>{{ card.label }}</strong><div style="font-size:12px;margin-top:8px;opacity:.85">{{ card.account_number }}</div></div>
+      <div class="minecraft-card-diamond" aria-hidden="true">◆</div>
+    </div>
+    <div class="panel-title"><span>Card #{{ card.id }}</span><span class="minecraft-status{% if card.status=='REVOKED' %} revoked{% endif %}">{{ card.status }}</span></div>
+    <div class="minecraft-card-details">
+      <div class="minecraft-card-detail"><span>Linked account</span><strong>{{ card.account_type }} · {{ card.display_name }}</strong></div>
+      <div class="minecraft-card-detail"><span>Issued</span><strong>{{ card.issued_at.strftime('%d %b %Y, %H:%M') if card.issued_at else '—' }}</strong></div>
+      <div class="minecraft-card-detail"><span>Last activity</span><strong>{{ card.last_used_at.strftime('%d %b %Y, %H:%M') if card.last_used_at else 'Not used yet' }}</strong></div>
+      {% if card.status=='REVOKED' %}<div class="minecraft-card-detail"><span>Revoked</span><strong>{{ card.revoked_at.strftime('%d %b %Y, %H:%M') if card.revoked_at else '—' }}</strong></div>{% endif %}
+    </div>
+    {% if card.status=='ACTIVE' %}
+    <div class="minecraft-card-actions">
+      <p class="muted">Permanent revocation blocks this credential from future MineBank API requests. This cannot be undone.</p>
+      <form method="post" action="{{ url_for('minebank_minecraft_cards_page') }}" onsubmit="return confirm('Permanently revoke this Minecraft card? The credential will stop working immediately. This cannot be undone.');">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="action" value="revoke">
+        <input type="hidden" name="card_id" value="{{ card.id }}">
+        <div><label for="wallet-pin-{{ card.id }}">Wallet PIN</label><input id="wallet-pin-{{ card.id }}" type="password" name="wallet_pin" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="off" placeholder="6-digit PIN" required></div>
+        <button class="button" type="submit">Permanently revoke</button>
+      </form>
+    </div>
+    {% endif %}
+  </section>
+{% endfor %}
+</div>
+{% else %}
+<section class="panel"><div class="panel-title">No Minecraft cards yet</div><p class="muted">Issue a card from a MineBank CC:Tweaked branch terminal. Once issued, it will appear here and can be permanently revoked if lost or no longer needed.</p></section>
+{% endif %}
+<section class="panel">
+  <div class="panel-title">Minecraft payments and withdrawals</div>
+  <p class="muted">The current integration supports card authentication and balance checks. Payment and withdrawal execution is not enabled yet; it needs an atomic, idempotent ledger flow so retries cannot debit an account twice. This page does not expose or change card credentials.</p>
+</section>
+{% endblock %}
