@@ -48,6 +48,7 @@ write("Purchase amount in Emeralds: ")
 local amountText = read()
 local amount = tonumber(amountText)
 if not amount or amount % 1 ~= 0 or amount < 1 or amount > 1000000 then print("Enter a whole Emerald amount from 1 to 1,000,000."); pause(); return end
+amount = math.floor(amount)
 write("Short receipt description: ")
 local description = string.sub(read() or "Minecraft shop purchase", 1, 200)
 local key = tostring(os.epoch("utc")) .. "-" .. tostring(os.getComputerID()) .. "-" .. tostring(math.random(100000,999999))
