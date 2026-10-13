@@ -2025,6 +2025,78 @@ def minebank_support_thread_page(thread_id):
     return render_template("minebank_support_thread.html", thread=thread,
                            messages=messages, is_staff=False, portal_active="messages")
 
+
+@app.route("/portal/minecraft-cards", methods=["GET", "POST"])
+@require_login
+def minebank_minecraft_cards_page():
+    """List the signed-in customer's Minecraft cards; revocation is irreversible."""
+    client_id = session["minebank_client_id"]
+    from bank_lib.database import get_db_connection, release_db_connection
+    error = None
+    if request.method == "POST":
+        supplied_csrf = request.form.get("csrf_token", "")
+        if not supplied_csrf or not secrets.compare_digest(supplied_csrf, session.get("csrf", "")):
+            error = "Your security token expired. Reload the page and try again."
+        elif request.form.get("action") != "revoke":
+            error = "Unsupported card action."
+        else:
+            conn = None
+            try:
+                card_id = int(request.form.get("card_id", "0"))
+                wallet_pin = str(request.form.get("wallet_pin", ""))
+                if card_id <= 0:
+                    raise ValueError("Select a valid card.")
+                if len(wallet_pin) != 6 or not wallet_pin.isdigit():
+                    raise ValueError("Enter your six-digit Wallet PIN to revoke a card.")
+                pin_ok, pin_message = verify_wallet_pin(client_id, wallet_pin)
+                if not pin_ok:
+                    raise ValueError(pin_message or "Wallet PIN verification failed.")
+                conn = get_db_connection()
+                if conn is None:
+                    raise RuntimeError("MineBank is temporarily unavailable.")
+                with conn:
+                    with conn.cursor() as cur:
+                        cur.execute(
+                            """UPDATE minebank_minecraft_cards
+                               SET status='REVOKED', revoked_at=CURRENT_TIMESTAMP
+                               WHERE id=%s AND client_id=%s AND status='ACTIVE'
+                               RETURNING id, account_id""",
+                            (card_id, client_id),
+                        )
+                        revoked = cur.fetchone()
+                        if not revoked:
+                            raise ValueError("Active card not found. It may already have been revoked.")
+                        cur.execute(
+                            """INSERT INTO audit_events
+                               (actor_client_id,action,target_type,target_id,account_id,ip_address,context)
+                               VALUES(%s,'MINECRAFT_CARD_REVOKED','MINECRAFT_CARD',%s,%s,%s::inet,
+                                      jsonb_build_object('source','portal'))""",
+                            (client_id, str(revoked[0]), revoked[1], request.remote_addr),
+                        )
+                flash("Minecraft card permanently revoked. Its credential can no longer access MineBank.", "success")
+                return redirect(url_for("minebank_minecraft_cards_page"))
+            except ValueError as exc:
+                error = str(exc)
+            except Exception as exc:
+                app.logger.error("Minecraft card portal action failed: %s", type(exc).__name__)
+                error = "The card could not be revoked. Please try again later."
+            finally:
+                if conn is not None:
+                    release_db_connection(conn)
+    cards = execute_query_dict(
+        """SELECT c.id,c.label,c.status,c.issued_at,c.last_used_at,c.revoked_at,
+                  c.card_prefix,a.account_number,a.account_type,t.display_name
+           FROM minebank_minecraft_cards c
+           JOIN bank_accounts a ON a.id=c.account_id AND a.client_id=c.client_id
+           JOIN account_tiers_v2 t ON t.id=a.tier_id
+           JOIN bank_clients bc ON bc.id=c.client_id
+           WHERE c.client_id=%s AND bc.status='ACTIVE'
+           ORDER BY c.issued_at DESC,c.id DESC""",
+        (client_id,),
+    )
+    return render_template("minecraft_cards.html", cards=cards, error=error,
+                           portal_active="minecraft_cards")
+
 @app.route("/portal/security", methods=["GET","POST"])
 @require_login
 def minebank_security_page():
