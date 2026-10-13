@@ -2039,6 +2039,7 @@ def minebank_support_thread_page(thread_id):
 def minebank_minecraft_cards_page():
     """List customer Minecraft cards; revocation is irreversible."""
     client_id = session["minebank_client_id"]
+    from bank_lib.database import get_db_connection, release_db_connection
     error = None
     if request.method == "POST":
         supplied_csrf = request.form.get("csrf_token", "")
@@ -2058,7 +2059,6 @@ def minebank_minecraft_cards_page():
                 pin_ok, pin_message = verify_wallet_pin(client_id, wallet_pin)
                 if not pin_ok:
                     raise ValueError(pin_message or "Wallet PIN verification failed.")
-                from bank_lib.database import get_db_connection, release_db_connection
                 conn = get_db_connection()
                 if conn is None:
                     raise RuntimeError("MineBank is temporarily unavailable.")
