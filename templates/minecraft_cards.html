@@ -4,10 +4,10 @@
 <style>
 .minecraft-cards-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:14px}
 .minecraft-card-panel{min-width:0}
-.minecraft-card-visual{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:18px;border-radius:8px;background:linear-gradient(135deg,#102c27,#164b3d 65%,#1c5d49);color:#f2fff9;margin-bottom:14px;min-height:116px;box-sizing:border-box}
-.minecraft-card-visual small{display:block;opacity:.78;letter-spacing:.08em;text-transform:uppercase;font-size:10px}
+.minecraft-card-visual{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:18px;border-radius:8px;background:var(--panel-2,var(--card-bg,#f5f6f8));color:var(--text,#202833);border:1px solid var(--border-color,rgba(120,140,160,.22));margin-bottom:14px;min-height:116px;box-sizing:border-box}
+.minecraft-card-visual small{display:block;color:var(--muted,#6b7b8a);letter-spacing:.08em;text-transform:uppercase;font-size:10px}
 .minecraft-card-visual strong{display:block;font-size:17px;margin-top:8px;overflow-wrap:anywhere}
-.minecraft-card-diamond{font-size:25px;opacity:.9}
+.minecraft-card-diamond{font-size:25px;color:var(--accent,var(--primary,#53677d));opacity:.9}
 .minecraft-card-details{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
 .minecraft-card-detail span{display:block;font-size:11px;color:var(--muted,#6b7b8a);margin-bottom:4px}
 .minecraft-card-detail strong{overflow-wrap:anywhere;font-size:13px}
@@ -38,7 +38,7 @@
 {% for card in cards %}
   <section class="panel minecraft-card-panel">
     <div class="minecraft-card-visual">
-      <div><small>MineBank · Minecraft</small><strong>{{ card.label }}</strong><div style="font-size:12px;margin-top:8px;opacity:.85">{{ card.account_number }}</div></div>
+      <div><small>MineBank · Minecraft</small><strong>{{ card.label }}</strong><div style="font-size:12px;margin-top:8px;color:var(--muted,#6b7b8a)">{{ card.account_number }}</div></div>
       <div class="minecraft-card-diamond" aria-hidden="true">◆</div>
     </div>
     <div class="panel-title"><span>Card #{{ card.id }}</span><span class="minecraft-status{% if card.status=='REVOKED' %} revoked{% endif %}">{{ card.status }}</span></div>
