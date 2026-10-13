@@ -44,11 +44,7 @@ def ensure_security_schema():
                     WHERE table_schema='public' AND table_name='bank_clients'
                       AND column_name='login_blocked_until'
                 )
-                AND EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_schema='public' AND table_name='bank_clients'
-                      AND column_name='login_captcha_required'
-                )
+
         """)
         if rows and rows[0][0]:
             _SECURITY_SCHEMA_READY = True
@@ -103,7 +99,6 @@ def ensure_security_schema():
     execute_query("""ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS password_changed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP""", commit=True)
     execute_query("""ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS login_failed_attempts INTEGER NOT NULL DEFAULT 0""", commit=True)
     execute_query("""ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS login_blocked_until TIMESTAMPTZ""", commit=True)
-    execute_query("""ALTER TABLE bank_clients ADD COLUMN IF NOT EXISTS login_captcha_required BOOLEAN NOT NULL DEFAULT FALSE""", commit=True)
     if minecraft_request:
         print("Minecraft authentication stage=security_schema_migration_completed")
 
@@ -153,50 +148,40 @@ def security_event(client_id,event_type,severity="INFO",context=None):
                    (request.headers.get("X-Forwarded-For") or request.remote_addr or "")[:64],
                    request.headers.get("User-Agent","")[:500]),commit=True)
 
-def login_challenge_required(client_id=None):
-    if not client_id:
-        return bool(session.get("login_captcha_required"))
-    rows=execute_query_dict("SELECT login_captcha_required,login_blocked_until FROM bank_clients WHERE id=%s",(client_id,))
-    if not rows: return False
-    blocked=rows[0]["login_blocked_until"]
-    if blocked and blocked <= now():
-        execute_query("UPDATE bank_clients SET login_blocked_until=NULL WHERE id=%s",(client_id,),commit=True)
-        blocked=None
-    return bool(rows[0]["login_captcha_required"]) or bool(blocked and blocked>now())
-
-def set_login_challenge():
-    a=secrets.randbelow(8)+2; b=secrets.randbelow(8)+2
-    session["login_captcha_answer"]=str(a+b)
-    session["login_captcha_question"]=f"What is {a} + {b}?"
-    return session["login_captcha_question"]
-
-def check_login_challenge(answer):
-    expected=session.get("login_captcha_answer")
-    ok=bool(expected and secrets.compare_digest(str(answer or "").strip(),expected))
-    if ok:
-        session.pop("login_captcha_answer",None); session.pop("login_captcha_question",None)
-    return ok
-
 def record_login_failure(client_id=None, reason="INVALID_CREDENTIALS"):
+    """Record password failures without CAPTCHA state; retain timed lockouts."""
     if client_id:
-        rows=execute_query_dict("SELECT login_failed_attempts FROM bank_clients WHERE id=%s",(client_id,))
-        attempts=int(rows[0]["login_failed_attempts"] or 0)+1 if rows else 1
-        if attempts>=3:
-            duration=5 if attempts<6 else (15 if attempts<9 else 60)
-            execute_query("""UPDATE bank_clients SET login_failed_attempts=%s,login_captcha_required=TRUE,
-                             login_blocked_until=%s WHERE id=%s""",
-                         (attempts,now()+timedelta(minutes=duration),client_id),commit=True)
+        # Atomically increment the counter so concurrent failures cannot
+        # overwrite one another based on a stale SELECT result.
+        rows = execute_query("""
+            UPDATE bank_clients
+            SET login_failed_attempts = COALESCE(login_failed_attempts, 0) + 1,
+                login_blocked_until = CASE
+                    WHEN COALESCE(login_failed_attempts, 0) + 1 >= 3
+                    THEN CURRENT_TIMESTAMP + (
+                        CASE
+                            WHEN COALESCE(login_failed_attempts, 0) + 1 < 6 THEN INTERVAL '5 minutes'
+                            WHEN COALESCE(login_failed_attempts, 0) + 1 < 9 THEN INTERVAL '15 minutes'
+                            ELSE INTERVAL '60 minutes'
+                        END
+                    )
+                    ELSE login_blocked_until
+                END
+            WHERE id = %s
+            RETURNING login_failed_attempts, login_blocked_until
+        """, (client_id,), commit=True)
+        attempts = int(rows[0][0]) if rows else 1
+        if attempts >= 3:
+            duration = 5 if attempts < 6 else (15 if attempts < 9 else 60)
             security_event(client_id,"LOGIN_TEMP_BLOCK","HIGH",{"attempts":attempts,"minutes":duration,"reason":reason})
             return attempts, duration
-        execute_query("UPDATE bank_clients SET login_failed_attempts=%s,login_captcha_required=%s WHERE id=%s",
-                      (attempts,attempts>=2,client_id),commit=True)
-        security_event(client_id,"LOGIN_FAILURE","WARNING" if attempts>=2 else "INFO",{"attempts":attempts,"reason":reason})
+        security_event(client_id,"LOGIN_FAILURE","INFO",{"attempts":attempts,"reason":reason})
         return attempts,0
     security_event(None,"LOGIN_FAILURE","INFO",{"reason":reason})
     return 0,0
 
 def clear_login_failures(client_id):
-    execute_query("""UPDATE bank_clients SET login_failed_attempts=0,login_captcha_required=FALSE,
+    execute_query("""UPDATE bank_clients SET login_failed_attempts=0,
                      login_blocked_until=NULL,last_login=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
                      WHERE id=%s""",(client_id,),commit=True)
     security_event(client_id,"LOGIN_SUCCESS","INFO",{})
