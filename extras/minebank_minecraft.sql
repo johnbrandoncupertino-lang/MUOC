@@ -122,3 +122,6 @@ COMMENT ON TABLE minebank_minecraft_merchants IS
     'Trusted merchant terminal credentials. Only SHA-256 token hashes are stored; provision and rotate tokens out-of-band.';
 COMMENT ON TABLE minebank_minecraft_checkouts IS
     'Short-lived, merchant-authorized fixed-amount checkouts. Cardholders can pay a checkout but cannot change its amount.';
+
+ALTER TABLE minebank_minecraft_checkouts
+    ADD COLUMN IF NOT EXISTS request_hash CHAR(64);
