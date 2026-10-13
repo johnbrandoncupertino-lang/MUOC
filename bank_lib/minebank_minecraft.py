@@ -533,6 +533,11 @@ def _replay_operation(cur, client_id, key, op_type, request_hash):
     if old[0] != op_type or not hmac.compare_digest(str(old[1]), request_hash):
         raise ValueError("This Idempotency-Key was already used for a different request.")
     response = old[3] if isinstance(old[3], dict) else {}
+    if isinstance(old[3], str):
+        try:
+            response = __import__("json").loads(old[3])
+        except (TypeError, ValueError):
+            response = {}
     response = dict(response or {})
     response["idempotent_replay"] = True
     return jsonify(response), 200
