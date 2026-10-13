@@ -118,48 +118,61 @@ if not turtle then print("This ATM program must run on a turtle to dispense item
 
 local old, journalError = readJournal()
 if journalError then print(journalError); pause(); return end
-if old and old.state ~= "COMPLETE" then
+if old and old.state ~= "COMPLETE" and old.state ~= "REQUEST_PENDING" and old.state ~= "AUTHORIZED" then
   print("ATM RECONCILIATION REQUIRED")
-  print("An earlier withdrawal is not marked complete.")
+  print("Physical dispensing had started and cannot safely be replayed.")
   print("Withdrawal key: " .. tostring(old.key))
   print("State: " .. tostring(old.state))
-  print("The ATM will not dispense again automatically.")
   print("An operator must reconcile the physical item output and MineBank ledger.")
   pause(); return
 end
 
 local card, cardError = loadCard()
 if not card then print(cardError); pause(); return end
-write("Emeralds to withdraw (1-" .. MAX_WITHDRAWAL .. "): ")
-local amountText = read()
-local amount = tonumber(amountText)
-if not amount or amount % 1 ~= 0 or amount < 1 or amount > MAX_WITHDRAWAL then
-  print("Enter a whole Emerald amount within the permitted limit."); pause(); return
+
+local amount, key, journal, result
+if old and old.state == "REQUEST_PENDING" then
+  amount, key, journal = old.amount, old.key, old
+  print("Resuming the same pending request: " .. tostring(key))
+elseif old and old.state == "AUTHORIZED" then
+  amount, key, journal = old.amount, old.key, old
+  result = { transaction_id=old.transaction_id, withdrawal_id=old.withdrawal_id, amount=old.amount }
+  print("Resuming an authorized withdrawal: " .. tostring(key))
+else
+  write("Emeralds to withdraw (1-" .. MAX_WITHDRAWAL .. "): ")
+  local amountText = read()
+  amount = tonumber(amountText)
+  if not amount or amount % 1 ~= 0 or amount < 1 or amount > MAX_WITHDRAWAL then
+    print("Enter a whole Emerald amount within the permitted limit."); pause(); return
+  end
+  amount = math.floor(amount)
+  key = tostring(os.epoch("utc")) .. "-" .. tostring(os.getComputerID()) .. "-" .. tostring(math.random(100000,999999))
+  journal = { version=1, key=key, amount=amount, state="REQUEST_PENDING", created_at=os.epoch("utc") }
+  if not writeJournal(journal) then print("Could not persist the ATM journal. No request was sent."); pause(); return end
 end
-amount = math.floor(amount)
+
 if emeraldCount() < amount then
-  print("ATM inventory is short. Stock at least " .. amount .. " Emeralds before withdrawing."); pause(); return
+  print("ATM inventory is short. Stock at least " .. amount .. " Emeralds before resuming."); pause(); return
 end
 
-local key = tostring(os.epoch("utc")) .. "-" .. tostring(os.getComputerID()) .. "-" .. tostring(math.random(100000,999999))
-local journal = { version=1, key=key, amount=amount, state="REQUEST_PENDING", created_at=os.epoch("utc") }
-if not writeJournal(journal) then print("Could not persist the ATM journal. No request was sent."); pause(); return end
-
-print("")
-print("Requesting " .. amount .. " Emeralds from MineBank...")
-local result, err = apiPost("/withdrawals", card.credential, {amount=amount}, key)
-if not result then
-  print("Withdrawal not confirmed: " .. err)
-  print("The request key was saved. Do not start a new withdrawal until this one is reconciled.")
-  pause(); return
-end
-journal.state = "AUTHORIZED"
-journal.transaction_id = result.transaction_id
-journal.withdrawal_id = result.withdrawal_id
-if not writeJournal(journal) then
-  print("MineBank debited the balance, but the local ticket could not be saved.")
-  print("Do not dispense. Preserve the journal and contact the operator.")
-  pause(); return
+if journal.state == "REQUEST_PENDING" then
+  print("")
+  print("Requesting " .. amount .. " Emeralds from MineBank...")
+  local err
+  result, err = apiPost("/withdrawals", card.credential, {amount=amount}, key)
+  if not result then
+    print("Withdrawal not confirmed: " .. err)
+    print("The same request key is saved. Re-run to safely retry this exact request.")
+    pause(); return
+  end
+  journal.state = "AUTHORIZED"
+  journal.transaction_id = result.transaction_id
+  journal.withdrawal_id = result.withdrawal_id
+  if not writeJournal(journal) then
+    print("MineBank debited the balance, but the local ticket could not be saved.")
+    print("Do not dispense. Preserve the journal and contact the operator.")
+    pause(); return
+  end
 end
 
 print("MineBank debit confirmed: " .. tostring(result.transaction_id))
