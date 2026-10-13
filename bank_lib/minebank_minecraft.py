@@ -542,11 +542,14 @@ def create_merchant_checkout():
     key = _request_idempotency_key()
     if not token or not isinstance(data, dict) or not key:
         return jsonify(error="Merchant authorization, JSON body, and Idempotency-Key are required."), 400
-    try:
-        amount = int(data.get("amount"))
-    except (TypeError, ValueError, OverflowError):
+    raw_amount = data.get("amount")
+    if isinstance(raw_amount, bool) or not (
+        isinstance(raw_amount, int)
+        or (isinstance(raw_amount, str) and raw_amount.isascii() and raw_amount.isdigit())
+    ):
         return jsonify(error="Amount must be a whole Emerald integer."), 400
-    if isinstance(data.get("amount"), bool) or amount < 1 or amount > MAX_MINECRAFT_CHECKOUT:
+    amount = int(raw_amount)
+    if amount < 1 or amount > MAX_MINECRAFT_CHECKOUT:
         return jsonify(error="Checkout amount is outside the permitted range."), 400
     digest = hash_card_token(token)
     description = str(data.get("description") or "Minecraft shop purchase").strip()[:200]
@@ -693,7 +696,7 @@ def pay_merchant_checkout():
                 if cur.fetchone():
                     raise ValueError("Banking operations are temporarily locked for this client.")
                 monthly_used, period, limits = _validate_outgoing_limits(cur, card, amount)
-                max_balance = limits[3]
+                max_balance = checkout[11]
                 if max_balance is not None and int(checkout[12]) + amount > int(max_balance):
                     raise ValueError("Merchant account balance limit would be exceeded.")
                 txid = __import__("bank_lib.minebank_core", fromlist=["next_transaction_id"]).next_transaction_id(cur)
