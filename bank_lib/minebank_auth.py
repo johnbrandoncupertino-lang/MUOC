@@ -88,9 +88,28 @@ def login_client(email, password, captcha_answer=None):
                     return False,f"Login temporarily blocked. Try again in {seconds} seconds."
                 if row[7]:
                     if not check_login_challenge(captcha_answer):
-                        set_login_challenge()
-                        record_login_failure(client_id,"CAPTCHA_REQUIRED")
-                        return False,"Complete the security challenge before continuing."
+                        # A missing/incorrect CAPTCHA answer is not a wrong
+                        # password. Do not increment the password-failure
+                        # counter or write to bank_clients here: Minecraft
+                        # clients may retry concurrently, and that extra write
+                        # can contend with the lockout update itself.
+                        question = set_login_challenge()
+                        try:
+                            security_event(
+                                client_id,
+                                "CAPTCHA_REQUIRED",
+                                "WARNING",
+                                {"source": "minecraft", "reason": "challenge_missing_or_invalid"},
+                            )
+                        except Exception as exc:
+                            print(
+                                "MineBank CAPTCHA audit warning: "
+                                f"{type(exc).__name__}: {exc}"
+                            )
+                        return False, (
+                            "Complete the security challenge before continuing. "
+                            + question
+                        )
                 if row[4] == "CLOSED":
                     record_login_failure(client_id,"DISABLED_ACCOUNT")
                     return False,"This account is disabled. Please contact the bank."
