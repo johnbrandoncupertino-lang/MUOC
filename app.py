@@ -376,6 +376,12 @@ def require_role(*roles):
 def csrf_check():
     if request.method not in {"POST","PUT","PATCH","DELETE"}:
         return None
+    # Minecraft clients authenticate each request with a card/merchant token
+    # or explicit customer credentials; they do not use the browser session.
+    # Exempt only this dedicated API blueprint from browser-session CSRF checks.
+    # Endpoint-level bearer/credential validation remains mandatory.
+    if request.endpoint and request.endpoint.startswith("minebank_minecraft."):
+        return None
     if request.endpoint in {"minebank_login","minebank_register","api_setup","api_health"}:
         return None
     # Browser forms are same-origin portal actions; JSON/API writes still require the explicit header.
