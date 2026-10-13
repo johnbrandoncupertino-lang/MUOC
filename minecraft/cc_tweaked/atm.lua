@@ -19,13 +19,22 @@ local function writeJournal(value)
   if not h then return false end
   local ok = pcall(function() h.write(textutils.serializeJSON(value)); h.close() end)
   if not ok then pcall(function() h.close() end); fs.delete(JOURNAL .. ".tmp"); return false end
-  if fs.exists(JOURNAL) then fs.delete(JOURNAL) end
-  fs.move(JOURNAL .. ".tmp", JOURNAL)
+  local backup = JOURNAL .. ".bak"
+  if fs.exists(backup) then fs.delete(backup) end
+  if fs.exists(JOURNAL) then fs.move(JOURNAL, backup) end
+  local moved, moveError = pcall(function() fs.move(JOURNAL .. ".tmp", JOURNAL) end)
+  if not moved then return false end
+  if fs.exists(backup) then fs.delete(backup) end
   return true
 end
 
 local function readJournal()
-  if not fs.exists(JOURNAL) then return nil end
+  if not fs.exists(JOURNAL) then
+    if fs.exists(JOURNAL .. ".tmp") or fs.exists(JOURNAL .. ".bak") then
+      return nil, "ATM journal recovery files exist. Stop and reconcile manually."
+    end
+    return nil
+  end
   local h = fs.open(JOURNAL, "r")
   if not h then return nil, "The ATM journal cannot be opened." end
   local raw = h.readAll()
