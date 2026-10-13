@@ -2083,17 +2083,22 @@ def minebank_minecraft_cards_page():
             finally:
                 if conn is not None:
                     release_db_connection(conn)
-    cards = execute_query_dict(
-        """SELECT c.id,c.label,c.status,c.issued_at,c.last_used_at,c.revoked_at,
-                  c.card_prefix,a.account_number,a.account_type,t.display_name
-           FROM minebank_minecraft_cards c
-           JOIN bank_accounts a ON a.id=c.account_id AND a.client_id=c.client_id
-           JOIN account_tiers_v2 t ON t.id=a.tier_id
-           JOIN bank_clients bc ON bc.id=c.client_id
-           WHERE c.client_id=%s AND bc.status='ACTIVE'
-           ORDER BY c.issued_at DESC,c.id DESC""",
-        (client_id,),
-    )
+    try:
+        cards = execute_query_dict(
+            """SELECT c.id,c.label,c.status,c.issued_at,c.last_used_at,c.revoked_at,
+                      a.account_number,a.account_type,t.display_name
+               FROM minebank_minecraft_cards c
+               JOIN bank_accounts a ON a.id=c.account_id AND a.client_id=c.client_id
+               JOIN account_tiers_v2 t ON t.id=a.tier_id
+               WHERE c.client_id=%s
+               ORDER BY c.issued_at DESC,c.id DESC""",
+            (client_id,),
+        )
+    except Exception as exc:
+        app.logger.error("Minecraft card list failed: %s", type(exc).__name__)
+        cards = []
+        if not error:
+            error = "Minecraft card management is temporarily unavailable. Please try again later."
     return render_template("minecraft_cards.html", cards=cards, error=error,
                            portal_active="minecraft_cards")
 
