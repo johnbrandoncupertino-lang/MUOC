@@ -136,6 +136,7 @@ local amount = tonumber(amountText)
 if not amount or amount % 1 ~= 0 or amount < 1 or amount > MAX_WITHDRAWAL then
   print("Enter a whole Emerald amount within the permitted limit."); pause(); return
 end
+amount = math.floor(amount)
 if emeraldCount() < amount then
   print("ATM inventory is short. Stock at least " .. amount .. " Emeralds before withdrawing."); pause(); return
 end
