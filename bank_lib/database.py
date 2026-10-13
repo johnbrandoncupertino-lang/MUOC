@@ -11,6 +11,18 @@ import psycopg2.extras
 
 
 def database_url():
+    # Prefer Neon/Vercel's direct connection for Minecraft API requests when
+    # available. Pooler connections can be closed between connection setup
+    # and the first authentication query; other portal traffic keeps its
+    # existing URL precedence and connection behavior.
+    try:
+        from flask import has_request_context, request
+        if has_request_context() and request.path.startswith("/api/v1/minecraft/"):
+            direct_url = (os.environ.get("POSTGRES_URL_NON_POOLING") or "").strip()
+            if direct_url:
+                return direct_url
+    except (ImportError, RuntimeError):
+        pass
     return (
         os.environ.get("DATABASE_URL")
         or os.environ.get("POSTGRES_URL")
