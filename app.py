@@ -376,7 +376,15 @@ def require_role(*roles):
 def csrf_check():
     if request.method not in {"POST","PUT","PATCH","DELETE"}:
         return None
-    if request.endpoint in {"minebank_login","minebank_register","api_setup","api_health"}:
+    if request.endpoint in {
+        "minebank_login", "minebank_register", "api_setup", "api_health",
+        # These endpoints authenticate each request with the customer's login
+        # credentials and Wallet PIN. They are intended for non-browser clients
+        # and must not depend on a browser session's CSRF token.
+        "minebank_minecraft.list_customer_accounts",
+        "minebank_minecraft.issue_card",
+        "minebank_minecraft.revoke_card",
+    }:
         return None
     # Browser forms are same-origin portal actions; JSON/API writes still require the explicit header.
     if request.form and not request.headers.get("X-CSRF-Token"):
