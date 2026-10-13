@@ -77,6 +77,7 @@ def test_minecraft_api_rejects_plain_http_when_enabled(monkeypatch):
 
 def test_minecraft_withdrawal_requires_idempotency_key(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
     app.register_blueprint(minecraft_bp)
@@ -93,6 +94,7 @@ def test_minecraft_withdrawal_requires_idempotency_key(monkeypatch):
 
 def test_minecraft_withdrawal_rejects_non_integer_amounts(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
     app.register_blueprint(minecraft_bp)
@@ -112,6 +114,7 @@ def test_minecraft_withdrawal_rejects_non_integer_amounts(monkeypatch):
 
 def test_minecraft_merchant_checkout_rejects_fractional_amounts(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
     app.register_blueprint(minecraft_bp)
