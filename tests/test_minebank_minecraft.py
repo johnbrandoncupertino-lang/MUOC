@@ -127,3 +127,25 @@ def test_minecraft_merchant_checkout_rejects_fractional_amounts(monkeypatch):
         },
     )
     assert response.status_code == 400
+
+
+
+def test_minecraft_money_movement_requires_separate_feature_flag(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.delenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", raising=False)
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+    client = app.test_client()
+
+    response = client.post(
+        "/api/v1/minecraft/withdrawals",
+        json={"amount": 10},
+        headers={
+            "Authorization": "Bearer mbmc_" + "x" * 48,
+            "Idempotency-Key": "atm-test-2",
+            "X-Forwarded-Proto": "https",
+        },
+    )
+    assert response.status_code == 404
+    assert response.get_json()["error"] == "Minecraft transactions are disabled."
