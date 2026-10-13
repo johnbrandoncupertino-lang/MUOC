@@ -63,7 +63,10 @@ CREATE TABLE IF NOT EXISTS minebank_minecraft_operations (
         UNIQUE (client_id, idempotency_key),
     CONSTRAINT minebank_minecraft_operation_card_owner_fk
         FOREIGN KEY (card_id, client_id)
-        REFERENCES minebank_minecraft_cards(id, client_id)
+        REFERENCES minebank_minecraft_cards(id, client_id),
+    CONSTRAINT minebank_minecraft_operation_account_owner_fk
+        FOREIGN KEY (account_id, client_id)
+        REFERENCES bank_accounts(id, client_id)
 );
 
 CREATE INDEX IF NOT EXISTS minebank_minecraft_operations_client_idx
