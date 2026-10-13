@@ -8,16 +8,18 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from werkzeug.security import generate_password_hash
+from flask import session
 
 os.environ.setdefault("SECRET_KEY", "ci-test-secret")
 os.environ.setdefault("DATABASE_URL", "postgresql://postgres:test@localhost:5432/muoc_test")
 
-from bank_lib.database import ensure_minebank_schema, execute_query, execute_query_dict
+from bank_lib.database import ensure_minebank_schema, execute_query, execute_query_dict, get_db_connection, release_db_connection
 from bank_lib.minebank_auth import create_account, set_wallet_pin, verify_wallet_pin
+from bank_lib import minebank_minecraft as minecraft_api
+from bank_lib.minebank_minecraft import hash_card_token
 from bank_lib.minebank_core import (
     activate_credit,
     accrue_daily_credit_interest,
-    draw_credit,
     preview_transfer,
     transfer,
 )
@@ -26,6 +28,17 @@ from bank_lib.minebank_core import (
 @pytest.fixture(scope="session", autouse=True)
 def database():
     assert ensure_minebank_schema() is True
+    # Apply the additive Minecraft card migration only inside the disposable CI
+    # database; production migrations remain an explicit operator action.
+    migration_sql = (ROOT / "extras" / "minebank_minecraft.sql").read_text(encoding="utf-8")
+    migration_conn = get_db_connection()
+    assert migration_conn is not None
+    try:
+        with migration_conn:
+            with migration_conn.cursor() as migration_cur:
+                migration_cur.execute(migration_sql)
+    finally:
+        release_db_connection(migration_conn)
     execute_query(
         """
         TRUNCATE TABLE
@@ -159,8 +172,16 @@ def test_transfer_over_5000_is_pending_approval(accounts):
         fetch=False,
         commit=True,
     )
-    # Personal has a 1,000 Emerald daily limit, so use Personal Private for
-    # the approval-threshold test.
+    # Use a recipient tier that can accept an amount above the Personal
+    # account's 5,000 Emerald balance cap; this test targets approval logic.
+    recipient_id, recipient_number = create_account(bob, "BUSINESS", "BUSINESS")
+    execute_query(
+        "UPDATE bank_accounts SET balance=100 WHERE id=%s",
+        (recipient_id,),
+        fetch=False,
+        commit=True,
+    )
+    # Personal has a 1,000 Emerald daily limit, so use a Business Pro sender.
     private_id, private_number = create_account(alice, "BUSINESS", "BUSINESS_PRO")
     execute_query(
         "UPDATE bank_accounts SET balance=20000,last_outgoing_at=NULL WHERE id=%s",
@@ -170,7 +191,7 @@ def test_transfer_over_5000_is_pending_approval(accounts):
     )
     result = transfer(
         sender_account_id=private_id,
-        recipient_account_number=bob_number,
+        recipient_account_number=recipient_number,
         amount=5001,
         actor_client_id=alice,
         idempotency_key="ci-approval-5001",
@@ -186,15 +207,25 @@ def test_transfer_over_5000_is_pending_approval(accounts):
 
 
 def test_cashline_limits_and_daily_interest(accounts):
-    alice, _, alice_id, _, _, _ = accounts
+    alice, _, alice_id, _, _, bob_number = accounts
     execute_query("UPDATE bank_accounts SET balance=0 WHERE id=%s", (alice_id,), fetch=False, commit=True)
     activation = activate_credit(alice_id, 500)
     assert activation["credit_limit"] == 500
     assert activation["interest_annual_bps"] == 1830
     assert activation["monthly_activation_fee"] == 10
 
-    draw = draw_credit(alice_id, 300, actor_client_id=alice)
-    assert draw["available_credit"] == 200
+    # CashLine is drawn by selecting it as the transfer funding source;
+    # the ordinary account balance must not become negative.
+    payment = transfer(
+        sender_account_id=alice_id,
+        recipient_account_number=bob_number,
+        amount=300,
+        actor_client_id=alice,
+        funding_source="CASHLINE",
+        idempotency_key="ci-cashline-300",
+    )
+    assert payment["status"] == "COMPLETED"
+    assert payment["amount"] == 300
 
     execute_query(
         "UPDATE credit_facilities SET last_interest_at=%s WHERE account_id=%s",
@@ -208,7 +239,7 @@ def test_cashline_limits_and_daily_interest(accounts):
     balance = execute_query_dict(
         "SELECT balance FROM bank_accounts WHERE id=%s", (alice_id,)
     )[0]["balance"]
-    assert balance < 0
+    assert balance == 0
 
     with pytest.raises(ValueError, match="between 300 and 1800"):
         activate_credit(alice_id, 2000)
@@ -224,3 +255,109 @@ def test_web_smoke_routes_import_and_render():
     for path in ("/", "/about", "/login", "/portal/login", "/portal/register"):
         response = client.get(path, follow_redirects=False)
         assert response.status_code < 500, (path, response.status_code, response.get_data(as_text=True)[:500])
+
+
+def test_minecraft_card_issuance_read_and_revocation(accounts, monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    alice, bob, alice_account_id, _, bob_account_id, _ = accounts
+
+    # Exercise the real route/database operations while isolating credential
+    # verification from the portal's CAPTCHA and password hashing implementation.
+    def fake_login(email, password, captcha_answer=None):
+        if email == "alice@minebank.test" and password == "alice-password":
+            session["minebank_client_id"] = alice
+            session["minebank_role"] = "CLIENT"
+            return True, None
+        return False, "Invalid credentials."
+
+    monkeypatch.setattr(minecraft_api, "login_client", fake_login)
+    monkeypatch.setattr(minecraft_api, "verify_wallet_pin", lambda client_id, pin: (
+        (client_id == alice and pin == "123456"), None if pin == "123456" else "Invalid wallet PIN."
+    ))
+
+    from flask import Flask
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_api.minecraft_bp)
+    client = app.test_client()
+    secure_headers = {"X-Forwarded-Proto": "https"}
+
+    listed = client.post(
+        "/api/v1/minecraft/accounts",
+        json={"email": "alice@minebank.test", "password": "alice-password",
+              "wallet_pin": "123456"},
+        headers=secure_headers,
+    )
+    assert listed.status_code == 200, listed.get_json()
+    listed_accounts = listed.get_json()["accounts"]
+    assert [account["id"] for account in listed_accounts] == [alice_account_id]
+    assert listed_accounts[0]["balance"] == 2000
+
+    # A customer's credentials must not authorize another customer's account.
+    wrong_owner = client.post(
+        "/api/v1/minecraft/cards",
+        json={"email": "alice@minebank.test", "password": "alice-password",
+              "wallet_pin": "123456", "account_id": bob_account_id},
+        headers=secure_headers,
+    )
+    assert wrong_owner.status_code == 404
+
+    issued = client.post(
+        "/api/v1/minecraft/cards",
+        json={"email": "alice@minebank.test", "password": "alice-password",
+              "wallet_pin": "123456", "account_id": alice_account_id,
+              "label": "CI test card"},
+        headers=secure_headers,
+    )
+    assert issued.status_code == 201, issued.get_json()
+    payload = issued.get_json()
+    card_id = payload["card"]["id"]
+    token = payload["credential"]
+    assert token.startswith("mbmc_")
+
+    stored = execute_query_dict(
+        "SELECT card_token_hash,card_prefix,status FROM minebank_minecraft_cards WHERE id=%s",
+        (card_id,),
+    )[0]
+    assert stored["card_token_hash"] == hash_card_token(token)
+    assert stored["card_token_hash"] != token
+    assert stored["card_prefix"] == token[:16]
+    assert stored["status"] == "ACTIVE"
+
+    account_response = client.get(
+        "/api/v1/minecraft/account",
+        headers={**secure_headers, "Authorization": f"Bearer {token}"},
+    )
+    assert account_response.status_code == 200, account_response.get_json()
+    assert account_response.get_json()["account"]["balance"] == 2000
+    assert account_response.get_json()["account"]["currency"] == "emerald"
+
+    # Frozen accounts must not be exposed through a valid card.
+    execute_query(
+        "UPDATE bank_accounts SET status='FROZEN' WHERE id=%s",
+        (alice_account_id,), fetch=False, commit=True,
+    )
+    frozen = client.get(
+        "/api/v1/minecraft/account",
+        headers={**secure_headers, "Authorization": f"Bearer {token}"},
+    )
+    assert frozen.status_code == 403
+    execute_query(
+        "UPDATE bank_accounts SET status='ACTIVE' WHERE id=%s",
+        (alice_account_id,), fetch=False, commit=True,
+    )
+
+    revoked = client.post(
+        "/api/v1/minecraft/cards/revoke",
+        json={"email": "alice@minebank.test", "password": "alice-password",
+              "wallet_pin": "123456", "card_id": card_id},
+        headers=secure_headers,
+    )
+    assert revoked.status_code == 200, revoked.get_json()
+    assert revoked.get_json()["status"] == "REVOKED"
+
+    denied = client.get(
+        "/api/v1/minecraft/account",
+        headers={**secure_headers, "Authorization": f"Bearer {token}"},
+    )
+    assert denied.status_code == 401
