@@ -679,7 +679,7 @@ def pay_merchant_checkout():
                 cur.execute(
                     """SELECT x.id,x.merchant_id,x.amount,x.description,x.status,x.expires_at,
                               m.client_id,m.account_id,m.active,a.status,bc.status,
-                              t.max_balance,a.balance
+                              t.max_balance,a.balance,m.display_name
                        FROM minebank_minecraft_checkouts x
                        JOIN minebank_minecraft_merchants m ON m.id=x.merchant_id
                        JOIN bank_accounts a ON a.id=m.account_id AND a.client_id=m.client_id
@@ -738,7 +738,8 @@ def pay_merchant_checkout():
                 response_body = {
                     "status": "COMPLETED", "transaction_id": txid,
                     "checkout_id": str(checkout[0]), "amount": amount,
-                    "currency": "emerald", "merchant": checkout[3],
+                    "currency": "emerald", "merchant": checkout[13],
+                    "description": checkout[3],
                 }
                 _save_operation(cur, client_id=card[1], card_id=card[0], account_id=card[2],
                                 key=key, op_type="PAYMENT", request_hash=request_hash,
