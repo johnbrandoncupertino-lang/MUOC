@@ -300,7 +300,7 @@ def read_card_account():
                        JOIN account_tiers_v2 t ON t.id=a.tier_id
                        JOIN bank_clients bc ON bc.id=c.client_id
                        WHERE c.card_prefix=%s AND c.status='ACTIVE'
-                         AND (c.revoked_at IS NULL)
+                         AND c.revoked_at IS NULL AND bc.role='CLIENT'
                        LIMIT 5""",
                     (token[:16],),
                 )
@@ -442,6 +442,7 @@ def _card_row_for_update(cur, token):
            JOIN bank_accounts a ON a.id=c.account_id AND a.client_id=c.client_id
            JOIN bank_clients bc ON bc.id=c.client_id
            WHERE c.card_prefix=%s AND c.status='ACTIVE' AND c.revoked_at IS NULL
+             AND bc.role='CLIENT'
            ORDER BY c.id LIMIT 10 FOR UPDATE OF c,a,bc""",
         (token[:16],),
     )
@@ -570,7 +571,7 @@ def create_merchant_checkout():
                        JOIN bank_accounts a ON a.id=m.account_id AND a.client_id=m.client_id
                        JOIN bank_clients bc ON bc.id=m.client_id
                        JOIN account_tiers_v2 t ON t.id=a.tier_id
-                       WHERE m.token_hash=%s AND m.active=TRUE
+                       WHERE m.token_hash=%s AND m.active=TRUE AND bc.role='CLIENT'
                        FOR UPDATE OF m,a,bc""",
                     (digest,),
                 )
