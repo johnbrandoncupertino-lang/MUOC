@@ -361,3 +361,127 @@ def test_minecraft_card_issuance_read_and_revocation(accounts, monkeypatch):
         headers={**secure_headers, "Authorization": f"Bearer {token}"},
     )
     assert denied.status_code == 401
+
+
+
+def _insert_test_minecraft_card(client_id, account_id, token):
+    execute_query(
+        """INSERT INTO minebank_minecraft_cards
+           (client_id,account_id,card_prefix,card_token_hash,label)
+           VALUES(%s,%s,%s,%s,'transaction test card')""",
+        (client_id, account_id, token[:16], hash_card_token(token)),
+        fetch=False, commit=True,
+    )
+
+
+def test_minecraft_merchant_payment_is_atomic_and_idempotent(accounts, monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    alice, bob, alice_account_id, _, bob_account_id, _ = accounts
+    card_token = "mbmc_" + "p" * 48
+    merchant_token = "mbmerchant_" + "m" * 48
+    _insert_test_minecraft_card(alice, alice_account_id, card_token)
+    execute_query(
+        """INSERT INTO minebank_minecraft_merchants
+           (client_id,account_id,token_hash,display_name,active)
+           VALUES(%s,%s,%s,'CI Shop',TRUE)""",
+        (bob, bob_account_id, hash_card_token(merchant_token)),
+        fetch=False, commit=True,
+    )
+
+    from flask import Flask
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_api.minecraft_bp)
+    client = app.test_client()
+    secure = {"X-Forwarded-Proto": "https"}
+
+    checkout = client.post(
+        "/api/v1/minecraft/merchant/checkouts",
+        json={"amount": 100, "description": "CI shop item"},
+        headers={
+            **secure,
+            "Authorization": f"Bearer {merchant_token}",
+            "Idempotency-Key": "ci-checkout-1",
+        },
+    )
+    assert checkout.status_code == 201, checkout.get_json()
+    checkout_id = checkout.get_json()["checkout_id"]
+
+    headers = {
+        **secure,
+        "Authorization": f"Bearer {card_token}",
+        "Idempotency-Key": "ci-payment-1",
+    }
+    payment = client.post(
+        "/api/v1/minecraft/payments",
+        json={"checkout_id": checkout_id},
+        headers=headers,
+    )
+    assert payment.status_code == 200, payment.get_json()
+    assert payment.get_json()["amount"] == 100
+    assert payment.get_json()["status"] == "COMPLETED"
+
+    replay = client.post(
+        "/api/v1/minecraft/payments",
+        json={"checkout_id": checkout_id},
+        headers=headers,
+    )
+    assert replay.status_code == 200, replay.get_json()
+    assert replay.get_json()["idempotent_replay"] is True
+
+    balances = execute_query_dict(
+        "SELECT id,balance FROM bank_accounts WHERE id IN (%s,%s) ORDER BY id",
+        (alice_account_id, bob_account_id),
+    )
+    by_id = {row["id"]: row["balance"] for row in balances}
+    assert by_id[alice_account_id] == 1900
+    assert by_id[bob_account_id] == 200
+    rows = execute_query_dict(
+        "SELECT COUNT(*) AS n FROM ledger_transactions WHERE transaction_type='MINECRAFT_PAYMENT'"
+    )
+    assert rows[0]["n"] == 1
+
+
+def test_minecraft_atm_withdrawal_is_atomic_and_idempotent(accounts, monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    alice, _, alice_account_id, _, _, _ = accounts
+    card_token = "mbmc_" + "w" * 48
+    _insert_test_minecraft_card(alice, alice_account_id, card_token)
+
+    from flask import Flask
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_api.minecraft_bp)
+    client = app.test_client()
+    headers = {
+        "X-Forwarded-Proto": "https",
+        "Authorization": f"Bearer {card_token}",
+        "Idempotency-Key": "ci-atm-1",
+    }
+
+    withdrawal = client.post(
+        "/api/v1/minecraft/withdrawals",
+        json={"amount": 64},
+        headers=headers,
+    )
+    assert withdrawal.status_code == 200, withdrawal.get_json()
+    assert withdrawal.get_json()["items"] == 64
+
+    replay = client.post(
+        "/api/v1/minecraft/withdrawals",
+        json={"amount": 64},
+        headers=headers,
+    )
+    assert replay.status_code == 200, replay.get_json()
+    assert replay.get_json()["idempotent_replay"] is True
+
+    balance = execute_query_dict(
+        "SELECT balance FROM bank_accounts WHERE id=%s", (alice_account_id,)
+    )[0]["balance"]
+    assert balance == 1936
+    rows = execute_query_dict(
+        "SELECT COUNT(*) AS n FROM ledger_transactions WHERE transaction_type='WITHDRAWAL'"
+    )
+    assert rows[0]["n"] == 1
