@@ -134,6 +134,8 @@ def list_customer_accounts():
         )
         return insecure
 
+    request_id = request.headers.get("x-vercel-id", "")[:100] or "unavailable"
+    current_app.logger.info("Minecraft accounts stage=request_received vercel_id=%s", request_id)
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         current_app.logger.warning(
@@ -143,12 +145,14 @@ def list_customer_accounts():
             request.content_length,
         )
         return jsonify(error="A JSON request body is required."), 400
+    current_app.logger.info("Minecraft accounts stage=customer_authentication_started vercel_id=%s", request_id)
     client_id, failure = _authenticate_player(data)
     if failure:
         current_app.logger.warning(
-            "Minecraft accounts request rejected during customer authentication."
+            "Minecraft accounts stage=customer_authentication_rejected vercel_id=%s", request_id
         )
         return failure
+    current_app.logger.info("Minecraft accounts stage=customer_authenticated vercel_id=%s", request_id)
 
     try:
         pin = str(data.get("wallet_pin", ""))
@@ -160,16 +164,21 @@ def list_customer_accounts():
                 pin.isdigit(),
             )
             return jsonify(error="Wallet PIN must contain exactly six digits."), 400
+        current_app.logger.info("Minecraft accounts stage=wallet_pin_verification_started vercel_id=%s", request_id)
         pin_ok, pin_message = verify_wallet_pin(client_id, pin)
         if not pin_ok:
+            current_app.logger.warning("Minecraft accounts stage=wallet_pin_verification_rejected vercel_id=%s", request_id)
             return jsonify(error=pin_message or "Wallet PIN verification failed."), 401
+        current_app.logger.info("Minecraft accounts stage=wallet_pin_verified vercel_id=%s", request_id)
 
+        current_app.logger.info("Minecraft accounts stage=account_database_connection_started vercel_id=%s", request_id)
         conn = get_db_connection()
         if conn is None:
             return jsonify(error="MineBank is temporarily unavailable."), 503
         try:
             with conn:
                 with conn.cursor() as cur:
+                    current_app.logger.info("Minecraft accounts stage=account_query_started vercel_id=%s", request_id)
                     cur.execute(
                         """SELECT a.id,a.account_number,a.account_type,t.display_name,
                                   a.balance,a.status
@@ -182,6 +191,8 @@ def list_customer_accounts():
                            ORDER BY a.created_at,a.id""",
                         (client_id,),
                     )
+                    rows = cur.fetchall()
+                    current_app.logger.info("Minecraft accounts stage=account_query_completed vercel_id=%s account_count=%d", request_id, len(rows))
                     accounts = [
                         {
                             "id": row[0],
@@ -192,8 +203,9 @@ def list_customer_accounts():
                             "status": row[5],
                             "currency": "emerald",
                         }
-                        for row in cur.fetchall()
+                        for row in rows
                     ]
+            current_app.logger.info("Minecraft accounts stage=response_ready vercel_id=%s account_count=%d", request_id, len(accounts))
             return jsonify(accounts=accounts)
         finally:
             release_db_connection(conn)
@@ -201,7 +213,9 @@ def list_customer_accounts():
         current_app.logger.error("Minecraft account listing failed: %s", type(exc).__name__)
         return jsonify(error="MineBank account data is temporarily unavailable."), 503
     finally:
+        current_app.logger.info("Minecraft accounts stage=session_cleanup_started vercel_id=%s", request_id)
         _clear_temporary_login_session()
+        current_app.logger.info("Minecraft accounts stage=request_cleanup_completed vercel_id=%s", request_id)
 
 
 @minecraft_bp.post("/cards")
