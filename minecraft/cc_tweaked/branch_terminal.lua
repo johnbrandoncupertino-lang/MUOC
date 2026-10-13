@@ -18,35 +18,55 @@ local function secret(prompt)
 end
 
 local function requestJson(url, body, headers)
-  local response, err, failedResponse = http.post(
+  local requestOk, requestErr = http.request(
     url,
     textutils.serializeJSON(body),
     headers or { ["Content-Type"] = "application/json" }
   )
-
-  -- CC:Tweaked can return non-2xx HTTP responses as the third result.
-  -- Read that response so the actual MineBank error is not hidden as "Bad Request".
-  if not response and failedResponse then
-    response = failedResponse
-  end
-  if not response then
-    return nil, tostring(err or "The server could not be reached.")
+  if requestOk == false then
+    return nil, tostring(requestErr or "The HTTP request could not be started.")
   end
 
-  local status = response.getResponseCode and response.getResponseCode() or 200
-  local raw = response.readAll()
-  response.close()
+  -- Use the asynchronous HTTP events because CC:Tweaked may hide the response
+  -- body when http.post receives a non-2xx status.
+  while true do
+    local event, eventUrl, first, second = os.pullEvent()
+    if eventUrl == url and event == "http_success" then
+      local response = first
+      local status = response.getResponseCode and response.getResponseCode() or 200
+      local raw = response.readAll()
+      response.close()
 
-  local ok, decoded = pcall(textutils.unserializeJSON, raw)
-  if not ok or type(decoded) ~= "table" then
-    local detail = tostring(raw or ""):gsub("[%c]", " "):sub(1, 240)
-    return nil, "MineBank returned a non-JSON response (HTTP " .. tostring(status) .. "): " .. detail
+      local ok, decoded = pcall(textutils.unserializeJSON, raw)
+      if not ok or type(decoded) ~= "table" then
+        local detail = tostring(raw or ""):gsub("[%c]", " "):sub(1, 240)
+        return nil, "MineBank returned a non-JSON response (HTTP " .. tostring(status) .. "): " .. detail
+      end
+      if status < 200 or status >= 300 then
+        local message = tostring(decoded.error or "The server rejected the request.")
+        return nil, message .. " (HTTP " .. tostring(status) .. ")"
+      end
+      if decoded.error then
+        return nil, tostring(decoded.error)
+      end
+      return decoded, nil
+    elseif eventUrl == url and event == "http_failure" then
+      local message = tostring(first or "HTTP request failed.")
+      local response = second
+      if response then
+        local status = response.getResponseCode and response.getResponseCode() or "unknown"
+        local raw = response.readAll()
+        response.close()
+        local ok, decoded = pcall(textutils.unserializeJSON, raw)
+        if ok and type(decoded) == "table" and decoded.error then
+          return nil, tostring(decoded.error) .. " (HTTP " .. tostring(status) .. ")"
+        end
+        local detail = tostring(raw or ""):gsub("[%c]", " "):sub(1, 240)
+        return nil, message .. " (HTTP " .. tostring(status) .. "): " .. detail
+      end
+      return nil, message
+    end
   end
-  if status < 200 or status >= 300 then
-    local message = tostring(decoded.error or "The server rejected the request.")
-    return nil, message .. " (HTTP " .. tostring(status) .. ")"
-  end
-  return decoded, nil
 end
 
 local function getJson(url, token)
