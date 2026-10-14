@@ -378,15 +378,13 @@ def test_minecraft_merchant_payment_is_atomic_and_idempotent(accounts, monkeypat
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
     alice, bob, alice_account_id, _, bob_account_id, _ = accounts
+    execute_query("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",
+                  (alice,), fetch=False, commit=True)
     card_token = "mbmc_" + "p" * 48
     merchant_token = "mbmerchant_" + "m" * 48
     _insert_test_minecraft_card(alice, alice_account_id, card_token)
     merchant_account_id, _ = create_account(bob, "BUSINESS", "BUSINESS")
     execute_query("UPDATE bank_accounts SET balance=100 WHERE id=%s", (merchant_account_id,), fetch=False, commit=True)
-    execute_query(
-        "INSERT INTO minebank_business_members(account_id,client_id,role) VALUES(%s,%s,'OWNER')",
-        (merchant_account_id, bob), fetch=False, commit=True,
-    )
     execute_query(
         """INSERT INTO minebank_minecraft_merchants
            (client_id,account_id,token_hash,display_name,active)
@@ -453,6 +451,8 @@ def test_minecraft_atm_withdrawal_is_atomic_and_idempotent(accounts, monkeypatch
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
     alice, _, alice_account_id, _, _, _ = accounts
+    execute_query("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",
+                  (alice,), fetch=False, commit=True)
     card_token = "mbmc_" + "w" * 48
     _insert_test_minecraft_card(alice, alice_account_id, card_token)
 
