@@ -1,6 +1,15 @@
 -- MineBank shared CC:Tweaked terminal utilities.
 -- Save beside the MineBank programs as minebank_ui.lua.
 local M = {}
+-- Use an attached monitor as the primary display when available. Keyboard input
+-- still comes from the computer, while terminal output is redirected to the monitor.
+if peripheral and peripheral.find and term and term.redirect then
+  local monitor = peripheral.find("monitor")
+  if monitor then
+    pcall(function() monitor.setTextScale(0.5) end)
+    pcall(function() term.redirect(monitor) end)
+  end
+end
 M.API_BASE = "https://minebanksecurearea.vercel.app/api/v1/minecraft"
 M.CARD_FILE = "minebank.card"
 
