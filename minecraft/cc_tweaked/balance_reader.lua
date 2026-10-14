@@ -4,6 +4,8 @@
 
 local API_BASE = "https://minebanksecurearea.vercel.app/api/v1/minecraft"
 local CARD_FILE = "minebank.card"
+local ui = dofile("minebank_ui.lua")
+ui.API_BASE = API_BASE
 
 local function pause()
   print("")
@@ -37,11 +39,8 @@ local function loadCard()
   return card, nil
 end
 
-term.clear()
-term.setCursorPos(1, 1)
-print("MineBank | Account reader")
-print("The New Bank")
-print("------------------------------")
+ui.clear()
+ui.header("ACCOUNT READER","Live balance and card verification")
 
 if not API_BASE:match("^https://") then
   print("SECURITY ERROR: API_BASE must use HTTPS.")
