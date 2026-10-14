@@ -10,8 +10,7 @@ ui.API_BASE = API_BASE
 local function pause() ui.pause() end
 
 local function secret(prompt)
-  write(prompt)
-  return read("*")
+  return ui.secret(prompt)
 end
 
 local function requestJson(url, body, headers)
