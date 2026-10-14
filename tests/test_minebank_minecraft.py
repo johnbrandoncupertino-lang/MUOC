@@ -239,3 +239,21 @@ def test_minecraft_self_revoke_requires_explicit_confirmation(monkeypatch):
     )
     assert response.status_code == 400
     assert "confirmation" in response.get_json()["error"].lower()
+
+
+def test_minecraft_deposit_requires_trusted_atm_credential(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.delenv("MINEBANK_MINECRAFT_ATM_TOKEN", raising=False)
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/minecraft/deposits",
+        json={"amount": 10, "wallet_pin": "123456"},
+        headers={"Authorization": "Bearer mbmc_" + "x" * 48,
+                 "Idempotency-Key": "atm-machine-required", "X-Forwarded-Proto": "https"},
+    )
+    assert response.status_code == 401
+    assert "trusted ATM credential" in response.get_json()["error"]
