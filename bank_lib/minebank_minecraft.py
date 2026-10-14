@@ -933,6 +933,8 @@ def minecraft_player_transfer():
                                FROM bank_accounts WHERE account_number=%s FOR UPDATE""", (recipient_number,))
                 recipient = cur.fetchone()
                 if not recipient or recipient[6] != "ACTIVE": raise ValueError("Recipient account was not found or is not active.")
+                if sender[6] == "BUSINESS" or recipient[3] == "BUSINESS":
+                    raise ValueError("Business-account transfers must be completed through the MineBank portal, where business permissions and approvals are enforced.")
                 if int(recipient[0]) == int(sender[2]): raise ValueError("You cannot transfer to the same account.")
                 if int(sender[8]) < amount: raise ValueError("Insufficient MineBank Balance. CashLine cannot be used for transfers.")
                 cur.execute("SELECT COALESCE(system_suspended,FALSE) FROM settings ORDER BY id LIMIT 1")
@@ -1089,4 +1091,45 @@ def read_merchant_checkout(checkout_id):
     except Exception as exc:
         current_app.logger.error("Minecraft checkout status failed: %s", type(exc).__name__)
         return jsonify(error="Checkout status is temporarily unavailable."), 503
+    finally: release_db_connection(conn)
+
+
+
+@minecraft_bp.post("/cards/revoke-self")
+def revoke_current_minecraft_card():
+    """Revoke the inserted floppy card after a fresh PIN and explicit confirmation."""
+    unavailable = _feature_unavailable()
+    if unavailable: return unavailable
+    insecure = _transport_unavailable()
+    if insecure: return insecure
+    token = _authorized_card_token()
+    data = request.get_json(silent=True)
+    if not token or not isinstance(data, dict):
+        return jsonify(error="Card credential and JSON body are required."), 400
+    if data.get("confirm") is not True:
+        return jsonify(error="Explicit confirmation is required to revoke this card."), 400
+    pin_ok, pin_message = _verify_card_pin(token, data.get("wallet_pin"))
+    if not pin_ok: return jsonify(error=pin_message or "Wallet PIN verification failed."), 401
+    conn = get_db_connection()
+    if conn is None: return jsonify(error="MineBank is temporarily unavailable."), 503
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                client_id = _client_id_for_card_token(cur, token)
+                if client_id is None: raise PermissionError("Card credential is invalid or already revoked.")
+                cur.execute("""UPDATE minebank_minecraft_cards
+                               SET status='REVOKED',revoked_at=CURRENT_TIMESTAMP
+                               WHERE client_id=%s AND card_prefix=%s AND status='ACTIVE' AND revoked_at IS NULL
+                               RETURNING id,account_id""", (client_id, token[:16]))
+                row = cur.fetchone()
+                if not row: raise PermissionError("Card credential is invalid or already revoked.")
+                from bank_lib.minebank_core import audit_event
+                audit_event(cur, actor_client_id=client_id, action="MINECRAFT_CARD_REVOKED",
+                    target_type="MINECRAFT_CARD", target_id=str(row[0]), account_id=row[1],
+                    ip_address=request.remote_addr, context={"source":"minecraft","method":"self_service"})
+        return jsonify(card_id=row[0],status="REVOKED",message="This floppy card is now revoked.")
+    except PermissionError as exc: return jsonify(error=str(exc)), 401
+    except Exception as exc:
+        current_app.logger.error("Minecraft self-service card revocation failed: %s", type(exc).__name__)
+        return jsonify(error="Card revocation is temporarily unavailable."), 503
     finally: release_db_connection(conn)
