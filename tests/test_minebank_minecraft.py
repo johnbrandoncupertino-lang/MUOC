@@ -78,6 +78,7 @@ def test_minecraft_api_rejects_plain_http_when_enabled(monkeypatch):
 def test_minecraft_withdrawal_requires_idempotency_key(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
     app.register_blueprint(minecraft_bp)
@@ -86,7 +87,7 @@ def test_minecraft_withdrawal_requires_idempotency_key(monkeypatch):
     response = client.post(
         "/api/v1/minecraft/withdrawals",
         json={"amount": 10},
-        headers={"Authorization": "Bearer mbmc_" + "x" * 48, "X-Forwarded-Proto": "https"},
+        headers={"Authorization": "Bearer mbmc_" + "x" * 48, "X-Forwarded-Proto": "https", "X-MineBank-ATM-Token": "atm-test-token-" + "a" * 40},
     )
     assert response.status_code == 400
     assert "Idempotency-Key" in response.get_json()["error"]
@@ -95,6 +96,7 @@ def test_minecraft_withdrawal_requires_idempotency_key(monkeypatch):
 def test_minecraft_withdrawal_rejects_non_integer_amounts(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
     app.register_blueprint(minecraft_bp)
@@ -106,7 +108,7 @@ def test_minecraft_withdrawal_rejects_non_integer_amounts(monkeypatch):
         headers={
             "Authorization": "Bearer mbmc_" + "x" * 48,
             "Idempotency-Key": "atm-test-1",
-            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Proto": "https", "X-MineBank-ATM-Token": "atm-test-token-" + "a" * 40,
         },
     )
     assert response.status_code == 400
@@ -157,6 +159,7 @@ def test_minecraft_money_movement_requires_separate_feature_flag(monkeypatch):
 def test_minecraft_withdrawal_requires_wallet_pin(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
     app.register_blueprint(minecraft_bp)
@@ -165,7 +168,7 @@ def test_minecraft_withdrawal_requires_wallet_pin(monkeypatch):
         "/api/v1/minecraft/withdrawals",
         json={"amount": 10},
         headers={"Authorization": "Bearer mbmc_" + "x" * 48,
-                 "Idempotency-Key": "atm-pin-required", "X-Forwarded-Proto": "https"},
+                 "Idempotency-Key": "atm-pin-required", "X-Forwarded-Proto": "https", "X-MineBank-ATM-Token": "atm-test-token-" + "a" * 40},
     )
     assert response.status_code == 401
     assert "Wallet PIN" in response.get_json()["error"]
@@ -174,6 +177,7 @@ def test_minecraft_withdrawal_requires_wallet_pin(monkeypatch):
 def test_minecraft_deposit_requires_wallet_pin(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
     app.register_blueprint(minecraft_bp)
@@ -182,7 +186,7 @@ def test_minecraft_deposit_requires_wallet_pin(monkeypatch):
         "/api/v1/minecraft/deposits",
         json={"amount": 10},
         headers={"Authorization": "Bearer mbmc_" + "x" * 48,
-                 "Idempotency-Key": "atm-deposit-pin-required", "X-Forwarded-Proto": "https"},
+                 "Idempotency-Key": "atm-deposit-pin-required", "X-Forwarded-Proto": "https", "X-MineBank-ATM-Token": "atm-test-token-" + "a" * 40},
     )
     assert response.status_code == 401
     assert "Wallet PIN" in response.get_json()["error"]
