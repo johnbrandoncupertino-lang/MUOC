@@ -63,11 +63,16 @@ print("")
 print("Ask the customer to insert their MineBank card floppy.")
 local card, cardError = readCard()
 if not card then print(cardError); pause(); return end
+print("Merchant: " .. tostring(checkout.merchant or "MineBank merchant"))
+print("Exact amount: " .. tostring(checkout.amount) .. " Emeralds")
 write("Customer confirms payment? Type PAY: ")
 if read() ~= "PAY" then print("Cancelled. No payment request sent."); pause(); return end
+write("Customer Wallet PIN (6 digits): ")
+local walletPin = read("*")
+if not walletPin or not walletPin:match("^%d%d%d%d%d%d$") then print("PIN must contain six digits."); pause(); return end
 local paymentKey = "checkout-" .. tostring(checkout.checkout_id)
 print("Contacting MineBank...")
-local paid, payError = post("/payments", card.credential, {checkout_id=tostring(checkout.checkout_id)}, paymentKey)
+local paid, payError = post("/payments", card.credential, {checkout_id=tostring(checkout.checkout_id), wallet_pin=walletPin}, paymentKey)
 if not paid then
   print("Payment not confirmed: " .. payError)
   print("Check MineBank transaction history before retrying.")
