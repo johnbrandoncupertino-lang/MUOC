@@ -107,13 +107,6 @@ if old and old.state=="DISPENSE_STARTED" then
   print("The machine will not dispense it again automatically.")
   print("Inspect stock/output and ledger, then resolve manually.")
   ui.pause(); return
-elseif old and old.state~="COMPLETE" then
-  ui.clear(); ui.header("ORDER RECOVERY REQUIRED")
-  print("An unfinished order exists: "..tostring(old.checkout_id or old.key))
-  print("State: "..tostring(old.state))
-  print("The machine will not create a new checkout or dispense again automatically.")
-  print("Check the original MineBank checkout status and reconcile before continuing.")
-  ui.pause(); return
 elseif old and old.state=="PAID" then
   ui.clear(); ui.header("RECOVER PAID ORDER")
   print("Order "..tostring(old.checkout_id).." is paid and not yet marked as dispensed.")
@@ -122,6 +115,13 @@ elseif old and old.state=="PAID" then
   if read()~="DISPENSE" then return end
   local ok,err=dispense(cfg,old)
   ui.message(ok and "Order fulfilled." or err,ok)
+  ui.pause(); return
+elseif old and old.state~="COMPLETE" then
+  ui.clear(); ui.header("ORDER RECOVERY REQUIRED")
+  print("An unfinished order exists: "..tostring(old.checkout_id or old.key))
+  print("State: "..tostring(old.state))
+  print("The machine will not create a new checkout or dispense again automatically.")
+  print("Check the original MineBank checkout status and reconcile before continuing.")
   ui.pause(); return
 end
 
