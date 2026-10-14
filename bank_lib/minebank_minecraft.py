@@ -450,6 +450,13 @@ def _verify_card_pin(token, pin):
         release_db_connection(conn)
 
 
+def _atm_authorized():
+    """Only a configured trusted ATM may create physical deposits or withdrawals."""
+    expected = os.environ.get("MINEBANK_MINECRAFT_ATM_TOKEN", "").strip()
+    supplied = request.headers.get("X-MineBank-ATM-Token", "").strip()
+    return bool(expected and supplied and hmac.compare_digest(expected, supplied))
+
+
 def _request_idempotency_key():
     key = str(request.headers.get("Idempotency-Key", "")).strip()
     if not key or len(key) > 128 or not key.isascii() or not all(
@@ -806,6 +813,8 @@ def withdraw_emerald_items():
     insecure = _transport_unavailable()
     if insecure:
         return insecure
+    if not _atm_authorized():
+        return jsonify(error="A trusted ATM credential is required."), 401
     token = _authorized_card_token()
     data = request.get_json(silent=True)
     key = _request_idempotency_key()
@@ -980,11 +989,13 @@ def minecraft_player_transfer():
 
 @minecraft_bp.post("/deposits")
 def minecraft_emerald_deposit():
-    """Credit only emeralds the ATM has already secured in its deposit escrow."""
+    """Credit only emeralds the trusted ATM has already secured in its deposit escrow."""
     unavailable = _transactions_unavailable()
     if unavailable: return unavailable
     insecure = _transport_unavailable()
     if insecure: return insecure
+    if not _atm_authorized():
+        return jsonify(error="A trusted ATM credential is required."), 401
     token = _authorized_card_token()
     data = request.get_json(silent=True)
     key = _request_idempotency_key()
