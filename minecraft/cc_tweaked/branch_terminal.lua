@@ -4,6 +4,8 @@
 
 local API_BASE = "https://muoc-pietroaccordi09-4057.vercel.app/api/v1/minecraft"
 local CARD_FILE = "minebank.card"
+local ui = dofile("minebank_ui.lua")
+ui.API_BASE = API_BASE
 
 local function pause()
   print("")
@@ -81,14 +83,27 @@ local function getDriveAndMount()
   return drive, mount, nil
 end
 
-term.clear()
-term.setCursorPos(1, 1)
-print("MineBank | Card issuance")
-print("The New Bank")
-print("------------------------------")
-print("This terminal requires an HTTPS MineBank API.")
-print("Your password and Wallet PIN will not be stored.")
+ui.clear()
+ui.header("BANK ASSISTANT", "Card linking • basic help • secure setup")
+print("1) Link / issue a MineBank floppy card")
+print("2) Frequently asked questions")
+print("3) Exit")
+write("> ")
+local action = tonumber(read())
+if action == 2 then
+  ui.clear(); ui.header("BANK ASSISTANT", "Frequently asked questions")
+  print("Cards: your floppy stores a revocable card credential, not your password or PIN.")
+  print("Lost card: use the ATM self-service revoke flow or revoke it in the portal.")
+  print("Balance: use the ATM or card reader for a live server check.")
+  print("Payments: insert the card only when the trusted merchant terminal asks.")
+  print("Security: never share your floppy, Wallet PIN or MineBank password.")
+  print("Advanced transfers, account settings and credit products remain on the portal.")
+  pause(); return
+elseif action ~= 1 then
+  return
+end
 print("")
+print("Your password and Wallet PIN are used only for this request and are not stored.")
 
 if not API_BASE:match("^https://") then
   print("SECURITY ERROR: API_BASE must use HTTPS.")
