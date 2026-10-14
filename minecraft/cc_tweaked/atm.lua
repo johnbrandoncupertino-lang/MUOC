@@ -103,6 +103,7 @@ local function draw(cfg)
     "Recent transactions",
     "Revoke floppy card",
     "Diagnostics",
+    "Resume pending operation",
     "Exit"
   }, "Touch a service. Physical Emeralds = MineBank Emeralds.")
 end
@@ -337,6 +338,36 @@ local function runRevoke()
   ui.pause()
 end
 
+local function runRecovery()
+  local order=load(JOURNAL)
+  if not order or order.state=="COMPLETE" or order.state=="CANCELLED" then
+    ui.message("No unfinished ATM operation needs recovery.",true); ui.pause(); return
+  end
+  if order.state=="CORRUPT" then
+    ui.message("The ATM journal is damaged. Stop money movement and ask the operator to inspect the journal backups.",false); ui.pause(); return
+  end
+  local summary=tostring(order.kind or "UNKNOWN").." • "..tostring(order.amount or "?").." Emeralds • "..tostring(order.state or "UNKNOWN")
+  local action=ui.choose("OPERATION RECOVERY",{"Resume the same operation","Cancel safe pre-movement operation","Return to ATM"},summary)
+  if action==1 then
+    if order.kind=="WITHDRAWAL" then runWithdrawal()
+    elseif order.kind=="DEPOSIT" then runDeposit()
+    elseif order.kind=="TRANSFER" then runTransfer()
+    else ui.message("Unknown journal type. Operator reconciliation is required.",false); ui.pause() end
+  elseif action==2 then
+    if order.kind=="DEPOSIT" and order.state=="ESCROW_PENDING" and countEmeralds(depositInv)>=tonumber(order.amount or 0) then
+      local confirm=ui.choose("CANCEL DEPOSIT",{"Cancel unstarted deposit","Keep pending"},"Confirm that the Emeralds are still in the deposit input and no items have moved.")
+      if confirm==1 then
+        order.state="CANCELLED"; order.cancelled_at=os.epoch("utc"); order.failure="Cancelled before escrow movement by operator."
+        if save(JOURNAL,order) then ui.message("Deposit cancelled. No MineBank request was sent.",true)
+        else ui.message("Could not save cancellation. Keep the machine stopped and reconcile.",false) end
+      end
+    else
+      ui.message("This operation may already have reached MineBank or moved physical Emeralds. It cannot be safely cancelled from this screen. Resume with the same card/key or reconcile the journal and inventory.",false)
+    end
+    ui.pause()
+  end
+end
+
 while true do
   local choice=draw(cfg)
   if choice==1 then runBalance()
@@ -358,6 +389,7 @@ while true do
     print("Modem detected (optional): "..tostring(peripheral.find("modem")~=nil))
     print("Monitor detected: "..tostring(peripheral.find("monitor")~=nil))
     ui.pause()
+  elseif choice==8 then runRecovery()
   else break end
 end
 ui.clear(); ui.header("MINEBANK ATM","Thank you for banking with MineBank.")
