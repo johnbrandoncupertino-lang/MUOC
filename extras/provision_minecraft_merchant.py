@@ -35,16 +35,21 @@ def main():
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    """SELECT a.id,a.client_id,a.status,c.status
+                    """SELECT a.id,a.client_id,a.status,c.status,a.account_type
                        FROM bank_accounts a
                        JOIN bank_clients c ON c.id=a.client_id
                        WHERE a.id=%s AND a.client_id=%s
+                         AND a.account_type='BUSINESS'
+                         AND EXISTS (
+                             SELECT 1 FROM minebank_business_members bm
+                             WHERE bm.account_id=a.id AND bm.client_id=c.id AND bm.role='OWNER'
+                         )
                        FOR UPDATE OF a,c""",
                     (args.account_id, args.client_id),
                 )
                 row = cur.fetchone()
-                if not row or row[2] != "ACTIVE" or row[3] != "ACTIVE":
-                    raise SystemExit("The account must belong to the specified client and both must be ACTIVE.")
+                if not row or row[2] != "ACTIVE" or row[3] != "ACTIVE" or row[4] != "BUSINESS":
+                    raise SystemExit("The account must be an active Business account owned by the specified active client.")
                 cur.execute(
                     """INSERT INTO minebank_minecraft_merchants
                        (client_id,account_id,token_hash,display_name,active)
