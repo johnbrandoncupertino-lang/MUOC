@@ -68,6 +68,22 @@ local function moveEmeralds(source,destination)
   end
   return moved
 end
+local function moveEmeraldAmount(source,destination,amount,destinationName)
+  local moved=0
+  for slot,detail in pairs(source.list()) do
+    if detail.name=="minecraft:emerald" and moved<amount then
+      local n=source.pushItems(destinationName,slot,math.min(detail.count,amount-moved))
+      moved=moved+n
+    end
+  end
+  return moved
+end
+local function cancelRejected(order,err)
+  order.state="CANCELLED"
+  order.failure=tostring(err or "MineBank rejected the request.")
+  order.cancelled_at=os.epoch("utc")
+  return save(JOURNAL,order)
+end
 local function returnInvalidItems(source,destination)
   local returned=0
   for slot,detail in pairs(source.list()) do
@@ -139,7 +155,7 @@ local function runWithdrawal()
   local p=pin(); if not p then return end
   local old=load(JOURNAL)
   local order
-  if old and old.state~="COMPLETE" then
+  if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
     if old.kind~="WITHDRAWAL" or (old.state~="REQUEST_PENDING" and old.state~="AUTHORIZED") then
       ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.pause(); return
     end
@@ -157,9 +173,17 @@ local function runWithdrawal()
   if not canFit(outputInv,"minecraft:emerald",order.amount) then ui.message("Output inventory lacks space. No new debit requested.",false); ui.pause(); return end
   local result
   if order.state=="REQUEST_PENDING" then
-    local err
-    result,err=ui.api("/withdrawals","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
-    if not result then ui.message("Withdrawal not confirmed: "..tostring(err)..". The same key is saved; check status before starting another.",false); ui.pause(); return end
+    local err,status
+    result,err,status=ui.api("/withdrawals","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
+    if not result then
+      if status and status>=400 and status<500 then
+        cancelRejected(order,err)
+        ui.message("Withdrawal rejected by MineBank. No Emeralds were dispensed; this attempt is cancelled. "..tostring(err),false)
+      else
+        ui.message("Withdrawal outcome is unknown: "..tostring(err)..". The same idempotency key is retained; retry this withdrawal to reconcile it.",false)
+      end
+      ui.pause(); return
+    end
     order.state="AUTHORIZED"; order.transaction_id=result.transaction_id
     if not save(JOURNAL,order) then ui.message("MineBank debited the account but the local ticket could not be saved. Do not dispense.",false); ui.pause(); return end
   else
@@ -187,7 +211,7 @@ local function runDeposit()
   local p=pin(); if not p then return end
   local old=load(JOURNAL)
   local order
-  if old and old.state~="COMPLETE" then
+  if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
     if old.kind~="DEPOSIT" or (old.state~="REQUEST_PENDING" and old.state~="ESCROW_PENDING") then
       ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.pause(); return
     end
@@ -211,9 +235,18 @@ local function runDeposit()
     order.state="REQUEST_PENDING"
     if not save(JOURNAL,order) then ui.message("Emeralds are secured in escrow but journal failed. Do not move them.",false); ui.pause(); return end
   end
-  local result,err=ui.api("/deposits","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
+  local result,err,status=ui.api("/deposits","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
   if not result then
-    ui.message("Deposit not confirmed: "..tostring(err)..". Emeralds remain in secure stock; re-run to retry the same operation.",false)
+    if status and status>=400 and status<500 and canFit(depositInv,"minecraft:emerald",order.amount) then
+      local returned=moveEmeraldAmount(stockInv,depositInv,order.amount,cfg.deposit_inventory)
+      if returned==order.amount and cancelRejected(order,err) then
+        ui.message("MineBank rejected the deposit; all "..order.amount.." Emeralds were returned and the operation was cancelled.",false)
+      else
+        ui.message("Deposit was rejected, but the physical refund could not be verified. Preserve the journal and contact the operator.",false)
+      end
+    else
+      ui.message("Deposit outcome is unknown: "..tostring(err)..". Emeralds remain in secure stock; retry the same operation to reconcile it.",false)
+    end
     ui.pause(); return
   end
   order.state="COMPLETE"; order.transaction_id=result.transaction_id; order.completed_at=os.epoch("utc")
@@ -227,7 +260,7 @@ local function runTransfer()
   local p=pin(); if not p then return end
   local old=load(JOURNAL)
   local order
-  if old and old.state~="COMPLETE" then
+  if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
     if old.kind~="TRANSFER" or old.state~="REQUEST_PENDING" then
       ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.pause(); return
     end
@@ -244,10 +277,15 @@ local function runTransfer()
     order={version=1,key=ui.key("transfer"),amount=amount,recipient=recipient,state="REQUEST_PENDING",kind="TRANSFER",card_id=card.card_id}
     if not save(JOURNAL,order) then ui.message("Could not save transfer journal; no request sent.",false); ui.pause(); return end
   end
-  local result,err=ui.api("/transfers","POST",card.credential,
+  local result,err,status=ui.api("/transfers","POST",card.credential,
     {recipient_account_number=order.recipient,amount=order.amount,wallet_pin=p},order.key)
   if not result then
-    ui.message("Transfer not confirmed: "..tostring(err)..". The original key is saved; retry only with the same card.",false)
+    if status and status>=400 and status<500 then
+      cancelRejected(order,err)
+      ui.message("MineBank rejected the transfer. No transfer was accepted; this attempt is cancelled. "..tostring(err),false)
+    else
+      ui.message("Transfer outcome is unknown: "..tostring(err)..". The original idempotency key is retained; retry this operation to reconcile it.",false)
+    end
     ui.pause(); return
   end
   order.state="COMPLETE"; order.transaction_id=result.transaction_id; order.completed_at=os.epoch("utc")
