@@ -103,11 +103,13 @@ function M.message(text, good)
 end
 
 function M.pause()
-  if basalt then
-    M.choose("MINEBANK", {"Continue"}, "Touch Continue when you are ready.")
-  else
-    print(""); write("Press Enter to continue. "); read()
+  if monitor and basalt then
+    while true do
+      local event=os.pullEventRaw()
+      if event=="monitor_touch" or event=="key" or event=="terminate" then return end
+    end
   end
+  print(""); write("Press Enter to continue. "); read()
 end
 
 function M.secret(label)
