@@ -2142,6 +2142,7 @@ def minebank_minecraft_shops_page():
         return redirect(url_for("minebank_dashboard"))
 
     if request.method == "POST":
+        action = ""
         supplied_csrf = request.form.get("csrf_token", "")
         try:
             if not supplied_csrf or not secrets.compare_digest(supplied_csrf, session.get("csrf", "")):
