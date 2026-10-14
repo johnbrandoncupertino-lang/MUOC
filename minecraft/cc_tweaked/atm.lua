@@ -79,15 +79,16 @@ local function returnInvalidItems(source,destination)
   return returned
 end
 local function draw(cfg)
-  ui.clear(); ui.header("ATM","Secure terminal • physical emeralds = MineBank Emeralds")
-  print("1) Withdraw emeralds")
-  print("2) Deposit emeralds")
-  print("3) Transfer to another account (max 1,000)")
-  print("4) Recent transactions")
-  print("5) Revoke a card")
-  print("6) Setup / diagnostics")
-  print("7) Exit")
-  write("> "); return tonumber(read())
+  return ui.choose("ATM", {
+    "Check balance",
+    "Withdraw Emeralds",
+    "Deposit Emeralds",
+    "Transfer to another account (max 1,000)",
+    "Recent transactions",
+    "Revoke floppy card",
+    "Diagnostics",
+    "Exit"
+  }, "Touch a service. Physical Emeralds = MineBank Emeralds.")
 end
 local function getCard()
   local card,err=ui.card()
@@ -106,8 +107,13 @@ local function ensureConfig()
   local base=ui.prompt("HTTPS MineBank API base",ui.API_BASE)
   if not base:match("^https://") then return nil,"API base must use HTTPS." end
   ui.API_BASE=base:gsub("/+$","")
+  ui.clear(); ui.header("PROTECTED ATM SETUP","Operator-only • customers must not configure this machine")
+  write("Type OPERATOR SETUP to continue: ")
+  if read()~="OPERATOR SETUP" then return nil,"Setup cancelled." end
   local atmToken=ui.secret("Trusted ATM token from MineBank operator configuration: ")
   if not atmToken or #atmToken<32 then return nil,"A trusted ATM token of at least 32 characters is required." end
+  local tokenCheck=ui.secret("Re-enter trusted ATM token to confirm: ")
+  if tokenCheck~=atmToken then return nil,"Token confirmation failed; setup was not saved." end
   local names=ui.findInventory()
   if #names<3 then return nil,"Connect deposit, secure stock/escrow and output inventories, then rerun setup." end
   print("Detected inventories:")
@@ -250,6 +256,26 @@ local function runTransfer()
   print("Transaction: "..tostring(result.transaction_id)); print("Fee: "..tostring(result.fee or 0)); ui.pause()
 end
 
+local function runBalance()
+  local card=getCard(); if not card then return end
+  local result,err=ui.api("/account","GET",card.credential)
+  if not result then
+    ui.clear(); ui.header("BALANCE UNAVAILABLE")
+    ui.message("MineBank could not confirm your account: "..tostring(err),false)
+    ui.pause(); return
+  end
+  local account=result.account or {}
+  ui.clear(); ui.header("ACCOUNT OVERVIEW","Live data returned by MineBank")
+  print("Account: "..tostring(account.account_number or "—"))
+  print("Type: "..tostring(account.account_type or "—"))
+  print("Tier: "..tostring(account.tier or "—"))
+  print("Status: "..tostring(account.status or "—"))
+  print("")
+  print("AVAILABLE BALANCE")
+  print(tostring(account.balance or 0).." Emeralds")
+  ui.pause()
+end
+
 local function runHistory()
   local card=getCard(); if not card then return end
   local result,err=ui.api("/history","GET",card.credential)
@@ -280,20 +306,21 @@ end
 
 while true do
   local choice=draw(cfg)
-  if choice==1 then runWithdrawal()
-  elseif choice==2 then runDeposit()
-  elseif choice==3 then runTransfer()
-  elseif choice==4 then runHistory()
-  elseif choice==5 then runRevoke()
-  elseif choice==6 then
+  if choice==1 then runBalance()
+  elseif choice==2 then runWithdrawal()
+  elseif choice==3 then runDeposit()
+  elseif choice==4 then runTransfer()
+  elseif choice==5 then runHistory()
+  elseif choice==6 then runRevoke()
+  elseif choice==7 then
     ui.clear(); ui.header("DIAGNOSTICS")
     print("API: "..ui.API_BASE)
     print("Deposit inventory: "..cfg.deposit_inventory)
     print("Secure stock/escrow: "..cfg.stock_inventory)
     print("Output inventory: "..cfg.output_inventory)
-    print("Deposit emeralds: "..countEmeralds(depositInv))
-    print("Stock emeralds: "..countEmeralds(stockInv))
-    print("Output emeralds: "..countEmeralds(outputInv))
+    print("Deposit Emeralds: "..countEmeralds(depositInv))
+    print("Stock Emeralds: "..countEmeralds(stockInv))
+    print("Output Emeralds: "..countEmeralds(outputInv))
     print("HTTP enabled: "..tostring(http~=nil))
     print("Modem detected (optional): "..tostring(peripheral.find("modem")~=nil))
     print("Monitor detected: "..tostring(peripheral.find("monitor")~=nil))
