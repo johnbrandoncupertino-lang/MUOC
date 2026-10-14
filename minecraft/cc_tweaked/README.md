@@ -16,8 +16,9 @@ These programs connect CC:Tweaked computers/turtles to the feature-flagged MineB
 1. Review the code and run the repository tests before enabling the integration.
 2. Apply `extras/minebank_minecraft.sql` to the intended PostgreSQL database through the normal reviewed migration process. This is separate from `extras/minebank_v2.sql`; application requests do not apply this migration automatically.
 3. Confirm the schema includes `minebank_minecraft_cards`, `minebank_minecraft_operations`, `minebank_minecraft_merchants`, and `minebank_minecraft_checkouts`.
-4. Keep `MINEBANK_MINECRAFT_ENABLED` unset or false until the card schema is migrated and staging is verified. Keep `MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED` unset/false until the transaction schema is migrated and money-movement tests pass; set it to `true` only for the intended deployment after explicit review.
-5. Confirm HTTPS forwarding is correct at the Vercel deployment. All Lua programs require HTTPS.
+4. Keep `MINEBANK_MINECRAFT_ENABLED` unset or false until the card schema is migrated and staging is verified. Keep `MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED` unset/false until the transaction schema is migrated, `MINEBANK_MINECRAFT_ATM_TOKEN` is configured, and money-movement tests pass; set it to `true` only for the intended deployment after explicit review.
+5. Configure a strong random `MINEBANK_MINECRAFT_ATM_TOKEN` (at least 32 characters) in the API deployment and enter the same secret in the trusted ATM setup wizard. Keep it off the floppy cards, out of the repository and away from player-accessible machines.
+6. Confirm HTTPS forwarding is correct at the Vercel deployment. All Lua programs require HTTPS.
 
 ## Merchant provisioning
 
@@ -42,7 +43,7 @@ Merchant checkout amounts are supplied by the trusted merchant terminal and stor
 ## Money movement and safety
 
 - All amounts are integer Emeralds. Merchant purchases use the fixed amount from a MineBank-issued checkout; cardholders cannot override it.
-- Payment and withdrawal require a valid active card and active customer/account, check the account's configured single/daily/monthly outgoing limits, respect banking locks and system suspension, and write the balance change, ledger transaction, operation record and audit event in one database transaction.
+- Payment, transfer and withdrawal require a valid active card and active customer/account, plus a fresh Wallet PIN; physical ATM deposits and withdrawals additionally require the trusted ATM machine token. The API checks configured limits, banking locks and system suspension, and writes each balance change, ledger transaction, operation record and audit event atomically.
 - `Idempotency-Key` is mandatory. Repeating the same request returns the recorded result; reusing the key with different parameters is rejected. A database advisory lock plus a unique database constraint protects concurrent retries.
 - ATM withdrawals use ordinary balance only, not CashLine. The API debits first and returns a stable withdrawal ticket. The turtle writes a durable journal before making the request and marks dispensing as started before dropping items. If interrupted after dispensing begins, it refuses automatic replay and requires operator reconciliation. This prevents a retry from automatically dispensing a second withdrawal, but physical item delivery cannot be transactionally atomic with PostgreSQL; interruption may require manual reconciliation.
 - A successful database response is not proof that physical items reached the player. Check the ATM journal and ledger before resolving an interrupted dispense.
