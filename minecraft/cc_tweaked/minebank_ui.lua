@@ -223,6 +223,7 @@ function M.api(path, method, token, body, key, extraHeaders)
   while true do
     local event,a,b,c,d=os.pullEventRaw()
     if event=="http_success" and a==url then
+      pcall(os.cancelTimer,timer)
       local response=b
       local status=response.getResponseCode and response.getResponseCode() or 200
       local raw=response.readAll(); response.close()
@@ -231,6 +232,7 @@ function M.api(path, method, token, body, key, extraHeaders)
       if status<200 or status>=300 then return nil,tostring(data.error or ("HTTP "..status)),status end
       return data,nil,status
     elseif event=="http_failure" and a==url then
+      pcall(os.cancelTimer,timer)
       return nil,"Network request failed: "..tostring(b or "unknown error")
     elseif event=="timer" and a==timer then
       return nil,"MineBank request timed out after 10 seconds. Its outcome is unknown; retry only with the saved idempotency key."
