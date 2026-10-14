@@ -2,7 +2,7 @@
 -- Configure API_BASE to the HTTPS origin of your MineBank deployment.
 -- The floppy contains a revocable card credential only, never a password or PIN.
 
-local API_BASE = "https://muoc-pietroaccordi09-4057.vercel.app/api/v1/minecraft"
+local API_BASE = "https://minebanksecurearea.vercel.app/api/v1/minecraft"
 local CARD_FILE = "minebank.card"
 
 local function pause()
