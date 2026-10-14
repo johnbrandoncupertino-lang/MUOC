@@ -59,7 +59,7 @@ function M.choose(title, options, subtitle)
     if n and n%1==0 and options[n] then return n end
     return nil
   end
-  local _,_,w,h=term.getSize()
+  local w,h=term.getSize()
   local pageSize=math.max(1,h-7)
   local page=1
   while true do
