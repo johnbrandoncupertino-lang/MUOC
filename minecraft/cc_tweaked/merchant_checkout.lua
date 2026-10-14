@@ -2,7 +2,7 @@
 -- Run only on a trusted shop computer controlled by the merchant.
 -- Keep MERCHANT_TOKEN secret; never use this program on a player-accessible computer.
 
-local API_BASE = "https://muoc-pietroaccordi09-4057.vercel.app/api/v1/minecraft"
+local API_BASE = "https://minebanksecurearea.vercel.app/api/v1/minecraft"
 local MERCHANT_TOKEN = "SET_MERCHANT_TOKEN_HERE"
 local CARD_FILE = "minebank.card"
 
