@@ -2,9 +2,11 @@
 -- Run only on a trusted shop computer controlled by the merchant.
 -- Keep MERCHANT_TOKEN secret; never use this program on a player-accessible computer.
 
-local API_BASE = "https://muoc-pietroaccordi09-4057.vercel.app/api/v1/minecraft"
+local API_BASE = "https://minebanksecurearea.vercel.app/api/v1/minecraft"
 local MERCHANT_TOKEN = "SET_MERCHANT_TOKEN_HERE"
 local CARD_FILE = "minebank.card"
+local ui = dofile("minebank_ui.lua")
+ui.API_BASE = API_BASE
 
 local function pause() print(""); print("Press Enter to continue."); read() end
 local function readCard()
@@ -36,10 +38,7 @@ local function post(path, token, body, key)
   return data
 end
 
-term.clear(); term.setCursorPos(1,1)
-print("MineBank | Merchant checkout")
-print("The New Bank")
-print("------------------------------")
+ui.clear(); ui.header("MERCHANT CHECKOUT","Fixed-amount customer-authorized payment")
 if not API_BASE:match("^https://") or API_BASE:find("YOUR%-MINEBANK%-DOMAIN") then print("Configure the HTTPS API_BASE."); pause(); return end
 if MERCHANT_TOKEN == "SET_MERCHANT_TOKEN_HERE" or not MERCHANT_TOKEN:find("^mbmerchant_") then print("SETUP REQUIRED: configure a dedicated merchant token."); pause(); return end
 if not http then print("Enable the CC:Tweaked HTTP API."); pause(); return end
@@ -63,11 +62,16 @@ print("")
 print("Ask the customer to insert their MineBank card floppy.")
 local card, cardError = readCard()
 if not card then print(cardError); pause(); return end
+print("Merchant: " .. tostring(checkout.merchant or "MineBank merchant"))
+print("Exact amount: " .. tostring(checkout.amount) .. " Emeralds")
 write("Customer confirms payment? Type PAY: ")
 if read() ~= "PAY" then print("Cancelled. No payment request sent."); pause(); return end
+write("Customer Wallet PIN (6 digits): ")
+local walletPin = read("*")
+if not walletPin or not walletPin:match("^%d%d%d%d%d%d$") then print("PIN must contain six digits."); pause(); return end
 local paymentKey = "checkout-" .. tostring(checkout.checkout_id)
 print("Contacting MineBank...")
-local paid, payError = post("/payments", card.credential, {checkout_id=tostring(checkout.checkout_id)}, paymentKey)
+local paid, payError = post("/payments", card.credential, {checkout_id=tostring(checkout.checkout_id), wallet_pin=walletPin}, paymentKey)
 if not paid then
   print("Payment not confirmed: " .. payError)
   print("Check MineBank transaction history before retrying.")

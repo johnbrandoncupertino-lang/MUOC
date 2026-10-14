@@ -2,8 +2,10 @@
 -- Configure API_BASE to the HTTPS origin of your MineBank deployment.
 -- The floppy contains a revocable card credential only, never a password or PIN.
 
-local API_BASE = "https://muoc-pietroaccordi09-4057.vercel.app/api/v1/minecraft"
+local API_BASE = "https://minebanksecurearea.vercel.app/api/v1/minecraft"
 local CARD_FILE = "minebank.card"
+local ui = dofile("minebank_ui.lua")
+ui.API_BASE = API_BASE
 
 local function pause()
   print("")
@@ -37,11 +39,8 @@ local function loadCard()
   return card, nil
 end
 
-term.clear()
-term.setCursorPos(1, 1)
-print("MineBank | Account reader")
-print("The New Bank")
-print("------------------------------")
+ui.clear()
+ui.header("ACCOUNT READER","Live balance and card verification")
 
 if not API_BASE:match("^https://") then
   print("SECURITY ERROR: API_BASE must use HTTPS.")

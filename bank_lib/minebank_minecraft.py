@@ -422,6 +422,41 @@ MAX_MINECRAFT_WITHDRAWAL = 4096
 MAX_MINECRAFT_CHECKOUT = 1000000
 
 
+def _client_id_for_card_token(cur, token):
+    cur.execute("""SELECT client_id,card_token_hash FROM minebank_minecraft_cards
+                   WHERE card_prefix=%s AND status='ACTIVE' AND revoked_at IS NULL
+                   ORDER BY id LIMIT 10""", (token[:16],))
+    digest = hash_card_token(token)
+    for client_id, stored_hash in cur.fetchall():
+        if hmac.compare_digest(str(stored_hash), digest):
+            return client_id
+    return None
+
+
+def _verify_card_pin(token, pin):
+    if not isinstance(pin, str) or len(pin) != 6 or not pin.isdigit():
+        return False, "Enter your six-digit Wallet PIN."
+    conn = get_db_connection()
+    if conn is None:
+        return False, "MineBank is temporarily unavailable."
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                client_id = _client_id_for_card_token(cur, token)
+        if client_id is None:
+            return False, "Card credential is invalid or revoked."
+        return verify_wallet_pin(client_id, pin)
+    finally:
+        release_db_connection(conn)
+
+
+def _atm_authorized():
+    """Only a configured trusted ATM may create physical deposits or withdrawals."""
+    expected = os.environ.get("MINEBANK_MINECRAFT_ATM_TOKEN", "").strip()
+    supplied = request.headers.get("X-MineBank-ATM-Token", "").strip()
+    return bool(len(expected) >= 32 and supplied and hmac.compare_digest(expected, supplied))
+
+
 def _request_idempotency_key():
     key = str(request.headers.get("Idempotency-Key", "")).strip()
     if not key or len(key) > 128 or not key.isascii() or not all(
@@ -653,6 +688,9 @@ def pay_merchant_checkout():
     if not checkout_id.isascii() or not checkout_id.isdigit() or len(checkout_id) > 20:
         return jsonify(error="A valid checkout_id is required."), 400
     request_hash = hashlib.sha256(("PAYMENT:" + checkout_id).encode("utf-8")).hexdigest()
+    pin_ok, pin_message = _verify_card_pin(token, data.get("wallet_pin"))
+    if not pin_ok:
+        return jsonify(error=pin_message or "Wallet PIN verification failed."), 401
     conn = get_db_connection()
     if conn is None:
         return jsonify(error="MineBank is temporarily unavailable."), 503
@@ -775,6 +813,8 @@ def withdraw_emerald_items():
     insecure = _transport_unavailable()
     if insecure:
         return insecure
+    if not _atm_authorized():
+        return jsonify(error="A trusted ATM credential is required."), 401
     token = _authorized_card_token()
     data = request.get_json(silent=True)
     key = _request_idempotency_key()
@@ -785,6 +825,9 @@ def withdraw_emerald_items():
         return jsonify(error=f"Withdrawal must be a whole Emerald amount from 1 to {MAX_MINECRAFT_WITHDRAWAL}."), 400
     amount = raw_amount
     request_hash = hashlib.sha256(("WITHDRAWAL:" + str(amount)).encode("utf-8")).hexdigest()
+    pin_ok, pin_message = _verify_card_pin(token, data.get("wallet_pin"))
+    if not pin_ok:
+        return jsonify(error=pin_message or "Wallet PIN verification failed."), 401
     conn = get_db_connection()
     if conn is None:
         return jsonify(error="MineBank is temporarily unavailable."), 503
@@ -860,3 +903,246 @@ def withdraw_emerald_items():
         return jsonify(error="Withdrawal could not be completed. Check transaction history before retrying."), 503
     finally:
         release_db_connection(conn)
+
+MAX_MINECRAFT_TRANSFER = 1000
+MAX_MINECRAFT_DEPOSIT = 4096
+
+
+@minecraft_bp.post("/transfers")
+def minecraft_player_transfer():
+    unavailable = _transactions_unavailable()
+    if unavailable: return unavailable
+    insecure = _transport_unavailable()
+    if insecure: return insecure
+    token = _authorized_card_token()
+    data = request.get_json(silent=True)
+    key = _request_idempotency_key()
+    if not token or not isinstance(data, dict) or not key:
+        return jsonify(error="Card credential, JSON body, and Idempotency-Key are required."), 400
+    amount = data.get("amount")
+    recipient_number = str(data.get("recipient_account_number", "")).strip()
+    if isinstance(amount, bool) or not isinstance(amount, int) or amount < 1 or amount > MAX_MINECRAFT_TRANSFER:
+        return jsonify(error="Transfers must be whole Emerald amounts from 1 to 1000. Larger transfers must be made on the MineBank portal."), 400
+    if not recipient_number or len(recipient_number) > 32:
+        return jsonify(error="Enter a valid recipient account number."), 400
+    pin_ok, pin_message = _verify_card_pin(token, data.get("wallet_pin"))
+    if not pin_ok: return jsonify(error=pin_message or "Wallet PIN verification failed."), 401
+    request_hash = hashlib.sha256(("TRANSFER:" + recipient_number + ":" + str(amount)).encode("utf-8")).hexdigest()
+    conn = get_db_connection()
+    if conn is None: return jsonify(error="MineBank is temporarily unavailable."), 503
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                client_id = _client_id_for_card_token(cur, token)
+                if client_id is None: raise PermissionError("Card credential is invalid or revoked.")
+                replay = _replay_operation(cur, client_id, key, "TRANSFER", request_hash)
+                if replay: return replay
+                sender = _card_row_for_update(cur, token)
+                cur.execute("""SELECT a.id,a.client_id,a.account_number,a.account_type,a.tier_id,a.balance,a.status,bc.status
+                               FROM bank_accounts a JOIN bank_clients bc ON bc.id=a.client_id
+                               WHERE a.account_number=%s FOR UPDATE OF a,bc""", (recipient_number,))
+                recipient = cur.fetchone()
+                if not recipient or recipient[6] != "ACTIVE" or recipient[7] != "ACTIVE":
+                    raise ValueError("Recipient account was not found or is not active.")
+                if sender[6] == "BUSINESS" or recipient[3] == "BUSINESS":
+                    raise ValueError("Business-account transfers must be completed through the MineBank portal, where business permissions and approvals are enforced.")
+                if int(recipient[0]) == int(sender[2]): raise ValueError("You cannot transfer to the same account.")
+                if int(sender[8]) < amount: raise ValueError("Insufficient MineBank Balance. CashLine cannot be used for transfers.")
+                cur.execute("SELECT COALESCE(system_suspended,FALSE) FROM settings ORDER BY id LIMIT 1")
+                row = cur.fetchone()
+                if row and row[0]: raise ValueError("MineBank banking operations are temporarily suspended.")
+                cur.execute("SELECT 1 FROM minebank_banking_locks WHERE client_id=%s AND unlocked_at IS NULL", (sender[1],))
+                if cur.fetchone(): raise ValueError("Banking operations are temporarily locked for this client.")
+                monthly_used, period, _ = _validate_outgoing_limits(cur, sender, amount)
+                cur.execute("SELECT code FROM account_tiers_v2 WHERE id=%s", (sender[7],))
+                tier = cur.fetchone()
+                fee = 5 if int(recipient[1]) != int(sender[1]) and amount > 500 and not (tier and tier[0] in ("PERSONAL_PRIVATE","CORPORATE")) else 0
+                if int(sender[8]) < amount + fee: raise ValueError("Insufficient MineBank Balance to cover the transfer and fee.")
+                cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
+                max_row = cur.fetchone()
+                if max_row and max_row[0] is not None and int(recipient[5]) + amount > int(max_row[0]):
+                    raise ValueError("Recipient account balance limit would be exceeded.")
+                from bank_lib.minebank_core import next_transaction_id, create_ledger_transaction, audit_event
+                txid = next_transaction_id(cur)
+                cur.execute("""UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
+                               monthly_outgoing_period=%s,last_outgoing_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+                               WHERE id=%s""", (amount + fee, monthly_used + amount, period, sender[2]))
+                cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s", (amount, recipient[0]))
+                create_ledger_transaction(cur, transaction_id=txid, transaction_type="TRANSFER", amount=amount, fee=fee,
+                    currency="Emerald", sender_account_id=sender[2], recipient_account_id=recipient[0],
+                    status="COMPLETED", description="Minecraft card transfer", reference_id=key,
+                    transfer_kind="MINECRAFT_TRANSFER")
+                result = {"status":"COMPLETED","transaction_id":txid,"amount":amount,"fee":fee,
+                          "currency":"emerald","recipient_account_number":recipient[2]}
+                _save_operation(cur, client_id=sender[1], card_id=sender[0], account_id=sender[2], key=key,
+                    op_type="TRANSFER", request_hash=request_hash, status="COMPLETED", amount=amount,
+                    transaction_id=txid, response=result)
+                audit_event(cur, actor_client_id=sender[1], action="MINECRAFT_TRANSFER", target_type="TRANSACTION",
+                    target_id=txid, account_id=sender[2], transaction_id=txid, ip_address=request.remote_addr,
+                    context={"recipient_account_id":recipient[0],"amount":amount,"fee":fee})
+        return jsonify(result), 200
+    except PermissionError as exc: return jsonify(error=str(exc)), 401
+    except ValueError as exc: return jsonify(error=str(exc)), 409
+    except Exception as exc:
+        current_app.logger.error("Minecraft transfer failed: %s", type(exc).__name__)
+        return jsonify(error="Transfer could not be completed. Check transaction history before retrying."), 503
+    finally: release_db_connection(conn)
+
+
+@minecraft_bp.post("/deposits")
+def minecraft_emerald_deposit():
+    """Credit only emeralds the trusted ATM has already secured in its deposit escrow."""
+    unavailable = _transactions_unavailable()
+    if unavailable: return unavailable
+    insecure = _transport_unavailable()
+    if insecure: return insecure
+    if not _atm_authorized():
+        return jsonify(error="A trusted ATM credential is required."), 401
+    token = _authorized_card_token()
+    data = request.get_json(silent=True)
+    key = _request_idempotency_key()
+    if not token or not isinstance(data, dict) or not key:
+        return jsonify(error="Card credential, JSON body, and Idempotency-Key are required."), 400
+    amount = data.get("amount")
+    if isinstance(amount, bool) or not isinstance(amount, int) or amount < 1 or amount > MAX_MINECRAFT_DEPOSIT:
+        return jsonify(error="Deposit must be a whole Emerald amount from 1 to 4096."), 400
+    pin_ok, pin_message = _verify_card_pin(token, data.get("wallet_pin"))
+    if not pin_ok: return jsonify(error=pin_message or "Wallet PIN verification failed."), 401
+    request_hash = hashlib.sha256(("DEPOSIT:" + str(amount)).encode("utf-8")).hexdigest()
+    conn = get_db_connection()
+    if conn is None: return jsonify(error="MineBank is temporarily unavailable."), 503
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                client_id = _client_id_for_card_token(cur, token)
+                if client_id is None: raise PermissionError("Card credential is invalid or revoked.")
+                replay = _replay_operation(cur, client_id, key, "DEPOSIT", request_hash)
+                if replay: return replay
+                card = _card_row_for_update(cur, token)
+                cur.execute("SELECT COALESCE(system_suspended,FALSE) FROM settings ORDER BY id LIMIT 1")
+                row = cur.fetchone()
+                if row and row[0]: raise ValueError("MineBank banking operations are temporarily suspended.")
+                cur.execute("SELECT 1 FROM minebank_banking_locks WHERE client_id=%s AND unlocked_at IS NULL", (card[1],))
+                if cur.fetchone(): raise ValueError("Banking operations are temporarily locked for this client.")
+                cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (card[7],))
+                max_row = cur.fetchone()
+                if max_row and max_row[0] is not None and int(card[8]) + amount > int(max_row[0]):
+                    raise ValueError("Account balance limit would be exceeded.")
+                from bank_lib.minebank_core import next_transaction_id, create_ledger_transaction, audit_event
+                txid = next_transaction_id(cur)
+                cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s", (amount, card[2]))
+                create_ledger_transaction(cur, transaction_id=txid, transaction_type="DEPOSIT", amount=amount,
+                    currency="Emerald", recipient_account_id=card[2], status="COMPLETED",
+                    description="Minecraft ATM emerald deposit", reference_id=key, transfer_kind="MINECRAFT_ATM")
+                result = {"status":"COMPLETED","transaction_id":txid,"deposit_id":key,"amount":amount,"currency":"emerald"}
+                _save_operation(cur, client_id=card[1], card_id=card[0], account_id=card[2], key=key,
+                    op_type="DEPOSIT", request_hash=request_hash, status="COMPLETED", amount=amount,
+                    transaction_id=txid, response=result)
+                audit_event(cur, actor_client_id=card[1], action="MINECRAFT_ATM_DEPOSIT", target_type="TRANSACTION",
+                    target_id=txid, account_id=card[2], transaction_id=txid, ip_address=request.remote_addr,
+                    context={"deposit_id":key,"items":amount})
+        return jsonify(result), 200
+    except PermissionError as exc: return jsonify(error=str(exc)), 401
+    except ValueError as exc: return jsonify(error=str(exc)), 409
+    except Exception as exc:
+        current_app.logger.error("Minecraft deposit failed: %s", type(exc).__name__)
+        return jsonify(error="Deposit could not be completed. Check transaction history before retrying."), 503
+    finally: release_db_connection(conn)
+
+
+@minecraft_bp.get("/history")
+def minecraft_card_history():
+    unavailable = _feature_unavailable()
+    if unavailable: return unavailable
+    insecure = _transport_unavailable()
+    if insecure: return insecure
+    token = _authorized_card_token()
+    if not token: return jsonify(error="A valid card credential is required."), 401
+    conn = get_db_connection()
+    if conn is None: return jsonify(error="MineBank is temporarily unavailable."), 503
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                card = _card_row_for_update(cur, token)
+                cur.execute("""SELECT transaction_id,transaction_type,amount,fee,currency,status,description,created_at
+                               FROM ledger_transactions WHERE sender_account_id=%s OR recipient_account_id=%s
+                               ORDER BY created_at DESC LIMIT 10""", (card[2], card[2]))
+                history = [{"transaction_id":r[0],"type":r[1],"amount":int(r[2]),"fee":int(r[3] or 0),
+                    "currency":r[4],"status":r[5],"description":r[6] or "","created_at":r[7].isoformat()}
+                    for r in cur.fetchall()]
+        return jsonify(history=history)
+    except PermissionError as exc: return jsonify(error=str(exc)), 401
+    except ValueError as exc: return jsonify(error=str(exc)), 403
+    except Exception as exc:
+        current_app.logger.error("Minecraft history read failed: %s", type(exc).__name__)
+        return jsonify(error="Transaction history is temporarily unavailable."), 503
+    finally: release_db_connection(conn)
+
+
+@minecraft_bp.get("/merchant/checkouts/<checkout_id>")
+def read_merchant_checkout(checkout_id):
+    unavailable = _transactions_unavailable()
+    if unavailable: return unavailable
+    insecure = _transport_unavailable()
+    if insecure: return insecure
+    token = _merchant_token()
+    if not token: return jsonify(error="Merchant authorization is required."), 401
+    conn = get_db_connection()
+    if conn is None: return jsonify(error="MineBank is temporarily unavailable."), 503
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""SELECT x.id,x.amount,x.description,x.status,x.expires_at,x.transaction_id,m.display_name
+                               FROM minebank_minecraft_checkouts x JOIN minebank_minecraft_merchants m ON m.id=x.merchant_id
+                               WHERE x.id=%s AND m.token_hash=%s AND m.active=TRUE""",
+                            (int(checkout_id), hash_card_token(token)))
+                row = cur.fetchone()
+                if not row: return jsonify(error="Checkout not found for this merchant."), 404
+                return jsonify(checkout_id=str(row[0]),amount=int(row[1]),description=row[2],status=row[3],
+                    expires_at=row[4].isoformat(),transaction_id=row[5],merchant=row[6])
+    except (TypeError, ValueError): return jsonify(error="Invalid checkout ID."), 400
+    except Exception as exc:
+        current_app.logger.error("Minecraft checkout status failed: %s", type(exc).__name__)
+        return jsonify(error="Checkout status is temporarily unavailable."), 503
+    finally: release_db_connection(conn)
+
+
+
+@minecraft_bp.post("/cards/revoke-self")
+def revoke_current_minecraft_card():
+    """Revoke the inserted floppy card after a fresh PIN and explicit confirmation."""
+    unavailable = _feature_unavailable()
+    if unavailable: return unavailable
+    insecure = _transport_unavailable()
+    if insecure: return insecure
+    token = _authorized_card_token()
+    data = request.get_json(silent=True)
+    if not token or not isinstance(data, dict):
+        return jsonify(error="Card credential and JSON body are required."), 400
+    if data.get("confirm") is not True:
+        return jsonify(error="Explicit confirmation is required to revoke this card."), 400
+    pin_ok, pin_message = _verify_card_pin(token, data.get("wallet_pin"))
+    if not pin_ok: return jsonify(error=pin_message or "Wallet PIN verification failed."), 401
+    conn = get_db_connection()
+    if conn is None: return jsonify(error="MineBank is temporarily unavailable."), 503
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                client_id = _client_id_for_card_token(cur, token)
+                if client_id is None: raise PermissionError("Card credential is invalid or already revoked.")
+                cur.execute("""UPDATE minebank_minecraft_cards
+                               SET status='REVOKED',revoked_at=CURRENT_TIMESTAMP
+                               WHERE client_id=%s AND card_prefix=%s AND status='ACTIVE' AND revoked_at IS NULL
+                               RETURNING id,account_id""", (client_id, token[:16]))
+                row = cur.fetchone()
+                if not row: raise PermissionError("Card credential is invalid or already revoked.")
+                from bank_lib.minebank_core import audit_event
+                audit_event(cur, actor_client_id=client_id, action="MINECRAFT_CARD_REVOKED",
+                    target_type="MINECRAFT_CARD", target_id=str(row[0]), account_id=row[1],
+                    ip_address=request.remote_addr, context={"source":"minecraft","method":"self_service"})
+        return jsonify(card_id=row[0],status="REVOKED",message="This floppy card is now revoked.")
+    except PermissionError as exc: return jsonify(error=str(exc)), 401
+    except Exception as exc:
+        current_app.logger.error("Minecraft self-service card revocation failed: %s", type(exc).__name__)
+        return jsonify(error="Card revocation is temporarily unavailable."), 503
+    finally: release_db_connection(conn)

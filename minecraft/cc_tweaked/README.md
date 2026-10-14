@@ -7,15 +7,18 @@ These programs connect CC:Tweaked computers/turtles to the feature-flagged MineB
 - `branch_terminal.lua`: authenticates a MineBank customer, lets them select an eligible account and issues a revocable card credential onto a floppy.
 - `balance_reader.lua`: reads a card and displays the live MineBank account balance.
 - `merchant_checkout.lua`: trusted shop terminal that creates a fixed-amount checkout using a dedicated merchant credential, then lets a customer pay with their MineBank card.
-- `atm.lua`: turtle-based ATM that debits MineBank atomically and dispenses emerald items. A durable journal blocks automatic re-dispensing if a run is interrupted.
+- `atm.lua`: inventory-based ATM with withdrawals, deposits, transfers up to 1,000 Emeralds, recent history, card revocation, and durable journals for physical inventory operations.
+- `vending_machine.lua`: local per-machine product catalogue, fixed-price MineBank checkout, stock/output inventory checks, and a fail-closed fulfilment journal.
+- `minebank_ui.lua`: shared MineBank terminal UI, HTTP client, floppy-card reader, inventory discovery and setup utilities.
 
 ## Server setup
 
 1. Review the code and run the repository tests before enabling the integration.
 2. Apply `extras/minebank_minecraft.sql` to the intended PostgreSQL database through the normal reviewed migration process. This is separate from `extras/minebank_v2.sql`; application requests do not apply this migration automatically.
 3. Confirm the schema includes `minebank_minecraft_cards`, `minebank_minecraft_operations`, `minebank_minecraft_merchants`, and `minebank_minecraft_checkouts`.
-4. Keep `MINEBANK_MINECRAFT_ENABLED` unset or false until the card schema is migrated and staging is verified. Keep `MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED` unset/false until the transaction schema is migrated and money-movement tests pass; set it to `true` only for the intended deployment after explicit review.
-5. Confirm HTTPS forwarding is correct at the Vercel deployment. All Lua programs require HTTPS.
+4. Keep `MINEBANK_MINECRAFT_ENABLED` unset or false until the card schema is migrated and staging is verified. Keep `MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED` unset/false until the transaction schema is migrated, `MINEBANK_MINECRAFT_ATM_TOKEN` is configured, and money-movement tests pass; set it to `true` only for the intended deployment after explicit review.
+5. Configure a strong random `MINEBANK_MINECRAFT_ATM_TOKEN` (at least 32 characters) in the API deployment and enter the same secret in the trusted ATM setup wizard. Keep it off the floppy cards, out of the repository and away from player-accessible machines.
+6. Confirm HTTPS forwarding is correct at the Vercel deployment. All Lua programs require HTTPS.
 
 ## Merchant provisioning
 
@@ -35,17 +38,19 @@ Merchant checkout amounts are supplied by the trusted merchant terminal and stor
 2. Enable the CC:Tweaked HTTP API and permit the MineBank HTTPS hostname.
 3. Issue a card with `branch_terminal.lua`; the floppy stores only the revocable card token and non-sensitive display metadata. Never store a password or Wallet PIN on it.
 4. For shop checkout, configure the dedicated merchant token in `merchant_checkout.lua`. The customer inserts their MineBank card floppy only when asked to pay.
-5. For ATM withdrawals, run `atm.lua` on a turtle stocked with `minecraft:emerald` items. The turtle dispenses from its front side, so position the customer/output there.
+5. Run `atm.lua` on a computer with three distinct inventory peripherals: deposit input, secure stock/escrow, and output. Run `vending_machine.lua` on a trusted shop computer with separate stock and output inventories. Both programs provide local setup wizards.
 
 ## Money movement and safety
 
 - All amounts are integer Emeralds. Merchant purchases use the fixed amount from a MineBank-issued checkout; cardholders cannot override it.
-- Payment and withdrawal require a valid active card and active customer/account, check the account's configured single/daily/monthly outgoing limits, respect banking locks and system suspension, and write the balance change, ledger transaction, operation record and audit event in one database transaction.
+- Payment, transfer and withdrawal require a valid active card and active customer/account, plus a fresh Wallet PIN; physical ATM deposits and withdrawals additionally require the trusted ATM machine token. The API checks configured limits, banking locks and system suspension, and writes each balance change, ledger transaction, operation record and audit event atomically.
 - `Idempotency-Key` is mandatory. Repeating the same request returns the recorded result; reusing the key with different parameters is rejected. A database advisory lock plus a unique database constraint protects concurrent retries.
 - ATM withdrawals use ordinary balance only, not CashLine. The API debits first and returns a stable withdrawal ticket. The turtle writes a durable journal before making the request and marks dispensing as started before dropping items. If interrupted after dispensing begins, it refuses automatic replay and requires operator reconciliation. This prevents a retry from automatically dispensing a second withdrawal, but physical item delivery cannot be transactionally atomic with PostgreSQL; interruption may require manual reconciliation.
 - A successful database response is not proof that physical items reached the player. Check the ATM journal and ledger before resolving an interrupted dispense.
 - The merchant token is not a customer card token. Keep merchant terminals locked down; players with access to the Lua source or computer may be able to recover the merchant token.
-- Card payments and withdrawals do not use CashLine, and no transfers/deposits are exposed through these Lua clients.
+- Card payments, transfers and withdrawals require a fresh six-digit Wallet PIN; CashLine is not used by Minecraft money movement. Transfers are capped at 1,000 Emeralds and are limited to personal accounts so business permissions/approval rules cannot be bypassed.
+- ATM deposits accept only Emeralds moved from the configured deposit inventory into secure stock/escrow before the API request. If the API cannot confirm the deposit, the journal and escrow must be preserved and retried with the same idempotency key; never move or spend those items manually until reconciled.
+- Vending machines store catalogue and pricing locally per machine. They only deliver after MineBank confirms payment. An interrupted dispense is locked for manual reconciliation rather than automatically replayed.
 - If a card is lost, revoke it from the MineBank portal. Revocation invalidates future API requests immediately.
 
 ## API contract
@@ -56,6 +61,11 @@ Merchant checkout amounts are supplied by the trusted merchant terminal and stor
 - `POST /cards/revoke`: revoke a card after customer re-authentication.
 - `POST /merchant/checkouts`: trusted merchant bearer token + amount/description + mandatory idempotency key.
 - `POST /payments`: card bearer token + server-issued checkout ID + mandatory idempotency key.
-- `POST /withdrawals`: card bearer token + integer Emerald amount + mandatory idempotency key; debits MineBank balance and returns a single-use dispense record.
+- `POST /withdrawals`: card bearer token + integer Emerald amount + Wallet PIN + mandatory idempotency key.
+- `POST /deposits`: card bearer token + amount secured in ATM escrow + Wallet PIN + mandatory idempotency key.
+- `POST /transfers`: card bearer token + recipient account number + amount up to 1,000 + Wallet PIN + mandatory idempotency key; business-account transfers are rejected for portal authorization.
+- `GET /history`: latest ten ledger transactions for the linked card account.
+- `GET /merchant/checkouts/<id>`: status lookup for the merchant that created the checkout.
+- `POST /cards/revoke-self`: revoke the inserted card with its credential, Wallet PIN and explicit confirmation.
 
 The code change does not itself apply the database migration, set deployment environment variables, or verify a live Vercel deployment. Test in staging before enabling production money movement.
