@@ -59,31 +59,41 @@ function M.choose(title, options, subtitle)
     if n and n%1==0 and options[n] then return n end
     return nil
   end
-  local screen,err,w,h = addScreen(title,subtitle or "Touch an option to continue.")
-  if not screen then M.message(err,false); return nil end
-  local selected
-  local top=6
-  local usable=math.max(1,h-top)
-  local rowHeight=math.max(1,math.min(3,math.floor(usable/math.max(1,#options))))
-  for i,option in ipairs(options) do
-    local y=top+(i-1)*rowHeight
-    if y<=h then
-      local label=tostring(option)
-      local maxText=math.max(1,w-7)
+  local _,_,w,h=term.getSize()
+  local pageSize=math.max(1,h-7)
+  local page=1
+  while true do
+    local screen,err,sw,sh=addScreen(title,subtitle or "Touch an option to continue.")
+    if not screen then M.message(err,false); return nil end
+    local maxPage=math.max(1,math.ceil(#options/pageSize))
+    local first=(page-1)*pageSize+1
+    local last=math.min(#options,first+pageSize-1)
+    local selected
+    for i=first,last do
+      local y=6+(i-first)
+      local label=tostring(options[i])
+      local maxText=math.max(1,sw-7)
       if #label>maxText then label=label:sub(1,math.max(1,maxText-1)).."…" end
-      local b=screen:addButton({x=2,y=y,width=math.max(1,w-3),height=math.min(rowHeight,h-y+1),background=(i==#options and colors.gray or colors.green),foreground=colors.black})
-      b:setText(label)
-      b:onClick(function()
-        selected=i
-        basalt.stop()
-      end)
+      screen:addButton({x=2,y=y,width=math.max(1,sw-3),height=1,background=(i==#options and colors.gray or colors.green),foreground=colors.black})
+        :setText(label):onClick(function() selected=i; basalt.stop() end)
     end
+    if maxPage>1 then
+      if page>1 then
+        screen:addButton({x=2,y=sh-1,width=math.max(1,math.floor((sw-4)/2)),height=1,background=colors.gray,foreground=colors.white})
+          :setText("Previous"):onClick(function() selected=-1; basalt.stop() end)
+      end
+      if page<maxPage then
+        screen:addButton({x=3+math.floor((sw-4)/2),y=sh-1,width=math.max(1,sw-(3+math.floor((sw-4)/2))),height=1,background=colors.gray,foreground=colors.white})
+          :setText("Next"):onClick(function() selected=-2; basalt.stop() end)
+      end
+    end
+    basalt.run()
+    closeScreen(screen)
+    if selected==-1 then page=math.max(1,page-1)
+    elseif selected==-2 then page=math.min(maxPage,page+1)
+    else return selected end
   end
-  basalt.run()
-  closeScreen(screen)
-  return selected
 end
-
 function M.message(text, good)
   local w = term.getSize()
   term.setTextColor(good and colors.lime or colors.orange)
@@ -158,19 +168,30 @@ function M.api(path, method, token, body, key, extraHeaders)
   if key then headers["Idempotency-Key"]=key end
   for name,value in pairs(extraHeaders or {}) do headers[name]=value end
   local url=M.API_BASE..path
-  local ok,response,err
-  if body then ok,response,err=pcall(http.post,url,textutils.serializeJSON(body),headers)
-  else ok,response,err=pcall(http.get,url,headers) end
-  if not ok then return nil,"Network request failed: "..tostring(response) end
-  if not response then return nil,tostring(err or "MineBank could not be reached.") end
-  local status=response.getResponseCode and response.getResponseCode() or 200
-  local raw=response.readAll(); response.close()
-  local parsed,data=pcall(textutils.unserializeJSON,raw)
-  if not parsed or type(data)~="table" then return nil,"Invalid MineBank response (HTTP "..status..")." end
-  if status<200 or status>=300 then return nil,tostring(data.error or ("HTTP "..status)) end
-  return data
+  local requestBody=body and textutils.serializeJSON(body) or nil
+  local ok,accepted,requestErr=pcall(http.request,url,requestBody,headers)
+  if not ok then return nil,"Network request could not start: "..tostring(accepted) end
+  if not accepted then return nil,tostring(requestErr or "MineBank request was rejected before sending.") end
+  local timer=os.startTimer(10)
+  while true do
+    local event,a,b,c,d=os.pullEventRaw()
+    if event=="http_success" and a==url then
+      local response=b
+      local status=response.getResponseCode and response.getResponseCode() or 200
+      local raw=response.readAll(); response.close()
+      local parsed,data=pcall(textutils.unserializeJSON,raw)
+      if not parsed or type(data)~="table" then return nil,"Invalid MineBank response (HTTP "..status..").",status end
+      if status<200 or status>=300 then return nil,tostring(data.error or ("HTTP "..status)),status end
+      return data,nil,status
+    elseif event=="http_failure" and a==url then
+      return nil,"Network request failed: "..tostring(b or "unknown error")
+    elseif event=="timer" and a==timer then
+      return nil,"MineBank request timed out after 10 seconds. Its outcome is unknown; retry only with the saved idempotency key."
+    elseif event=="terminate" then
+      return nil,"Operation interrupted. Its outcome may be unknown; preserve the journal and reconcile before retrying."
+    end
+  end
 end
-
 function M.card()
   local drive=peripheral.find("drive")
   if not drive or not drive.isDiskPresent or not drive.isDiskPresent() then return nil,"Insert your MineBank floppy card." end
