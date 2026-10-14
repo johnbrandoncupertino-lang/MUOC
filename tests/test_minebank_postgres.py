@@ -428,7 +428,7 @@ def test_minecraft_merchant_payment_is_atomic_and_idempotent(accounts, monkeypat
 
     replay = client.post(
         "/api/v1/minecraft/payments",
-        json={"checkout_id": checkout_id},
+        json={"checkout_id": checkout_id, "wallet_pin": "123456"},
         headers=headers,
     )
     assert replay.status_code == 200, replay.get_json()
@@ -479,7 +479,7 @@ def test_minecraft_atm_withdrawal_is_atomic_and_idempotent(accounts, monkeypatch
 
     replay = client.post(
         "/api/v1/minecraft/withdrawals",
-        json={"amount": 64},
+        json={"amount": 64, "wallet_pin": "123456"},
         headers=headers,
     )
     assert replay.status_code == 200, replay.get_json()
