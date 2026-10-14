@@ -95,13 +95,26 @@ function M.choose(title, options, subtitle)
   end
 end
 function M.message(text, good)
-  local w = term.getSize()
+  local w,h=term.getSize()
+  local value=tostring(text or ""):gsub("[\\r\\n]+"," ")
+  local lines={}
+  local line=""
+  for word in value:gmatch("%S+") do
+    if #line==0 then line=word
+    elseif #line+#word+1<=math.max(1,w) then line=line.." "..word
+    else lines[#lines+1]=line; line=word end
+  end
+  if #line>0 then lines[#lines+1]=line end
   term.setTextColor(good and colors.lime or colors.orange)
-  term.setCursorPos(1, math.min(6, select(2,term.getSize())))
-  term.write(tostring(text):gsub("[\r\n]"," "):sub(1,math.max(1,w)))
+  local y=6
+  for _,part in ipairs(lines) do
+    if y>h then break end
+    term.setCursorPos(1,y)
+    term.write(part:sub(1,math.max(1,w)))
+    y=y+1
+  end
   term.setTextColor(colors.white)
 end
-
 function M.pause()
   if monitor and basalt then
     while true do
