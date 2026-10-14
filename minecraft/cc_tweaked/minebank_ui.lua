@@ -114,7 +114,7 @@ function M.secret(label)
   local lower=tostring(label or ""):lower()
   if basalt and lower:find("pin") then
     local screen,err,w,h=addScreen("SECURE PIN",label or "Enter PIN")
-    if screen and w>=12 and h>=14 then
+    if screen and w>=12 and h>=16 then
       local value,result,done=""
       local masked=screen:addLabel({x=2,y=6,width=math.max(1,w-3),height=1,foreground=colors.lime,background=colors.black})
       local function redraw() masked:setText("PIN: "..string.rep("*",#value)) end
@@ -131,7 +131,7 @@ function M.secret(label)
             redraw()
           end)
       end
-      local y=math.min(h-1,15)
+      local y=h-1
       screen:addButton({x=2,y=y,width=math.max(1,math.floor((w-4)/2)),height=1,background=colors.green,foreground=colors.black})
         :setText("Submit"):onClick(function() if #value==6 then result=value; done=true; basalt.stop() end end)
       screen:addButton({x=3+math.floor((w-4)/2),y=y,width=math.max(1,w-(3+math.floor((w-4)/2))),height=1,background=colors.red,foreground=colors.white})
@@ -162,7 +162,7 @@ function M.prompt(label, default)
   local numeric= tostring(label):lower():find("amount") or tostring(label):lower():find("number") or tostring(label):lower():find("emerald")
   local result,done
   local function finish(v) result=v; done=true; basalt.stop() end
-  if numeric and h>=15 then
+  if numeric and h>=17 then
     local digits={"1","2","3","4","5","6","7","8","9","0","⌫","Clear"}
     local cols=math.min(3,math.max(1,math.floor((w-4)/6)))
     local cellW=math.max(3,math.floor((w-4)/cols))
@@ -179,7 +179,7 @@ function M.prompt(label, default)
         input:setText(current)
       end)
     end
-    local buttonY=math.min(h-1,16)
+    local buttonY=h-1
     screen:addButton({x=2,y=buttonY,width=math.max(1,math.floor((w-4)/2)),height=1,background=colors.green,foreground=colors.black}):setText("Submit"):onClick(function() finish(input:getText()) end)
     screen:addButton({x=3+math.floor((w-4)/2),y=buttonY,width=math.max(1,w-(3+math.floor((w-4)/2))),height=1,background=colors.red,foreground=colors.white}):setText("Cancel"):onClick(function() finish(nil) end)
   else
@@ -203,7 +203,7 @@ function M.api(path, method, token, body, key, extraHeaders)
   local requestBody=body and textutils.serializeJSON(body) or nil
   local ok,accepted,requestErr=pcall(http.request,url,requestBody,headers)
   if not ok then return nil,"Network request could not start: "..tostring(accepted) end
-  if not accepted then return nil,tostring(requestErr or "MineBank request was rejected before sending.") end
+  if not accepted then return nil,tostring(requestErr or "MineBank request was rejected before sending."),0 end
   local timer=os.startTimer(10)
   while true do
     local event,a,b,c,d=os.pullEventRaw()
