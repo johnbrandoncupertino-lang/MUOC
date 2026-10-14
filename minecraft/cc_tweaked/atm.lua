@@ -1,205 +1,211 @@
--- MineBank ATM for CC:Tweaked turtles.
--- Requires a turtle stocked with minecraft:emerald items.
--- Physical dispensing is fail-closed: if interrupted after dispensing begins,
--- the durable journal blocks automatic replay until an operator reconciles it.
+-- MineBank ATM for CC:Tweaked computers.
+-- Uses separate deposit, secure stock/escrow and output inventories.
+-- Never reports a financial operation as successful without authoritative API confirmation.
 
-local API_BASE = "https://muoc-pietroaccordi09-4057.vercel.app/api/v1/minecraft"
-local CARD_FILE = "minebank.card"
-local JOURNAL = "minebank.atm_journal"
-local MAX_WITHDRAWAL = 4096
+local ui=dofile("minebank_ui.lua")
+local CONFIG="minebank_atm.json"
+local JOURNAL="minebank_atm_journal.json"
+local MAX_WITHDRAWAL=4096
+local MAX_TRANSFER=1000
 
-local function pause()
-  print("")
-  print("Press Enter to continue.")
-  read()
+local function save(path,value)
+  local tmp=path..".tmp"
+  local h=fs.open(tmp,"w"); if not h then return false end
+  local ok=pcall(function() h.write(textutils.serializeJSON(value)); h.close() end)
+  if not ok then pcall(function() h.close() end); fs.delete(tmp); return false end
+  if fs.exists(path) then fs.delete(path) end
+  return pcall(function() fs.move(tmp,path) end)
 end
-
-local function writeJournal(value)
-  local h = fs.open(JOURNAL .. ".tmp", "w")
-  if not h then return false end
-  local ok = pcall(function() h.write(textutils.serializeJSON(value)); h.close() end)
-  if not ok then pcall(function() h.close() end); fs.delete(JOURNAL .. ".tmp"); return false end
-  local backup = JOURNAL .. ".bak"
-  if fs.exists(backup) then fs.delete(backup) end
-  if fs.exists(JOURNAL) then fs.move(JOURNAL, backup) end
-  local moved, moveError = pcall(function() fs.move(JOURNAL .. ".tmp", JOURNAL) end)
-  if not moved then return false end
-  if fs.exists(backup) then fs.delete(backup) end
-  return true
+local function load(path)
+  if not fs.exists(path) then return nil end
+  local h=fs.open(path,"r"); if not h then return nil end
+  local raw=h.readAll(); h.close()
+  local ok,v=pcall(textutils.unserializeJSON,raw)
+  if ok and type(v)=="table" then return v end
+  return nil
 end
-
-local function readJournal()
-  if not fs.exists(JOURNAL) then
-    if fs.exists(JOURNAL .. ".tmp") or fs.exists(JOURNAL .. ".bak") then
-      return nil, "ATM journal recovery files exist. Stop and reconcile manually."
+local function countItems(inv,item)
+  local n=0
+  for slot,detail in pairs(inv.list()) do
+    if detail.name==item then n=n+detail.count end
+  end
+  return n
+end
+local function countEmeralds(inv) return countItems(inv,"minecraft:emerald") end
+local function canFit(inv,item,count)
+  local remaining=count
+  for slot=1,inv.size() do
+    local d=inv.getItemDetail(slot)
+    if not d then remaining=remaining-64
+    elseif d.name==item then remaining=remaining-math.max(0,64-d.count) end
+    if remaining<=0 then return true end
+  end
+  return false
+end
+local function moveEmeralds(source,destination)
+  local moved=0
+  for slot,detail in pairs(source.list()) do
+    if detail.name=="minecraft:emerald" then
+      local n=source.pushItems(destination,slot,detail.count)
+      moved=moved+n
     end
-    return nil
   end
-  local h = fs.open(JOURNAL, "r")
-  if not h then return nil, "The ATM journal cannot be opened." end
-  local raw = h.readAll()
-  h.close()
-  local ok, data = pcall(textutils.unserializeJSON, raw)
-  if not ok or type(data) ~= "table" then return nil, "The ATM journal is corrupt. Stop and reconcile manually." end
-  return data
+  return moved
 end
-
-local function loadCard()
-  local drive = peripheral.find("drive")
-  if not drive or not drive.isDiskPresent or not drive.isDiskPresent() then return nil, "Insert a MineBank card floppy." end
-  local mount = drive.getMountPath and drive.getMountPath()
-  if not mount or not fs.exists(mount) then return nil, "The card floppy is not mounted." end
-  local path = fs.combine(mount, CARD_FILE)
-  if not fs.exists(path) then return nil, "No MineBank card was found on this floppy." end
-  local h = fs.open(path, "r")
-  if not h then return nil, "Cannot read the card file." end
-  local raw = h.readAll(); h.close()
-  local ok, card = pcall(textutils.unserializeJSON, raw)
-  if not ok or type(card) ~= "table" or type(card.credential) ~= "string" or not card.credential:find("^mbmc_") then
-    return nil, "Invalid MineBank card file."
-  end
+local function draw(cfg)
+  ui.clear(); ui.header("ATM","Secure terminal • physical emeralds = MineBank Emeralds")
+  print("1) Withdraw emeralds")
+  print("2) Deposit emeralds")
+  print("3) Transfer to another account (max 1,000)")
+  print("4) Recent transactions")
+  print("5) Revoke a card")
+  print("6) Setup / diagnostics")
+  print("7) Exit")
+  write("> "); return tonumber(read())
+end
+local function getCard()
+  local card,err=ui.card()
+  if not card then ui.message(err,false); ui.pause(); return nil end
   return card
 end
-
-local function apiPost(path, cardToken, body, idempotencyKey)
-  local headers = { ["Accept"]="application/json", ["Content-Type"]="application/json" }
-  if cardToken then headers["Authorization"] = "Bearer " .. cardToken end
-  if idempotencyKey then headers["Idempotency-Key"] = idempotencyKey end
-  local response, err = http.post(API_BASE .. path, textutils.serializeJSON(body), headers)
-  if not response then return nil, tostring(err or "network error") end
-  local status = response.getResponseCode and response.getResponseCode() or 200
-  local raw = response.readAll(); response.close()
-  local ok, data = pcall(textutils.unserializeJSON, raw)
-  if not ok or type(data) ~= "table" then return nil, "Invalid MineBank response (HTTP " .. status .. ")." end
-  if status < 200 or status >= 300 then return nil, tostring(data.error or ("HTTP " .. status)) end
-  return data
+local function pin()
+  local p=ui.secret("Wallet PIN (6 digits): ")
+  if not p or not p:match("^%d%d%d%d%d%d$") then ui.message("PIN must contain six digits.",false); return nil end
+  return p
 end
-
-local function emeraldCount()
-  local total = 0
-  for slot = 1, 16 do
-    local item = turtle.getItemDetail(slot)
-    if item and item.name == "minecraft:emerald" then total = total + item.count end
-  end
-  return total
+local function ensureConfig()
+  local cfg=load(CONFIG)
+  if cfg then ui.API_BASE=(cfg.api_base or ui.API_BASE):gsub("/+$",""); return cfg end
+  ui.clear(); ui.header("ATM SETUP","Guided peripheral configuration")
+  local base=ui.prompt("HTTPS MineBank API base",ui.API_BASE)
+  if not base:match("^https://") then return nil,"API base must use HTTPS." end
+  ui.API_BASE=base:gsub("/+$","")
+  local names=ui.findInventory()
+  if #names<3 then return nil,"Connect deposit, secure stock/escrow and output inventories, then rerun setup." end
+  print("Detected inventories:")
+  for i,n in ipairs(names) do print(i..") "..n) end
+  local d=tonumber(ui.prompt("Deposit inventory number"))
+  local s=tonumber(ui.prompt("Secure stock/escrow inventory number"))
+  local o=tonumber(ui.prompt("Output inventory number"))
+  if not names[d] or not names[s] or not names[o] or d==s or d==o or s==o then return nil,"Select three different inventory numbers." end
+  local cfg={api_base=ui.API_BASE,deposit_inventory=names[d],stock_inventory=names[s],output_inventory=names[o]}
+  if not save(CONFIG,cfg) then return nil,"Could not save ATM configuration." end
+  return cfg
 end
+local cfg,cfgErr=ensureConfig()
+if not cfg then ui.message(cfgErr,false); ui.pause(); return end
+if not http then ui.message("Enable the CC:Tweaked HTTP API and allow the MineBank HTTPS host.",false); ui.pause(); return end
+local depositInv=ui.inventory(cfg.deposit_inventory)
+local stockInv=ui.inventory(cfg.stock_inventory)
+local outputInv=ui.inventory(cfg.output_inventory)
+if not depositInv or not stockInv or not outputInv then ui.message("Configured inventory missing. Run setup again.",false); ui.pause(); return end
 
-local function dispense(amount)
-  local remaining = amount
-  for slot = 1, 16 do
-    if remaining <= 0 then break end
-    local item = turtle.getItemDetail(slot)
-    if item and item.name == "minecraft:emerald" then
-      turtle.select(slot)
-      local toDrop = math.min(remaining, item.count, 64)
-      local before = turtle.getItemCount(slot)
-      local ok = turtle.drop(toDrop)
-      local after = turtle.getItemCount(slot)
-      if not ok then return false, "The turtle could not dispense emeralds. Do not retry automatically." end
-      local moved = before - after
-      if moved <= 0 or moved > toDrop then return false, "The dispense count could not be verified. Do not retry automatically." end
-      remaining = remaining - moved
-      if moved < toDrop then return false, "The output accepted only part of the withdrawal. Do not retry automatically." end
+local function runWithdrawal()
+  local card=getCard(); if not card then return end
+  local p=pin(); if not p then return end
+  local amount=tonumber(ui.prompt("Whole Emeralds to withdraw (1-"..MAX_WITHDRAWAL..")"))
+  if not amount or amount%1~=0 or amount<1 or amount>MAX_WITHDRAWAL then ui.message("Invalid withdrawal amount.",false); ui.pause(); return end
+  if countEmeralds(stockInv)<amount then ui.message("Secure stock does not contain enough emeralds.",false); ui.pause(); return end
+  if not canFit(outputInv,"minecraft:emerald",amount) then ui.message("Output inventory lacks space. No debit requested.",false); ui.pause(); return end
+  local old=load(JOURNAL)
+  if old and old.state~="COMPLETE" then ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.pause(); return end
+  local order={version=1,key=ui.key("withdraw"),amount=amount,state="REQUEST_PENDING",kind="WITHDRAWAL"}
+  if not save(JOURNAL,order) then ui.message("Could not persist journal. No request sent.",false); ui.pause(); return end
+  local result,err=ui.api("/withdrawals","POST",card.credential,{amount=amount,wallet_pin=p},order.key)
+  if not result then ui.message("Withdrawal not confirmed: "..tostring(err)..". Re-run only after checking the saved journal.",false); ui.pause(); return end
+  order.state="AUTHORIZED"; order.transaction_id=result.transaction_id
+  if not save(JOURNAL,order) then ui.message("MineBank debited the account but the local ticket could not be saved. Do not dispense.",false); ui.pause(); return end
+  order.state="DISPENSE_STARTED"
+  if not save(JOURNAL,order) then ui.message("Could not lock the dispense journal. No items moved; operator reconciliation required.",false); ui.pause(); return end
+  local remaining=amount
+  for slot,detail in pairs(stockInv.list()) do
+    if detail.name=="minecraft:emerald" and remaining>0 then
+      local moved=stockInv.pushItems(cfg.output_inventory,slot,math.min(remaining,detail.count))
+      remaining=remaining-moved
+      if moved<=0 then break end
     end
   end
-  if remaining > 0 then return false, "Dispensing stopped early. Do not retry automatically." end
-  return true
+  if remaining>0 then ui.message("Partial dispense detected. Do not retry. Operator reconciliation required.",false); ui.pause(); return end
+  order.state="COMPLETE"; order.completed_at=os.epoch("utc")
+  if not save(JOURNAL,order) then ui.message("Items moved but journal completion failed. Lock ATM and reconcile.",false); ui.pause(); return end
+  ui.message("WITHDRAWAL COMPLETE — "..amount.." Emeralds",true)
+  print("Transaction: "..tostring(result.transaction_id)); ui.pause()
 end
 
-term.clear(); term.setCursorPos(1,1)
-print("MineBank | ATM")
-print("The New Bank")
-print("------------------------------")
-if not API_BASE:match("^https://") or API_BASE:find("YOUR%-MINEBANK%-DOMAIN") then
-  print("SETUP ERROR: configure the HTTPS API_BASE."); pause(); return
-end
-if not http then print("Enable the CC:Tweaked HTTP API."); pause(); return end
-if not turtle then print("This ATM program must run on a turtle to dispense items."); pause(); return end
-
-local old, journalError = readJournal()
-if journalError then print(journalError); pause(); return end
-if old and old.state ~= "COMPLETE" and old.state ~= "REQUEST_PENDING" and old.state ~= "AUTHORIZED" then
-  print("ATM RECONCILIATION REQUIRED")
-  print("Physical dispensing had started and cannot safely be replayed.")
-  print("Withdrawal key: " .. tostring(old.key))
-  print("State: " .. tostring(old.state))
-  print("An operator must reconcile the physical item output and MineBank ledger.")
-  pause(); return
-end
-
-local card, cardError = loadCard()
-if not card then print(cardError); pause(); return end
-
-local amount, key, journal, result
-if old and old.state == "REQUEST_PENDING" then
-  amount, key, journal = old.amount, old.key, old
-  print("Resuming the same pending request: " .. tostring(key))
-elseif old and old.state == "AUTHORIZED" then
-  amount, key, journal = old.amount, old.key, old
-  result = { transaction_id=old.transaction_id, withdrawal_id=old.withdrawal_id, amount=old.amount }
-  print("Resuming an authorized withdrawal: " .. tostring(key))
-else
-  write("Emeralds to withdraw (1-" .. MAX_WITHDRAWAL .. "): ")
-  local amountText = read()
-  amount = tonumber(amountText)
-  if not amount or amount % 1 ~= 0 or amount < 1 or amount > MAX_WITHDRAWAL then
-    print("Enter a whole Emerald amount within the permitted limit."); pause(); return
-  end
-  amount = math.floor(amount)
-  key = tostring(os.epoch("utc")) .. "-" .. tostring(os.getComputerID()) .. "-" .. tostring(math.random(100000,999999))
-  journal = { version=1, key=key, amount=amount, state="REQUEST_PENDING", created_at=os.epoch("utc") }
-  if not writeJournal(journal) then print("Could not persist the ATM journal. No request was sent."); pause(); return end
-end
-
-if emeraldCount() < amount then
-  print("ATM inventory is short. Stock at least " .. amount .. " Emeralds before resuming."); pause(); return
-end
-
-if journal.state == "REQUEST_PENDING" then
-  print("")
-  print("Requesting " .. amount .. " Emeralds from MineBank...")
-  local err
-  result, err = apiPost("/withdrawals", card.credential, {amount=amount}, key)
+local function runDeposit()
+  local card=getCard(); if not card then return end
+  local p=pin(); if not p then return end
+  local old=load(JOURNAL)
+  if old and old.state~="COMPLETE" then ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.pause(); return end
+  local amount=countEmeralds(depositInv)
+  if amount<1 then ui.message("Place emeralds in the deposit inventory first.",false); ui.pause(); return end
+  if amount>4096 then ui.message("Deposit is limited to 4,096 Emeralds per operation.",false); ui.pause(); return end
+  local order={version=1,key=ui.key("deposit"),amount=amount,state="ESCROW_PENDING",kind="DEPOSIT"}
+  if not save(JOURNAL,order) then ui.message("Could not persist deposit journal; items left untouched.",false); ui.pause(); return end
+  local moved=moveEmeralds(depositInv,cfg.stock_inventory)
+  if moved~=amount then ui.message("Only "..moved.." of "..amount.." Emeralds entered escrow. Stop and reconcile.",false); ui.pause(); return end
+  order.state="REQUEST_PENDING"
+  if not save(JOURNAL,order) then ui.message("Emeralds are secured in escrow but journal failed. Do not move them.",false); ui.pause(); return end
+  local result,err=ui.api("/deposits","POST",card.credential,{amount=amount,wallet_pin=p},order.key)
   if not result then
-    print("Withdrawal not confirmed: " .. err)
-    print("The same request key is saved. Re-run to safely retry this exact request.")
-    pause(); return
+    ui.message("Deposit not confirmed: "..tostring(err)..". Emeralds remain in secure stock; rerun to retry the same operation.",false)
+    ui.pause(); return
   end
-  journal.state = "AUTHORIZED"
-  journal.transaction_id = result.transaction_id
-  journal.withdrawal_id = result.withdrawal_id
-  if not writeJournal(journal) then
-    print("MineBank debited the balance, but the local ticket could not be saved.")
-    print("Do not dispense. Preserve the journal and contact the operator.")
-    pause(); return
-  end
+  order.state="COMPLETE"; order.transaction_id=result.transaction_id; order.completed_at=os.epoch("utc")
+  if not save(JOURNAL,order) then ui.message("MineBank confirmed the deposit but journal update failed. Preserve the operation key and reconcile.",false); ui.pause(); return end
+  ui.message("DEPOSIT COMPLETE — "..amount.." Emeralds",true)
+  print("Transaction: "..tostring(result.transaction_id)); ui.pause()
 end
 
-print("MineBank debit confirmed: " .. tostring(result.transaction_id))
-print("Preparing the physical dispense...")
-journal.state = "DISPENSE_STARTED"
-if not writeJournal(journal) then
-  print("Could not persist the dispense lock. No items were dispensed.")
-  print("Balance is already debited; contact the operator for reconciliation.")
-  pause(); return
+local function runTransfer()
+  local card=getCard(); if not card then return end
+  local p=pin(); if not p then return end
+  local recipient=ui.prompt("Recipient account number")
+  local amount=tonumber(ui.prompt("Amount in Emeralds (1-1000)"))
+  if not amount or amount%1~=0 or amount<1 or amount>MAX_TRANSFER then ui.message("Transfers are limited to 1,000 Emeralds. Use the portal for larger transfers.",false); ui.pause(); return end
+  ui.clear(); ui.header("CONFIRM TRANSFER")
+  print("Recipient: "..recipient); print("Amount: "..amount.." Emeralds")
+  write("Type TRANSFER to confirm: ")
+  if read()~="TRANSFER" then ui.message("Cancelled. No transfer submitted.",true); ui.pause(); return end
+  local result,err=ui.api("/transfers","POST",card.credential,
+    {recipient_account_number=recipient,amount=amount,wallet_pin=p},ui.key("transfer"))
+  if not result then ui.message("Transfer not confirmed: "..tostring(err),false)
+  else ui.message("TRANSFER COMPLETE — "..amount.." Emeralds",true); print("Transaction: "..tostring(result.transaction_id)); print("Fee: "..tostring(result.fee or 0)) end
+  ui.pause()
 end
 
-local ok, dispenseError = dispense(amount)
-if not ok then
-  print("DISPENSE ERROR: " .. dispenseError)
-  print("The withdrawal remains debited. Do not retry; operator reconciliation is required.")
-  pause(); return
+local function runHistory()
+  local card=getCard(); if not card then return end
+  local result,err=ui.api("/history","GET",card.credential)
+  if not result then ui.message("History unavailable: "..tostring(err),false)
+  else
+    ui.clear(); ui.header("RECENT TRANSACTIONS")
+    for _,tx in ipairs(result.history or {}) do
+      print(tostring(tx.type).." | "..tostring(tx.amount).." | "..tostring(tx.status))
+      print("  "..tostring(tx.transaction_id).." "..tostring(tx.description):sub(1,30))
+    end
+  end
+  ui.pause()
 end
-journal.state = "COMPLETE"
-journal.completed_at = os.epoch("utc")
-if not writeJournal(journal) then
-  print("Items were dispensed, but completion could not be recorded.")
-  print("The ATM is locked against another withdrawal until operator reconciliation.")
-  pause(); return
+
+while true do
+  local choice=draw(cfg)
+  if choice==1 then runWithdrawal()
+  elseif choice==2 then runDeposit()
+  elseif choice==3 then runTransfer()
+  elseif choice==4 then runHistory()
+  elseif choice==5 then ui.message("For now, revoke a lost card in the MineBank portal or through the Bank Assistant.",false); ui.pause()
+  elseif choice==6 then
+    ui.clear(); ui.header("DIAGNOSTICS")
+    print("API: "..ui.API_BASE)
+    print("Deposit inventory: "..cfg.deposit_inventory)
+    print("Secure stock/escrow: "..cfg.stock_inventory)
+    print("Output inventory: "..cfg.output_inventory)
+    print("Deposit emeralds: "..countEmeralds(depositInv))
+    print("Stock emeralds: "..countEmeralds(stockInv))
+    print("Output emeralds: "..countEmeralds(outputInv))
+    print("HTTP enabled: "..tostring(http~=nil))
+    ui.pause()
+  else break end
 end
-print("")
-print("WITHDRAWAL COMPLETE")
-print("Transaction: " .. tostring(result.transaction_id))
-print("Dispensed: " .. amount .. " Emerald items")
-print("Balance was deducted by MineBank before dispensing.")
-pause()
+ui.clear(); ui.header("MINEBANK ATM","Thank you for banking with MineBank.")
