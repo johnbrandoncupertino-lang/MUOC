@@ -54,11 +54,12 @@ function M.prompt(label, default)
   return v
 end
 
-function M.api(path, method, token, body, key)
+function M.api(path, method, token, body, key, extraHeaders)
   if not http then return nil, "Enable the CC:Tweaked HTTP API in server settings." end
   local headers = {Accept="application/json", ["Content-Type"]="application/json"}
   if token then headers.Authorization = "Bearer "..token end
   if key then headers["Idempotency-Key"] = key end
+  for name,value in pairs(extraHeaders or {}) do headers[name]=value end
   local opts = {url=M.API_BASE..path, method=method or (body and "POST" or "GET"), headers=headers, timeout=15}
   if body then opts.body = textutils.serializeJSON(body) end
   local ok, response, err = pcall(http.request, opts)
