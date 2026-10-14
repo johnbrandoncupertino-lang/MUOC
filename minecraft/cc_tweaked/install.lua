@@ -113,6 +113,9 @@ end
 
 fs.delete(tempDir)
 fs.delete(backupDir)
+-- Balance is now an ATM service, not a separate installed program.
+local oldBalanceReader=fs.combine(TARGET,"balance_reader.lua")
+if fs.exists(oldBalanceReader) then fs.delete(oldBalanceReader) end
 say("")
 say("INSTALLATION COMPLETE", colors.lime)
 say(installed .. " files installed in /" .. TARGET .. ".", colors.white)
