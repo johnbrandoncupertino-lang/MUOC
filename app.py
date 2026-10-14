@@ -2108,6 +2108,205 @@ def minebank_minecraft_cards_page():
     return render_template("minecraft_cards.html", cards=cards, error=error,
                            portal_active="minecraft_cards")
 
+
+@app.route("/portal/minecraft-shops", methods=["GET", "POST"])
+@require_login
+def minebank_minecraft_shops_page():
+    """Self-service merchant credentials, restricted to a Business account owner."""
+    client_id = session["minebank_client_id"]
+    client = current_client()
+    error = None
+    created_token = None
+    created_shop_name = None
+    created_account_number = None
+    from bank_lib.database import get_db_connection, release_db_connection
+
+    def eligible_business_accounts(cur, lock=False):
+        cur.execute(
+            """SELECT a.id,a.account_number,a.status
+               FROM bank_accounts a
+               JOIN bank_clients c ON c.id=a.client_id
+               WHERE a.client_id=%s AND a.account_type='BUSINESS'
+                 AND a.status='ACTIVE' AND c.status='ACTIVE' AND c.role='CLIENT'
+                 AND EXISTS (
+                     SELECT 1 FROM minebank_business_members bm
+                     WHERE bm.account_id=a.id AND bm.client_id=%s AND bm.role='OWNER'
+                 )
+               ORDER BY a.id""" + (" FOR UPDATE OF a" if lock else ""),
+            (client_id, client_id),
+        )
+        return cur.fetchall()
+
+    if not client or client.get("role") != "CLIENT":
+        flash("Minecraft Shops are available only to Business account owners.", "error")
+        return redirect(url_for("minebank_dashboard"))
+
+    if request.method == "POST":
+        supplied_csrf = request.form.get("csrf_token", "")
+        try:
+            if not supplied_csrf or not secrets.compare_digest(supplied_csrf, session.get("csrf", "")):
+                raise ValueError("Your security token expired. Reload the page and try again.")
+            action = request.form.get("action", "").strip().lower()
+            wallet_pin = str(request.form.get("wallet_pin", ""))
+            if len(wallet_pin) != 6 or not wallet_pin.isdigit():
+                raise ValueError("Enter your six-digit Wallet PIN to manage a shop credential.")
+            pin_ok, pin_message = verify_wallet_pin(client_id, wallet_pin)
+            if not pin_ok:
+                raise ValueError(pin_message or "Wallet PIN verification failed.")
+
+            conn = get_db_connection()
+            if conn is None:
+                raise RuntimeError("MineBank is temporarily unavailable.")
+            try:
+                with conn:
+                    with conn.cursor() as cur:
+                        # Lock the customer's profile and the eligible Business accounts before
+                        # creating credentials, preventing a concurrent status change from racing.
+                        cur.execute("SELECT id,status,role FROM bank_clients WHERE id=%s FOR UPDATE", (client_id,))
+                        profile = cur.fetchone()
+                        if not profile or profile[1] != "ACTIVE" or profile[2] != "CLIENT":
+                            raise ValueError("Your MineBank profile is not eligible to manage Minecraft Shops.")
+                        accounts = eligible_business_accounts(cur, lock=True)
+                        account_map = {int(row[0]): row for row in accounts}
+
+                        if action == "create":
+                            try:
+                                account_id = int(request.form.get("account_id", "0"))
+                            except (TypeError, ValueError):
+                                raise ValueError("Choose an eligible Business account.")
+                            account = account_map.get(account_id)
+                            if not account:
+                                raise ValueError("Choose an active Business account that you own.")
+                            name = str(request.form.get("display_name", "")).strip()[:120]
+                            if not name:
+                                raise ValueError("Enter a shop name.")
+                            if len(name) < 2:
+                                raise ValueError("The shop name must contain at least two characters.")
+                            token = "mbmerchant_" + secrets.token_urlsafe(32)
+                            digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+                            cur.execute(
+                                """INSERT INTO minebank_minecraft_merchants
+                                   (client_id,account_id,token_hash,display_name,active)
+                                   VALUES(%s,%s,%s,%s,TRUE) RETURNING id""",
+                                (client_id, account_id, digest, name),
+                            )
+                            merchant_id = cur.fetchone()[0]
+                            cur.execute(
+                                """INSERT INTO audit_events
+                                   (actor_client_id,action,target_type,target_id,account_id,ip_address,context)
+                                   VALUES(%s,'MINECRAFT_MERCHANT_CREATED','MINECRAFT_MERCHANT',%s,%s,%s::inet,
+                                          jsonb_build_object('source','portal','shop_name',%s))""",
+                                (client_id, str(merchant_id), account_id, request.remote_addr, name),
+                            )
+                            created_token = token
+                            created_shop_name = name
+                            created_account_number = account[1]
+
+                        elif action in {"revoke", "rotate"}:
+                            try:
+                                merchant_id = int(request.form.get("merchant_id", "0"))
+                            except (TypeError, ValueError):
+                                raise ValueError("Choose a valid shop.")
+                            cur.execute(
+                                """SELECT m.id,m.account_id,m.display_name,a.account_number
+                                   FROM minebank_minecraft_merchants m
+                                   JOIN bank_accounts a ON a.id=m.account_id AND a.client_id=m.client_id
+                                   WHERE m.id=%s AND m.client_id=%s AND m.active=TRUE
+                                     AND a.account_type='BUSINESS' AND a.status='ACTIVE'
+                                     AND EXISTS (
+                                         SELECT 1 FROM minebank_business_members bm
+                                         WHERE bm.account_id=a.id AND bm.client_id=%s AND bm.role='OWNER'
+                                     )
+                                   FOR UPDATE OF m,a""",
+                                (merchant_id, client_id, client_id),
+                            )
+                            shop = cur.fetchone()
+                            if not shop:
+                                raise ValueError("Active shop not found, or you are no longer its Business owner.")
+                            cur.execute(
+                                "UPDATE minebank_minecraft_merchants SET active=FALSE WHERE id=%s AND client_id=%s AND active=TRUE",
+                                (merchant_id, client_id),
+                            )
+                            if action == "rotate":
+                                token = "mbmerchant_" + secrets.token_urlsafe(32)
+                                digest = hashlib.sha256(token.encode("utf-8")).hexdigest()
+                                cur.execute(
+                                    """INSERT INTO minebank_minecraft_merchants
+                                       (client_id,account_id,token_hash,display_name,active)
+                                       VALUES(%s,%s,%s,%s,TRUE) RETURNING id""",
+                                    (client_id, shop[1], digest, shop[2]),
+                                )
+                                new_merchant_id = cur.fetchone()[0]
+                                cur.execute(
+                                    """INSERT INTO audit_events
+                                       (actor_client_id,action,target_type,target_id,account_id,ip_address,context)
+                                       VALUES(%s,'MINECRAFT_MERCHANT_ROTATED','MINECRAFT_MERCHANT',%s,%s,%s::inet,
+                                              jsonb_build_object('source','portal','replaced_merchant_id',%s))""",
+                                    (client_id, str(new_merchant_id), shop[1], request.remote_addr, merchant_id),
+                                )
+                                created_token = token
+                                created_shop_name = shop[2]
+                                created_account_number = shop[3]
+                            else:
+                                cur.execute(
+                                    """INSERT INTO audit_events
+                                       (actor_client_id,action,target_type,target_id,account_id,ip_address,context)
+                                       VALUES(%s,'MINECRAFT_MERCHANT_REVOKED','MINECRAFT_MERCHANT',%s,%s,%s::inet,
+                                              jsonb_build_object('source','portal'))""",
+                                    (client_id, str(merchant_id), shop[1], request.remote_addr),
+                                )
+            finally:
+                release_db_connection(conn)
+
+            if action == "revoke":
+                flash("Shop credential revoked. It can no longer create new checkouts.", "success")
+            elif action == "rotate":
+                flash("Shop credential replaced. The previous credential has been revoked.", "success")
+        except ValueError as exc:
+            error = str(exc)
+        except Exception as exc:
+            app.logger.error("Minecraft Shop portal action failed: %s", type(exc).__name__)
+            error = "The shop could not be updated. Please try again later."
+
+    try:
+        accounts = execute_query_dict(
+            """SELECT a.id,a.account_number,t.display_name AS tier_name
+               FROM bank_accounts a
+               JOIN bank_clients c ON c.id=a.client_id
+               JOIN account_tiers_v2 t ON t.id=a.tier_id
+               WHERE a.client_id=%s AND a.account_type='BUSINESS'
+                 AND a.status='ACTIVE' AND c.status='ACTIVE' AND c.role='CLIENT'
+                 AND EXISTS (
+                     SELECT 1 FROM minebank_business_members bm
+                     WHERE bm.account_id=a.id AND bm.client_id=%s AND bm.role='OWNER'
+                 )
+               ORDER BY a.id""",
+            (client_id, client_id),
+        )
+        shops = execute_query_dict(
+            """SELECT m.id,m.display_name,m.active,m.created_at,a.account_number,a.id AS account_id,
+                      a.status AS account_status
+               FROM minebank_minecraft_merchants m
+               JOIN bank_accounts a ON a.id=m.account_id AND a.client_id=m.client_id
+               WHERE m.client_id=%s AND a.account_type='BUSINESS'
+               ORDER BY m.created_at DESC,m.id DESC""",
+            (client_id,),
+        )
+    except Exception as exc:
+        app.logger.error("Minecraft Shop list failed: %s", type(exc).__name__)
+        accounts, shops = [], []
+        if not error:
+            error = "Minecraft Shop management is temporarily unavailable. Please try again later."
+
+    response = app.make_response(render_template(
+        "minecraft_shops.html", accounts=accounts, shops=shops, error=error,
+        created_token=created_token, created_shop_name=created_shop_name,
+        created_account_number=created_account_number, portal_active="minecraft_shops",
+    ))
+    response.headers["Cache-Control"] = "no-store, private"
+    response.headers["Pragma"] = "no-cache"
+    return response
+
 @app.route("/portal/security", methods=["GET","POST"])
 @require_login
 def minebank_security_page():
