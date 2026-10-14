@@ -259,16 +259,76 @@ function M.key(prefix)
   return tostring(prefix or "mb").."-"..tostring(os.epoch("utc")).."-"..tostring(os.getComputerID()).."-"..tostring(math.random(100000,999999))
 end
 
+-- Return a usable inventory wrapper, with a diagnostic reason when it is not one.
+-- Probe the methods the ATM actually uses instead of silently treating every
+-- peripheral-wrap failure as "no chest connected".
 function M.inventory(name)
-  if not name or name=="" then return nil end
+  if type(name)~="string" or name=="" then return nil,"empty peripheral name" end
+  if not peripheral or type(peripheral.wrap)~="function" then return nil,"peripheral API unavailable" end
   local ok,inv=pcall(peripheral.wrap,name)
-  if not ok or not inv or not inv.list or not inv.pushItems then return nil end
+  if not ok then return nil,"wrap failed: "..tostring(inv) end
+  if type(inv)~="table" then return nil,"peripheral is not available" end
+  local required={"list","size","getItemDetail","pushItems"}
+  for _,method in ipairs(required) do
+    if type(inv[method])~="function" then return nil,"missing method "..method end
+  end
+  local probeOk,probeErr=pcall(function()
+    local size=inv.size()
+    local contents=inv.list()
+    if type(size)~="number" or size<1 then error("invalid inventory size") end
+    if type(contents)~="table" then error("list() did not return a table") end
+  end)
+  if not probeOk then return nil,"inventory probe failed: "..tostring(probeErr) end
   return inv
 end
 
+local function peripheralTypeLabel(name)
+  if peripheral and type(peripheral.getType)=="function" then
+    local ok,value=pcall(peripheral.getType,name)
+    if ok then
+      if type(value)=="table" then
+        table.sort(value)
+        return table.concat(value,"/")
+      elseif value~=nil then
+        return tostring(value)
+      end
+    end
+  end
+  return "unknown type"
+end
+
+function M.inventoryDiagnostics()
+  local rows={}
+  if not peripheral or type(peripheral.getNames)~="function" then
+    return {"Peripheral API unavailable; this must run on a CC:Tweaked computer."}
+  end
+  local ok,names=pcall(peripheral.getNames)
+  if not ok or type(names)~="table" then
+    return {"Could not enumerate peripherals: "..tostring(names)}
+  end
+  table.sort(names)
+  if #names==0 then return {"No peripherals are visible to this computer."} end
+  for _,name in ipairs(names) do
+    local inv,reason=M.inventory(name)
+    local label=tostring(name).." ["..peripheralTypeLabel(name).."]"
+    if inv then
+      rows[#rows+1]=label.." — INVENTORY OK"
+    else
+      rows[#rows+1]=label.." — not usable as ATM storage: "..tostring(reason or "unknown reason")
+    end
+  end
+  return rows
+end
+
 function M.findInventory()
-  local names=peripheral.getNames(); local found={}
-  for _,name in ipairs(names) do if M.inventory(name) then found[#found+1]=name end end
+  local found={}
+  if not peripheral or type(peripheral.getNames)~="function" then return found end
+  local ok,names=pcall(peripheral.getNames)
+  if not ok or type(names)~="table" then return found end
+  table.sort(names)
+  for _,name in ipairs(names) do
+    if M.inventory(name) then found[#found+1]=name end
+  end
   return found
 end
 
