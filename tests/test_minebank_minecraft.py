@@ -152,3 +152,86 @@ def test_minecraft_money_movement_requires_separate_feature_flag(monkeypatch):
     )
     assert response.status_code == 404
     assert response.get_json()["error"] == "Minecraft transactions are disabled."
+
+
+def test_minecraft_withdrawal_requires_wallet_pin(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/minecraft/withdrawals",
+        json={"amount": 10},
+        headers={"Authorization": "Bearer mbmc_" + "x" * 48,
+                 "Idempotency-Key": "atm-pin-required", "X-Forwarded-Proto": "https"},
+    )
+    assert response.status_code == 401
+    assert "Wallet PIN" in response.get_json()["error"]
+
+
+def test_minecraft_deposit_requires_wallet_pin(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/minecraft/deposits",
+        json={"amount": 10},
+        headers={"Authorization": "Bearer mbmc_" + "x" * 48,
+                 "Idempotency-Key": "atm-deposit-pin-required", "X-Forwarded-Proto": "https"},
+    )
+    assert response.status_code == 401
+    assert "Wallet PIN" in response.get_json()["error"]
+
+
+def test_minecraft_transfer_limit_is_enforced_before_database_access(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/minecraft/transfers",
+        json={"amount": 1001, "recipient_account_number": "MB123", "wallet_pin": "123456"},
+        headers={"Authorization": "Bearer mbmc_" + "x" * 48,
+                 "Idempotency-Key": "transfer-over-limit", "X-Forwarded-Proto": "https"},
+    )
+    assert response.status_code == 400
+    assert "1 to 1000" in response.get_json()["error"]
+
+
+def test_minecraft_payment_requires_wallet_pin(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/minecraft/payments",
+        json={"checkout_id": "123"},
+        headers={"Authorization": "Bearer mbmc_" + "x" * 48,
+                 "Idempotency-Key": "payment-pin-required", "X-Forwarded-Proto": "https"},
+    )
+    assert response.status_code == 401
+    assert "Wallet PIN" in response.get_json()["error"]
+
+
+def test_minecraft_self_revoke_requires_explicit_confirmation(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+    client = app.test_client()
+    response = client.post(
+        "/api/v1/minecraft/cards/revoke-self",
+        json={"wallet_pin": "123456"},
+        headers={"Authorization": "Bearer mbmc_" + "x" * 48, "X-Forwarded-Proto": "https"},
+    )
+    assert response.status_code == 400
+    assert "confirmation" in response.get_json()["error"].lower()
