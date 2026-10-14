@@ -96,7 +96,7 @@ function M.choose(title, options, subtitle)
 end
 function M.message(text, good)
   local w,h=term.getSize()
-  local value=tostring(text or ""):gsub("[\\r\\n]+"," ")
+  local value=tostring(text or ""):gsub("[\r\n]+"," ")
   local lines={}
   local line=""
   for word in value:gmatch("%S+") do
