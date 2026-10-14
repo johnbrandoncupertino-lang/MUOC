@@ -7,15 +7,10 @@ local CARD_FILE = "minebank.card"
 local ui = dofile("minebank_ui.lua")
 ui.API_BASE = API_BASE
 
-local function pause()
-  print("")
-  print("Press Enter to continue.")
-  read()
-end
+local function pause() ui.pause() end
 
 local function secret(prompt)
-  write(prompt)
-  return read("*")
+  return ui.secret(prompt)
 end
 
 local function requestJson(url, body, headers)
@@ -83,13 +78,11 @@ local function getDriveAndMount()
   return drive, mount, nil
 end
 
-ui.clear()
-ui.header("BANK ASSISTANT", "Card linking • basic help • secure setup")
-print("1) Link / issue a MineBank floppy card")
-print("2) Frequently asked questions")
-print("3) Exit")
-write("> ")
-local action = tonumber(read())
+local action = ui.choose("BANK ASSISTANT", {
+  "Link / issue a MineBank floppy card",
+  "Frequently asked questions",
+  "Exit"
+}, "Touch an option. Passwords and PINs are never stored on the floppy.")
 if action == 2 then
   ui.clear(); ui.header("BANK ASSISTANT", "Frequently asked questions")
   print("Cards: your floppy stores a revocable card credential, not your password or PIN.")
@@ -130,10 +123,8 @@ if driveError then
   return
 end
 
-write("MineBank email: ")
-local email = read()
+local email = ui.prompt("MineBank email")
 local password = secret("MineBank password: ")
-print("")
 local pin = secret("Wallet PIN (6 digits): ")
 print("")
 
@@ -163,36 +154,17 @@ if #accounts == 0 then
   return
 end
 
-print("")
-print("Choose the account to link to this card:")
-for i, account in ipairs(accounts) do
-  print(string.format(
-    "%d) %s | %s | %s | Balance: %s Emeralds",
-    i,
-    tostring(account.account_type),
-    tostring(account.tier),
-    tostring(account.account_number),
-    tostring(account.balance)
-  ))
+local accountOptions={}
+for i,account in ipairs(accounts) do
+  accountOptions[#accountOptions+1]=string.format("%s | %s | %s | %s Emeralds",
+    tostring(account.account_type),tostring(account.tier),tostring(account.account_number),tostring(account.balance))
 end
-print("")
-write("Account number in list: ")
-local choice = tonumber(read())
-if not choice or choice < 1 or choice > #accounts or choice % 1 ~= 0 then
-  print("Invalid selection.")
-  pause()
-  return
-end
-local selected = accounts[choice]
+local choice=ui.choose("SELECT ACCOUNT",accountOptions,"Choose the account to link to this floppy card.")
+if not choice or not accounts[choice] then print("Cancelled. No card was issued."); pause(); return end
+local selected=accounts[choice]
 
-print("")
-print("Issue a MineBank card for account " .. tostring(selected.account_number) .. "?")
-write("Type ISSUE to confirm: ")
-if read() ~= "ISSUE" then
-  print("Cancelled. No card was issued.")
-  pause()
-  return
-end
+local confirmIssue=ui.choose("ISSUE CARD",{"Issue card","Cancel"},"Account "..tostring(selected.account_number)..". The floppy will contain a revocable card credential.")
+if confirmIssue~=1 then ui.message("Cancelled. No card was issued.",true); pause(); return end
 
 print("")
 print("Issuing card...")

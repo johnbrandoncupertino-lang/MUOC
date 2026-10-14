@@ -5,7 +5,7 @@ These programs connect CC:Tweaked computers/turtles to the feature-flagged MineB
 ## Programs
 
 - `branch_terminal.lua`: authenticates a MineBank customer, lets them select an eligible account and issues a revocable card credential onto a floppy.
-- `balance_reader.lua`: reads a card and displays the live MineBank account balance.
+- Balance checks are part of the ATM workflow; the redundant standalone `balance_reader.lua` program has been removed.
 - `merchant_checkout.lua`: trusted shop terminal that creates a fixed-amount checkout using a dedicated merchant credential, then lets a customer pay with their MineBank card.
 - `atm.lua`: inventory-based ATM with withdrawals, deposits, transfers up to 1,000 Emeralds, recent history, card revocation, and durable journals for physical inventory operations.
 - `vending_machine.lua`: local per-machine product catalogue, fixed-price MineBank checkout, stock/output inventory checks, and a fail-closed fulfilment journal.
@@ -69,3 +69,17 @@ Merchant checkout amounts are supplied by the trusted merchant terminal and stor
 - `POST /cards/revoke-self`: revoke the inserted card with its credential, Wallet PIN and explicit confirmation.
 
 The code change does not itself apply the database migration, set deployment environment variables, or verify a live Vercel deployment. Test in staging before enabling production money movement.
+
+
+## All-in-one installer
+
+On a CC:Tweaked computer with HTTP enabled, run `wget run https://raw.githubusercontent.com/johnbrandoncupertino-lang/MUOC/main/minecraft/cc_tweaked/install.lua`. Alternatively, download `install.lua` from this directory and run it locally. The installer downloads Basalt2 and the supported MineBank programs into `/minebank`, stages all downloads before replacing existing files, and keeps the previous installation if a download fails. It does not request or embed customer credentials.
+
+The installer includes a pinned Basalt2 full release and its MIT license. Basalt2 project: https://github.com/Pyroxenium/Basalt2
+
+## Interface redesign notes
+
+- The ATM is the primary place to check a live balance; the standalone balance reader is no longer part of a fresh installation.
+- Do not use a monitor as a keyboard-prompt mirror. A monitor should be treated as a touch-capable display with readable, bounded content.
+- Keep operator-only setup separate from customer flows. The trusted ATM token must never be written to a floppy card.
+- The shared API client times out after 10 seconds. A timeout is not proof that a financial request failed. Retry only with the original idempotency key; definitive HTTP 4xx rejections are marked cancelled, and a rejected deposit is cancelled only after all physical Emeralds are returned. Physical item movement after a withdrawal/deposit is uncertain until inventory and journal state agree; never erase that record just to unlock the ATM.

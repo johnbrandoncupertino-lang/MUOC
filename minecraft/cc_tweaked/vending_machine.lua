@@ -154,11 +154,8 @@ while true do
   elseif stockCount(stock,product.item)<product.count then ui.message("OUT OF STOCK: "..product.item,false); ui.pause()
   elseif not canFit(output,product.item,product.count) then ui.message("Output inventory is full. No payment taken.",false); ui.pause()
   else
-    ui.clear(); ui.header("CONFIRM PURCHASE",product.item)
-    print("Price: "..product.price.." Emeralds")
-    print("Quantity: "..product.count)
-    write("Type BUY to continue: ")
-    if read()=="BUY" then
+    local confirm=ui.choose("CONFIRM PURCHASE",{"Buy for "..product.price.." Emeralds","Cancel"},product.item.." × "..product.count)
+    if confirm==1 then
       local order={version=1,key=ui.key("vending"),item=product.item,count=product.count,amount=product.price,state="CHECKOUT_PENDING"}
       if not save(JOURNAL,order) then ui.message("Could not persist order; no checkout created.",false); ui.pause()
       else

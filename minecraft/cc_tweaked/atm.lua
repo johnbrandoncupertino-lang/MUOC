@@ -68,6 +68,22 @@ local function moveEmeralds(source,destination)
   end
   return moved
 end
+local function moveEmeraldAmount(source,destination,amount,destinationName)
+  local moved=0
+  for slot,detail in pairs(source.list()) do
+    if detail.name=="minecraft:emerald" and moved<amount then
+      local n=source.pushItems(destinationName,slot,math.min(detail.count,amount-moved))
+      moved=moved+n
+    end
+  end
+  return moved
+end
+local function cancelRejected(order,err)
+  order.state="CANCELLED"
+  order.failure=tostring(err or "MineBank rejected the request.")
+  order.cancelled_at=os.epoch("utc")
+  return save(JOURNAL,order)
+end
 local function returnInvalidItems(source,destination)
   local returned=0
   for slot,detail in pairs(source.list()) do
@@ -79,15 +95,17 @@ local function returnInvalidItems(source,destination)
   return returned
 end
 local function draw(cfg)
-  ui.clear(); ui.header("ATM","Secure terminal • physical emeralds = MineBank Emeralds")
-  print("1) Withdraw emeralds")
-  print("2) Deposit emeralds")
-  print("3) Transfer to another account (max 1,000)")
-  print("4) Recent transactions")
-  print("5) Revoke a card")
-  print("6) Setup / diagnostics")
-  print("7) Exit")
-  write("> "); return tonumber(read())
+  return ui.choose("ATM", {
+    "Check balance",
+    "Withdraw Emeralds",
+    "Deposit Emeralds",
+    "Transfer to another account (max 1,000)",
+    "Recent transactions",
+    "Revoke floppy card",
+    "Diagnostics",
+    "Resume pending operation",
+    "Exit"
+  }, "Touch a service. Physical Emeralds = MineBank Emeralds.")
 end
 local function getCard()
   local card,err=ui.card()
@@ -106,8 +124,13 @@ local function ensureConfig()
   local base=ui.prompt("HTTPS MineBank API base",ui.API_BASE)
   if not base:match("^https://") then return nil,"API base must use HTTPS." end
   ui.API_BASE=base:gsub("/+$","")
+  ui.clear(); ui.header("PROTECTED ATM SETUP","Operator-only • customers must not configure this machine")
+  write("Type OPERATOR SETUP to continue: ")
+  if read()~="OPERATOR SETUP" then return nil,"Setup cancelled." end
   local atmToken=ui.secret("Trusted ATM token from MineBank operator configuration: ")
   if not atmToken or #atmToken<32 then return nil,"A trusted ATM token of at least 32 characters is required." end
+  local tokenCheck=ui.secret("Re-enter trusted ATM token to confirm: ")
+  if tokenCheck~=atmToken then return nil,"Token confirmation failed; setup was not saved." end
   local names=ui.findInventory()
   if #names<3 then return nil,"Connect deposit, secure stock/escrow and output inventories, then rerun setup." end
   print("Detected inventories:")
@@ -133,7 +156,7 @@ local function runWithdrawal()
   local p=pin(); if not p then return end
   local old=load(JOURNAL)
   local order
-  if old and old.state~="COMPLETE" then
+  if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
     if old.kind~="WITHDRAWAL" or (old.state~="REQUEST_PENDING" and old.state~="AUTHORIZED") then
       ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.pause(); return
     end
@@ -151,9 +174,17 @@ local function runWithdrawal()
   if not canFit(outputInv,"minecraft:emerald",order.amount) then ui.message("Output inventory lacks space. No new debit requested.",false); ui.pause(); return end
   local result
   if order.state=="REQUEST_PENDING" then
-    local err
-    result,err=ui.api("/withdrawals","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
-    if not result then ui.message("Withdrawal not confirmed: "..tostring(err)..". The same key is saved; check status before starting another.",false); ui.pause(); return end
+    local err,status
+    result,err,status=ui.api("/withdrawals","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
+    if not result then
+      if status==0 or (status and status>=400 and status<500) then
+        cancelRejected(order,err)
+        ui.message("Withdrawal rejected by MineBank. No Emeralds were dispensed; this attempt is cancelled. "..tostring(err),false)
+      else
+        ui.message("Withdrawal outcome is unknown: "..tostring(err)..". The same idempotency key is retained; retry this withdrawal to reconcile it.",false)
+      end
+      ui.pause(); return
+    end
     order.state="AUTHORIZED"; order.transaction_id=result.transaction_id
     if not save(JOURNAL,order) then ui.message("MineBank debited the account but the local ticket could not be saved. Do not dispense.",false); ui.pause(); return end
   else
@@ -181,7 +212,7 @@ local function runDeposit()
   local p=pin(); if not p then return end
   local old=load(JOURNAL)
   local order
-  if old and old.state~="COMPLETE" then
+  if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
     if old.kind~="DEPOSIT" or (old.state~="REQUEST_PENDING" and old.state~="ESCROW_PENDING") then
       ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.pause(); return
     end
@@ -205,9 +236,18 @@ local function runDeposit()
     order.state="REQUEST_PENDING"
     if not save(JOURNAL,order) then ui.message("Emeralds are secured in escrow but journal failed. Do not move them.",false); ui.pause(); return end
   end
-  local result,err=ui.api("/deposits","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
+  local result,err,status=ui.api("/deposits","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
   if not result then
-    ui.message("Deposit not confirmed: "..tostring(err)..". Emeralds remain in secure stock; re-run to retry the same operation.",false)
+    if (status==0 or (status and status>=400 and status<500)) and canFit(depositInv,"minecraft:emerald",order.amount) then
+      local returned=moveEmeraldAmount(stockInv,depositInv,order.amount,cfg.deposit_inventory)
+      if returned==order.amount and cancelRejected(order,err) then
+        ui.message("MineBank rejected the deposit; all "..order.amount.." Emeralds were returned and the operation was cancelled.",false)
+      else
+        ui.message("Deposit was rejected, but the physical refund could not be verified. Preserve the journal and contact the operator.",false)
+      end
+    else
+      ui.message("Deposit outcome is unknown: "..tostring(err)..". Emeralds remain in secure stock; retry the same operation to reconcile it.",false)
+    end
     ui.pause(); return
   end
   order.state="COMPLETE"; order.transaction_id=result.transaction_id; order.completed_at=os.epoch("utc")
@@ -221,7 +261,7 @@ local function runTransfer()
   local p=pin(); if not p then return end
   local old=load(JOURNAL)
   local order
-  if old and old.state~="COMPLETE" then
+  if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
     if old.kind~="TRANSFER" or old.state~="REQUEST_PENDING" then
       ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.pause(); return
     end
@@ -231,23 +271,46 @@ local function runTransfer()
     local recipient=ui.prompt("Recipient account number")
     local amount=tonumber(ui.prompt("Amount in Emeralds (1-1000)"))
     if not amount or amount%1~=0 or amount<1 or amount>MAX_TRANSFER then ui.message("Transfers are limited to 1,000 Emeralds. Use the portal for larger transfers.",false); ui.pause(); return end
-    ui.clear(); ui.header("CONFIRM TRANSFER")
-    print("Recipient: "..recipient); print("Amount: "..amount.." Emeralds")
-    write("Type TRANSFER to confirm: ")
-    if read()~="TRANSFER" then ui.message("Cancelled. No transfer submitted.",true); ui.pause(); return end
+    local confirm=ui.choose("CONFIRM TRANSFER",{"Transfer "..amount.." Emeralds","Cancel"},"Recipient: "..recipient)
+    if confirm~=1 then ui.message("Cancelled. No transfer submitted.",true); ui.pause(); return end
     order={version=1,key=ui.key("transfer"),amount=amount,recipient=recipient,state="REQUEST_PENDING",kind="TRANSFER",card_id=card.card_id}
     if not save(JOURNAL,order) then ui.message("Could not save transfer journal; no request sent.",false); ui.pause(); return end
   end
-  local result,err=ui.api("/transfers","POST",card.credential,
+  local result,err,status=ui.api("/transfers","POST",card.credential,
     {recipient_account_number=order.recipient,amount=order.amount,wallet_pin=p},order.key)
   if not result then
-    ui.message("Transfer not confirmed: "..tostring(err)..". The original key is saved; retry only with the same card.",false)
+    if status==0 or (status and status>=400 and status<500) then
+      cancelRejected(order,err)
+      ui.message("MineBank rejected the transfer. No transfer was accepted; this attempt is cancelled. "..tostring(err),false)
+    else
+      ui.message("Transfer outcome is unknown: "..tostring(err)..". The original idempotency key is retained; retry this operation to reconcile it.",false)
+    end
     ui.pause(); return
   end
   order.state="COMPLETE"; order.transaction_id=result.transaction_id; order.completed_at=os.epoch("utc")
   if not save(JOURNAL,order) then ui.message("MineBank confirmed the transfer but the journal update failed. Preserve the key and reconcile.",false); ui.pause(); return end
   ui.message("TRANSFER COMPLETE — "..order.amount.." Emeralds",true)
   print("Transaction: "..tostring(result.transaction_id)); print("Fee: "..tostring(result.fee or 0)); ui.pause()
+end
+
+local function runBalance()
+  local card=getCard(); if not card then return end
+  local result,err=ui.api("/account","GET",card.credential)
+  if not result then
+    ui.clear(); ui.header("BALANCE UNAVAILABLE")
+    ui.message("MineBank could not confirm your account: "..tostring(err),false)
+    ui.pause(); return
+  end
+  local account=result.account or {}
+  ui.clear(); ui.header("ACCOUNT OVERVIEW","Live data returned by MineBank")
+  print("Account: "..tostring(account.account_number or "—"))
+  print("Type: "..tostring(account.account_type or "—"))
+  print("Tier: "..tostring(account.tier or "—"))
+  print("Status: "..tostring(account.status or "—"))
+  print("")
+  print("AVAILABLE BALANCE")
+  print(tostring(account.balance or 0).." Emeralds")
+  ui.pause()
 end
 
 local function runHistory()
@@ -266,11 +329,8 @@ end
 
 local function runRevoke()
   local card=getCard(); if not card then return end
-  ui.clear(); ui.header("REVOKE CARD","This permanently disables the inserted floppy card.")
-  print("Card ID: "..tostring(card.card_id or "unknown"))
-  print("You must issue a new card to use MineBank again.")
-  write("Type REVOKE to confirm: ")
-  if read()~="REVOKE" then ui.message("Cancelled. The card remains active.",true); ui.pause(); return end
+  local confirm=ui.choose("REVOKE CARD",{"Permanently revoke card","Cancel"},"Card "..tostring(card.card_id or "unknown")..". A new card will be required.")
+  if confirm~=1 then ui.message("Cancelled. The card remains active.",true); ui.pause(); return end
   local p=pin(); if not p then return end
   local result,err=ui.api("/cards/revoke-self","POST",card.credential,{wallet_pin=p,confirm=true})
   if not result then ui.message("Revocation not confirmed: "..tostring(err),false)
@@ -278,26 +338,58 @@ local function runRevoke()
   ui.pause()
 end
 
+local function runRecovery()
+  local order=load(JOURNAL)
+  if not order or order.state=="COMPLETE" or order.state=="CANCELLED" then
+    ui.message("No unfinished ATM operation needs recovery.",true); ui.pause(); return
+  end
+  if order.state=="CORRUPT" then
+    ui.message("The ATM journal is damaged. Stop money movement and ask the operator to inspect the journal backups.",false); ui.pause(); return
+  end
+  local summary=tostring(order.kind or "UNKNOWN").." • "..tostring(order.amount or "?").." Emeralds • "..tostring(order.state or "UNKNOWN")
+  local action=ui.choose("OPERATION RECOVERY",{"Resume the same operation","Cancel safe pre-movement operation","Return to ATM"},summary)
+  if action==1 then
+    if order.kind=="WITHDRAWAL" then runWithdrawal()
+    elseif order.kind=="DEPOSIT" then runDeposit()
+    elseif order.kind=="TRANSFER" then runTransfer()
+    else ui.message("Unknown journal type. Operator reconciliation is required.",false); ui.pause() end
+  elseif action==2 then
+    if order.kind=="DEPOSIT" and order.state=="ESCROW_PENDING" and countEmeralds(depositInv)>=tonumber(order.amount or 0) then
+      local confirm=ui.choose("CANCEL DEPOSIT",{"Cancel unstarted deposit","Keep pending"},"Confirm that the Emeralds are still in the deposit input and no items have moved.")
+      if confirm==1 then
+        order.state="CANCELLED"; order.cancelled_at=os.epoch("utc"); order.failure="Cancelled before escrow movement by operator."
+        if save(JOURNAL,order) then ui.message("Deposit cancelled. No MineBank request was sent.",true)
+        else ui.message("Could not save cancellation. Keep the machine stopped and reconcile.",false) end
+      end
+    else
+      ui.message("This operation may already have reached MineBank or moved physical Emeralds. It cannot be safely cancelled from this screen. Resume with the same card/key or reconcile the journal and inventory.",false)
+    end
+    ui.pause()
+  end
+end
+
 while true do
   local choice=draw(cfg)
-  if choice==1 then runWithdrawal()
-  elseif choice==2 then runDeposit()
-  elseif choice==3 then runTransfer()
-  elseif choice==4 then runHistory()
-  elseif choice==5 then runRevoke()
-  elseif choice==6 then
+  if choice==1 then runBalance()
+  elseif choice==2 then runWithdrawal()
+  elseif choice==3 then runDeposit()
+  elseif choice==4 then runTransfer()
+  elseif choice==5 then runHistory()
+  elseif choice==6 then runRevoke()
+  elseif choice==7 then
     ui.clear(); ui.header("DIAGNOSTICS")
     print("API: "..ui.API_BASE)
     print("Deposit inventory: "..cfg.deposit_inventory)
     print("Secure stock/escrow: "..cfg.stock_inventory)
     print("Output inventory: "..cfg.output_inventory)
-    print("Deposit emeralds: "..countEmeralds(depositInv))
-    print("Stock emeralds: "..countEmeralds(stockInv))
-    print("Output emeralds: "..countEmeralds(outputInv))
+    print("Deposit Emeralds: "..countEmeralds(depositInv))
+    print("Stock Emeralds: "..countEmeralds(stockInv))
+    print("Output Emeralds: "..countEmeralds(outputInv))
     print("HTTP enabled: "..tostring(http~=nil))
     print("Modem detected (optional): "..tostring(peripheral.find("modem")~=nil))
     print("Monitor detected: "..tostring(peripheral.find("monitor")~=nil))
     ui.pause()
+  elseif choice==8 then runRecovery()
   else break end
 end
 ui.clear(); ui.header("MINEBANK ATM","Thank you for banking with MineBank.")
