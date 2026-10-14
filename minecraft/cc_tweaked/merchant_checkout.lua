@@ -5,7 +5,10 @@
 local API_BASE = "https://minebanksecurearea.vercel.app/api/v1/minecraft"
 local MERCHANT_TOKEN = "SET_MERCHANT_TOKEN_HERE"
 local CARD_FILE = "minebank.card"
-local ui = dofile("minebank_ui.lua")
+local runningProgram = shell.getRunningProgram()
+local programDir = fs.getDir(runningProgram)
+local uiPath = fs.combine(programDir, "minebank_ui.lua")
+local ui = dofile(uiPath)
 ui.API_BASE = API_BASE
 
 local function pause() ui.pause() end
