@@ -177,9 +177,9 @@ function M.prompt(label, default)
   local numeric= tostring(label):lower():find("amount") or tostring(label):lower():find("number") or tostring(label):lower():find("emerald")
   local result,done
   local function finish(v) result=v; done=true; basalt.stop() end
-  if numeric and h>=17 then
+  if numeric and h>=17 and w>=18 then
     local digits={"1","2","3","4","5","6","7","8","9","0","⌫","Clear"}
-    local cols=math.min(3,math.max(1,math.floor((w-4)/6)))
+    local cols=3
     local cellW=math.max(3,math.floor((w-4)/cols))
     for i,digit in ipairs(digits) do
       local row=math.floor((i-1)/cols)
