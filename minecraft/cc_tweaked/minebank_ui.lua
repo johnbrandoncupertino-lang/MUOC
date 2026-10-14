@@ -137,7 +137,7 @@ function M.secret(label)
   local lower=tostring(label or ""):lower()
   if basalt and lower:find("pin") then
     local screen,err,w,h=addScreen("SECURE PIN",label or "Enter PIN")
-    if screen and w>=12 and h>=16 then
+    if screen and w>=12 and h>=12 then
       local value,result,done=""
       local masked=screen:addLabel({x=2,y=6,width=math.max(1,w-3),height=1,foreground=colors.lime,background=colors.black})
       local function redraw() masked:setText("PIN: "..string.rep("*",#value)) end
@@ -146,7 +146,7 @@ function M.secret(label)
       for i,key in ipairs(keys) do
         local row=math.floor((i-1)/3)
         local col=(i-1)%3
-        screen:addButton({x=2+col*cellW,y=8+row*2,width=math.min(cellW-1,w-(2+col*cellW)),height=1,background=colors.gray,foreground=colors.white})
+        screen:addButton({x=2+col*cellW,y=(h>=16 and 8+row*2 or 7+row),width=math.min(cellW-1,w-(2+col*cellW)),height=1,background=colors.gray,foreground=colors.white})
           :setText(key):onClick(function()
             if key=="Clear" then value=""
             elseif key=="⌫" then value=value:sub(1,-2)
