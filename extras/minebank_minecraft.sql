@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS minebank_minecraft_operations (
     account_id BIGINT NOT NULL,
     idempotency_key VARCHAR(128) NOT NULL,
     operation_type VARCHAR(16) NOT NULL
-        CHECK (operation_type IN ('PAYMENT', 'WITHDRAWAL')),
+        CHECK (operation_type IN ('PAYMENT', 'WITHDRAWAL', 'TRANSFER', 'DEPOSIT')),
     request_hash CHAR(64) NOT NULL,
     status VARCHAR(16) NOT NULL DEFAULT 'PENDING'
         CHECK (status IN ('PENDING', 'COMPLETED', 'REJECTED', 'REVIEW')),
@@ -125,3 +125,13 @@ COMMENT ON TABLE minebank_minecraft_checkouts IS
 
 ALTER TABLE minebank_minecraft_checkouts
     ADD COLUMN IF NOT EXISTS request_hash CHAR(64);
+
+
+-- Upgrade existing installations as well as fresh installs. The table's original
+-- constraint only allowed PAYMENT/WITHDRAWAL, so CREATE TABLE IF NOT EXISTS is
+-- not sufficient after the first migration has already been applied.
+ALTER TABLE minebank_minecraft_operations
+    DROP CONSTRAINT IF EXISTS minebank_minecraft_operations_operation_type_check;
+ALTER TABLE minebank_minecraft_operations
+    ADD CONSTRAINT minebank_minecraft_operations_operation_type_check
+    CHECK (operation_type IN ('PAYMENT', 'WITHDRAWAL', 'TRANSFER', 'DEPOSIT'));
