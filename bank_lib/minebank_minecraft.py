@@ -586,6 +586,11 @@ def create_merchant_checkout():
                        JOIN bank_clients bc ON bc.id=m.client_id
                        JOIN account_tiers_v2 t ON t.id=a.tier_id
                        WHERE m.token_hash=%s AND m.active=TRUE AND bc.role='CLIENT'
+                         AND a.account_type='BUSINESS'
+                         AND EXISTS (
+                             SELECT 1 FROM minebank_business_members bm
+                             WHERE bm.account_id=a.id AND bm.client_id=m.client_id AND bm.role='OWNER'
+                         )
                        FOR UPDATE OF m,a,bc""",
                     (digest,),
                 )
