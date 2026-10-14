@@ -2209,11 +2209,11 @@ def minebank_minecraft_shops_page():
                             except (TypeError, ValueError):
                                 raise ValueError("Choose a valid shop.")
                             cur.execute(
-                                """SELECT m.id,m.account_id,m.display_name,a.account_number
+                                """SELECT m.id,m.account_id,m.display_name,a.account_number,a.status
                                    FROM minebank_minecraft_merchants m
                                    JOIN bank_accounts a ON a.id=m.account_id AND a.client_id=m.client_id
                                    WHERE m.id=%s AND m.client_id=%s AND m.active=TRUE
-                                     AND a.account_type='BUSINESS' AND a.status='ACTIVE'
+                                     AND a.account_type='BUSINESS'
                                      AND EXISTS (
                                          SELECT 1 FROM minebank_business_members bm
                                          WHERE bm.account_id=a.id AND bm.client_id=%s AND bm.role='OWNER'
@@ -2224,6 +2224,8 @@ def minebank_minecraft_shops_page():
                             shop = cur.fetchone()
                             if not shop:
                                 raise ValueError("Active shop not found, or you are no longer its Business owner.")
+                            if action == "rotate" and shop[4] != "ACTIVE":
+                                raise ValueError("Only a shop linked to an active Business account can rotate its credential. You can still revoke it.")
                             cur.execute(
                                 "UPDATE minebank_minecraft_merchants SET active=FALSE WHERE id=%s AND client_id=%s AND active=TRUE",
                                 (merchant_id, client_id),
@@ -2256,6 +2258,8 @@ def minebank_minecraft_shops_page():
                                               jsonb_build_object('source','portal'))""",
                                     (client_id, str(merchant_id), shop[1], request.remote_addr),
                                 )
+                        else:
+                            raise ValueError("Unsupported shop action.")
             finally:
                 release_db_connection(conn)
 
