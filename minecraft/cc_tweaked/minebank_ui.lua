@@ -111,6 +111,38 @@ function M.pause()
 end
 
 function M.secret(label)
+  local lower=tostring(label or ""):lower()
+  if basalt and lower:find("pin") then
+    local screen,err,w,h=addScreen("SECURE PIN",label or "Enter PIN")
+    if screen and w>=12 and h>=14 then
+      local value,result,done=""
+      local masked=screen:addLabel({x=2,y=6,width=math.max(1,w-3),height=1,foreground=colors.lime,background=colors.black})
+      local function redraw() masked:setText("PIN: "..string.rep("*",#value)) end
+      local keys={"1","2","3","4","5","6","7","8","9","Clear","0","⌫"}
+      local cellW=math.max(3,math.floor((w-4)/3))
+      for i,key in ipairs(keys) do
+        local row=math.floor((i-1)/3)
+        local col=(i-1)%3
+        screen:addButton({x=2+col*cellW,y=8+row*2,width=math.min(cellW-1,w-(2+col*cellW)),height=1,background=colors.gray,foreground=colors.white})
+          :setText(key):onClick(function()
+            if key=="Clear" then value=""
+            elseif key=="⌫" then value=value:sub(1,-2)
+            elseif #value<6 then value=value..key end
+            redraw()
+          end)
+      end
+      local y=math.min(h-1,15)
+      screen:addButton({x=2,y=y,width=math.max(1,math.floor((w-4)/2)),height=1,background=colors.green,foreground=colors.black})
+        :setText("Submit"):onClick(function() if #value==6 then result=value; done=true; basalt.stop() end end)
+      screen:addButton({x=3+math.floor((w-4)/2),y=y,width=math.max(1,w-(3+math.floor((w-4)/2))),height=1,background=colors.red,foreground=colors.white})
+        :setText("Cancel"):onClick(function() result=nil; done=true; basalt.stop() end)
+      basalt.run()
+      closeScreen(screen)
+      if done then return result end
+      return nil
+    end
+    closeScreen(screen)
+  end
   write(tostring(label or ""))
   return read("*")
 end
