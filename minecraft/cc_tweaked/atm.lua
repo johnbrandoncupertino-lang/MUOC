@@ -176,7 +176,7 @@ local function runWithdrawal()
     local err,status
     result,err,status=ui.api("/withdrawals","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
     if not result then
-      if status and status>=400 and status<500 then
+      if status==0 or (status and status>=400 and status<500) then
         cancelRejected(order,err)
         ui.message("Withdrawal rejected by MineBank. No Emeralds were dispensed; this attempt is cancelled. "..tostring(err),false)
       else
@@ -237,7 +237,7 @@ local function runDeposit()
   end
   local result,err,status=ui.api("/deposits","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
   if not result then
-    if status and status>=400 and status<500 and canFit(depositInv,"minecraft:emerald",order.amount) then
+    if (status==0 or (status and status>=400 and status<500)) and canFit(depositInv,"minecraft:emerald",order.amount) then
       local returned=moveEmeraldAmount(stockInv,depositInv,order.amount,cfg.deposit_inventory)
       if returned==order.amount and cancelRejected(order,err) then
         ui.message("MineBank rejected the deposit; all "..order.amount.." Emeralds were returned and the operation was cancelled.",false)
@@ -278,7 +278,7 @@ local function runTransfer()
   local result,err,status=ui.api("/transfers","POST",card.credential,
     {recipient_account_number=order.recipient,amount=order.amount,wallet_pin=p},order.key)
   if not result then
-    if status and status>=400 and status<500 then
+    if status==0 or (status and status>=400 and status<500) then
       cancelRejected(order,err)
       ui.message("MineBank rejected the transfer. No transfer was accepted; this attempt is cancelled. "..tostring(err),false)
     else
