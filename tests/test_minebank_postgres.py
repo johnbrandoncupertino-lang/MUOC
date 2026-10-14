@@ -450,6 +450,7 @@ def test_minecraft_merchant_payment_is_atomic_and_idempotent(accounts, monkeypat
 def test_minecraft_atm_withdrawal_is_atomic_and_idempotent(accounts, monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
     alice, _, alice_account_id, _, _, _ = accounts
     execute_query("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",
                   (alice,), fetch=False, commit=True)
@@ -463,6 +464,7 @@ def test_minecraft_atm_withdrawal_is_atomic_and_idempotent(accounts, monkeypatch
     client = app.test_client()
     headers = {
         "X-Forwarded-Proto": "https",
+        "X-MineBank-ATM-Token": "atm-test-token-" + "a" * 40,
         "Authorization": f"Bearer {card_token}",
         "Idempotency-Key": "ci-atm-1",
     }
