@@ -73,13 +73,13 @@ The code change does not itself apply the database migration, set deployment env
 
 ## All-in-one installer
 
-Download `install.lua` from this directory to a CC:Tweaked computer and run it. The installer downloads Basalt2 and the supported MineBank programs into `/minebank`, stages all downloads before replacing existing files, and keeps the previous installation if a download fails. It does not request or embed customer credentials.
+On a CC:Tweaked computer with HTTP enabled, run `wget run https://raw.githubusercontent.com/johnbrandoncupertino-lang/MUOC/main/minecraft/cc_tweaked/install.lua`. Alternatively, download `install.lua` from this directory and run it locally. The installer downloads Basalt2 and the supported MineBank programs into `/minebank`, stages all downloads before replacing existing files, and keeps the previous installation if a download fails. It does not request or embed customer credentials.
 
-The installer includes the Basalt2 full release and its MIT license. Basalt2 project: https://github.com/Pyroxenium/Basalt2
+The installer includes a pinned Basalt2 full release and its MIT license. Basalt2 project: https://github.com/Pyroxenium/Basalt2
 
 ## Interface redesign notes
 
 - The ATM is the primary place to check a live balance; the standalone balance reader is no longer part of a fresh installation.
 - Do not use a monitor as a keyboard-prompt mirror. A monitor should be treated as a touch-capable display with readable, bounded content.
 - Keep operator-only setup separate from customer flows. The trusted ATM token must never be written to a floppy card.
-- A timeout is not proof that a financial request failed. Before replaying a request whose server response was lost, reuse its original idempotency key or reconcile its status. Physical item movement after a withdrawal/deposit is uncertain until inventory and journal state agree; never erase that record just to unlock the ATM.
+- The shared API client times out after 10 seconds. A timeout is not proof that a financial request failed. Retry only with the original idempotency key; definitive HTTP 4xx rejections are marked cancelled, and a rejected deposit is cancelled only after all physical Emeralds are returned. Physical item movement after a withdrawal/deposit is uncertain until inventory and journal state agree; never erase that record just to unlock the ATM.
