@@ -212,13 +212,27 @@ local function runHistory()
   ui.pause()
 end
 
+local function runRevoke()
+  local card=getCard(); if not card then return end
+  ui.clear(); ui.header("REVOKE CARD","This permanently disables the inserted floppy card.")
+  print("Card ID: "..tostring(card.card_id or "unknown"))
+  print("You must issue a new card to use MineBank again.")
+  write("Type REVOKE to confirm: ")
+  if read()~="REVOKE" then ui.message("Cancelled. The card remains active.",true); ui.pause(); return end
+  local p=pin(); if not p then return end
+  local result,err=ui.api("/cards/revoke-self","POST",card.credential,{wallet_pin=p,confirm=true})
+  if not result then ui.message("Revocation not confirmed: "..tostring(err),false)
+  else ui.message("CARD REVOKED. This floppy can no longer be used.",true) end
+  ui.pause()
+end
+
 while true do
   local choice=draw(cfg)
   if choice==1 then runWithdrawal()
   elseif choice==2 then runDeposit()
   elseif choice==3 then runTransfer()
   elseif choice==4 then runHistory()
-  elseif choice==5 then ui.message("For now, revoke a lost card in the MineBank portal or through the Bank Assistant.",false); ui.pause()
+  elseif choice==5 then runRevoke()
   elseif choice==6 then
     ui.clear(); ui.header("DIAGNOSTICS")
     print("API: "..ui.API_BASE)
