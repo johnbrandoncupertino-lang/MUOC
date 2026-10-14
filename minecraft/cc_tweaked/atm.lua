@@ -91,11 +91,13 @@ local function pin()
 end
 local function ensureConfig()
   local cfg=load(CONFIG)
-  if cfg then ui.API_BASE=(cfg.api_base or ui.API_BASE):gsub("/+$",""); return cfg end
+  if cfg and cfg.atm_token and cfg.api_base then ui.API_BASE=(cfg.api_base or ui.API_BASE):gsub("/+$",""); return cfg end
   ui.clear(); ui.header("ATM SETUP","Guided peripheral configuration")
   local base=ui.prompt("HTTPS MineBank API base",ui.API_BASE)
   if not base:match("^https://") then return nil,"API base must use HTTPS." end
   ui.API_BASE=base:gsub("/+$","")
+  local atmToken=ui.secret("Trusted ATM token from MineBank operator configuration: ")
+  if not atmToken or #atmToken<32 then return nil,"A trusted ATM token of at least 32 characters is required." end
   local names=ui.findInventory()
   if #names<3 then return nil,"Connect deposit, secure stock/escrow and output inventories, then rerun setup." end
   print("Detected inventories:")
@@ -104,7 +106,7 @@ local function ensureConfig()
   local s=tonumber(ui.prompt("Secure stock/escrow inventory number"))
   local o=tonumber(ui.prompt("Output inventory number"))
   if not names[d] or not names[s] or not names[o] or d==s or d==o or s==o then return nil,"Select three different inventory numbers." end
-  local cfg={api_base=ui.API_BASE,deposit_inventory=names[d],stock_inventory=names[s],output_inventory=names[o]}
+  local cfg={api_base=ui.API_BASE,atm_token=atmToken,deposit_inventory=names[d],stock_inventory=names[s],output_inventory=names[o]}
   if not save(CONFIG,cfg) then return nil,"Could not save ATM configuration." end
   return cfg
 end
@@ -140,7 +142,7 @@ local function runWithdrawal()
   local result
   if order.state=="REQUEST_PENDING" then
     local err
-    result,err=ui.api("/withdrawals","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key)
+    result,err=ui.api("/withdrawals","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
     if not result then ui.message("Withdrawal not confirmed: "..tostring(err)..". The same key is saved; check status before starting another.",false); ui.pause(); return end
     order.state="AUTHORIZED"; order.transaction_id=result.transaction_id
     if not save(JOURNAL,order) then ui.message("MineBank debited the account but the local ticket could not be saved. Do not dispense.",false); ui.pause(); return end
@@ -189,7 +191,7 @@ local function runDeposit()
     order.state="REQUEST_PENDING"
     if not save(JOURNAL,order) then ui.message("Emeralds are secured in escrow but journal failed. Do not move them.",false); ui.pause(); return end
   end
-  local result,err=ui.api("/deposits","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key)
+  local result,err=ui.api("/deposits","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
   if not result then
     ui.message("Deposit not confirmed: "..tostring(err)..". Emeralds remain in secure stock; re-run to retry the same operation.",false)
     ui.pause(); return
