@@ -44,12 +44,15 @@ local function stockCount(inv,item)
   return total
 end
 local function canFit(inv,item,count)
+  -- Conservative for arbitrary catalogue items: an empty slot is counted as
+  -- one item because non-stackable items may have maxCount=1.
   local left=count
-  local list=inv.list()
   for slot=1,inv.size() do
     local detail=inv.getItemDetail(slot)
-    if not detail then left=left-64
-    elseif detail.name==item then left=left+0-math.min(left, math.max(0,64-detail.count)) end
+    if not detail then left=left-1
+    elseif detail.name==item then
+      left=left-math.max(0,(detail.maxCount or 64)-detail.count)
+    end
     if left<=0 then return true end
   end
   return false
