@@ -68,6 +68,16 @@ local function moveEmeralds(source,destination)
   end
   return moved
 end
+local function returnInvalidItems(source,destination)
+  local returned=0
+  for slot,detail in pairs(source.list()) do
+    if detail.name~="minecraft:emerald" then
+      local moved=source.pushItems(destination,slot,detail.count)
+      returned=returned+moved
+    end
+  end
+  return returned
+end
 local function draw(cfg)
   ui.clear(); ui.header("ATM","Secure terminal • physical emeralds = MineBank Emeralds")
   print("1) Withdraw emeralds")
@@ -178,8 +188,12 @@ local function runDeposit()
     if tostring(old.card_id or "")~=tostring(card.card_id or "") then ui.message("This unfinished deposit belongs to a different floppy card. Reinsert the original card.",false); ui.pause(); return end
     order=old
   else
+    local returned=returnInvalidItems(depositInv,cfg.output_inventory)
     local amount=countEmeralds(depositInv)
-    if amount<1 then ui.message("Place emeralds in the deposit inventory first.",false); ui.pause(); return end
+    if amount<1 then
+      ui.message("No Emeralds found. Non-Emerald items were returned to output when space allowed ("..returned.." items).",false)
+      ui.pause(); return
+    end
     if amount>4096 then ui.message("Deposit is limited to 4,096 Emeralds per operation.",false); ui.pause(); return end
     if not canFit(stockInv,"minecraft:emerald",amount) then ui.message("Secure stock inventory lacks space. No items moved.",false); ui.pause(); return end
     order={version=1,key=ui.key("deposit"),amount=amount,state="ESCROW_PENDING",kind="DEPOSIT",card_id=card.card_id}
