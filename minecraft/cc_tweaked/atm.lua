@@ -142,7 +142,7 @@ local function ensureConfig()
     for _,line in ipairs(diagnostics) do print(line) end
     print("")
     print("For remote chests, use a WIRED modem on the computer and")
-    print(a wired modem on each chest, all linked by wired modem cable.)
+    print("a wired modem on each chest, all linked by wired modem cable.")
     print("Wireless modems do not expose remote inventories.")
     print("If a chest is not listed above, CC:Tweaked cannot see it.")
     return nil,"Only "..#names.." usable inventory peripheral(s) detected; see the storage diagnostics above."
