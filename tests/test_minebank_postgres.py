@@ -381,11 +381,17 @@ def test_minecraft_merchant_payment_is_atomic_and_idempotent(accounts, monkeypat
     card_token = "mbmc_" + "p" * 48
     merchant_token = "mbmerchant_" + "m" * 48
     _insert_test_minecraft_card(alice, alice_account_id, card_token)
+    merchant_account_id, _ = create_account(bob, "BUSINESS", "BUSINESS")
+    execute_query("UPDATE bank_accounts SET balance=100 WHERE id=%s", (merchant_account_id,), fetch=False, commit=True)
+    execute_query(
+        "INSERT INTO minebank_business_members(account_id,client_id,role) VALUES(%s,%s,'OWNER')",
+        (merchant_account_id, bob), fetch=False, commit=True,
+    )
     execute_query(
         """INSERT INTO minebank_minecraft_merchants
            (client_id,account_id,token_hash,display_name,active)
            VALUES(%s,%s,%s,'CI Shop',TRUE)""",
-        (bob, bob_account_id, hash_card_token(merchant_token)),
+        (bob, merchant_account_id, hash_card_token(merchant_token)),
         fetch=False, commit=True,
     )
 
@@ -415,7 +421,7 @@ def test_minecraft_merchant_payment_is_atomic_and_idempotent(accounts, monkeypat
     }
     payment = client.post(
         "/api/v1/minecraft/payments",
-        json={"checkout_id": checkout_id},
+        json={"checkout_id": checkout_id, "wallet_pin": "123456"},
         headers=headers,
     )
     assert payment.status_code == 200, payment.get_json()
@@ -432,11 +438,11 @@ def test_minecraft_merchant_payment_is_atomic_and_idempotent(accounts, monkeypat
 
     balances = execute_query_dict(
         "SELECT id,balance FROM bank_accounts WHERE id IN (%s,%s) ORDER BY id",
-        (alice_account_id, bob_account_id),
+        (alice_account_id, merchant_account_id),
     )
     by_id = {row["id"]: row["balance"] for row in balances}
     assert by_id[alice_account_id] == 1900
-    assert by_id[bob_account_id] == 200
+    assert by_id[merchant_account_id] == 200
     rows = execute_query_dict(
         "SELECT COUNT(*) AS n FROM ledger_transactions WHERE transaction_type='MINECRAFT_PAYMENT'"
     )
@@ -463,7 +469,7 @@ def test_minecraft_atm_withdrawal_is_atomic_and_idempotent(accounts, monkeypatch
 
     withdrawal = client.post(
         "/api/v1/minecraft/withdrawals",
-        json={"amount": 64},
+        json={"amount": 64, "wallet_pin": "123456"},
         headers=headers,
     )
     assert withdrawal.status_code == 200, withdrawal.get_json()
