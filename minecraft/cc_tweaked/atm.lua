@@ -2,7 +2,10 @@
 -- Uses separate deposit, secure stock/escrow and output inventories.
 -- Never reports a financial operation as successful without authoritative API confirmation.
 
-local ui=dofile("minebank_ui.lua")
+local runningProgram = shell.getRunningProgram()
+local programDir = fs.getDir(runningProgram)
+local uiPath = fs.combine(programDir, "minebank_ui.lua")
+local ui = dofile(uiPath)
 local CONFIG="minebank_atm.json"
 local JOURNAL="minebank_atm_journal.json"
 local MAX_WITHDRAWAL=4096
@@ -132,7 +135,18 @@ local function ensureConfig()
   local tokenCheck=ui.secret("Re-enter trusted ATM token to confirm: ")
   if tokenCheck~=atmToken then return nil,"Token confirmation failed; setup was not saved." end
   local names=ui.findInventory()
-  if #names<3 then return nil,"Connect deposit, secure stock/escrow and output inventories, then rerun setup." end
+  if #names<3 then
+    ui.clear(); ui.header("STORAGE NOT DETECTED","Found "..#names.." usable inventory peripheral(s); 3 are required")
+    print("Peripherals visible to this computer:")
+    local diagnostics=ui.inventoryDiagnostics()
+    for _,line in ipairs(diagnostics) do print(line) end
+    print("")
+    print("For remote chests, use a WIRED modem on the computer and")
+    print(a wired modem on each chest, all linked by wired modem cable.)
+    print("Wireless modems do not expose remote inventories.")
+    print("If a chest is not listed above, CC:Tweaked cannot see it.")
+    return nil,"Only "..#names.." usable inventory peripheral(s) detected; see the storage diagnostics above."
+  end
   print("Detected inventories:")
   for i,n in ipairs(names) do print(i..") "..n) end
   local d=tonumber(ui.prompt("Deposit inventory number"))
