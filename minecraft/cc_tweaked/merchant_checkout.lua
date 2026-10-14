@@ -5,6 +5,8 @@
 local API_BASE = "https://minebanksecurearea.vercel.app/api/v1/minecraft"
 local MERCHANT_TOKEN = "SET_MERCHANT_TOKEN_HERE"
 local CARD_FILE = "minebank.card"
+local ui = dofile("minebank_ui.lua")
+ui.API_BASE = API_BASE
 
 local function pause() print(""); print("Press Enter to continue."); read() end
 local function readCard()
@@ -36,10 +38,7 @@ local function post(path, token, body, key)
   return data
 end
 
-term.clear(); term.setCursorPos(1,1)
-print("MineBank | Merchant checkout")
-print("The New Bank")
-print("------------------------------")
+ui.clear(); ui.header("MERCHANT CHECKOUT","Fixed-amount customer-authorized payment")
 if not API_BASE:match("^https://") or API_BASE:find("YOUR%-MINEBANK%-DOMAIN") then print("Configure the HTTPS API_BASE."); pause(); return end
 if MERCHANT_TOKEN == "SET_MERCHANT_TOKEN_HERE" or not MERCHANT_TOKEN:find("^mbmerchant_") then print("SETUP REQUIRED: configure a dedicated merchant token."); pause(); return end
 if not http then print("Enable the CC:Tweaked HTTP API."); pause(); return end
