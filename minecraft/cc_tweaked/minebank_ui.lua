@@ -60,22 +60,30 @@ function M.choose(title, options, subtitle)
     return nil
   end
   local w,h=term.getSize()
-  local pageSize=math.max(1,h-7)
+  local pageSize=math.max(1,h-8)
   local page=1
   while true do
-    local screen,err,sw,sh=addScreen(title,subtitle or "Touch an option to continue.")
+    local screen,err,sw,sh=addScreen(title,subtitle or "Select an option.")
     if not screen then M.message(err,false); return nil end
     local maxPage=math.max(1,math.ceil(#options/pageSize))
     local first=(page-1)*pageSize+1
     local last=math.min(#options,first+pageSize-1)
     local selected
+    local columns = sw >= 34 and 2 or 1
+    local rows = math.ceil((last-first+1)/columns)
+    local cellW = math.max(1,math.floor((sw-4-(columns-1))/columns))
     for i=first,last do
-      local y=6+(i-first)
+      local localIndex=i-first
+      local col=math.floor(localIndex/rows)
+      local row=localIndex%rows
+      local x=2+col*(cellW+1)
+      local y=6+row*2
       local label=tostring(options[i])
-      local maxText=math.max(1,sw-7)
+      local maxText=math.max(1,cellW-2)
       if #label>maxText then label=label:sub(1,math.max(1,maxText-1)).."…" end
-      screen:addButton({x=2,y=y,width=math.max(1,sw-3),height=1,background=(i==#options and colors.gray or colors.green),foreground=colors.black})
-        :setText(label):onClick(function() selected=i; basalt.stop() end)
+      local isCancel=label:lower():find("cancel",1,true) or label:lower():find("back",1,true)
+      screen:addButton({x=x,y=y,width=cellW,height=2,background=(isCancel and colors.gray or colors.green),foreground=colors.black})
+        :setText(" "..label):onClick(function() selected=i; basalt.stop() end)
     end
     if maxPage>1 then
       if page>1 then
@@ -129,7 +137,7 @@ function M.secret(label)
   local lower=tostring(label or ""):lower()
   if basalt and lower:find("pin") then
     local screen,err,w,h=addScreen("SECURE PIN",label or "Enter PIN")
-    if screen and w>=12 and h>=16 then
+    if screen and w>=12 and h>=12 then
       local value,result,done=""
       local masked=screen:addLabel({x=2,y=6,width=math.max(1,w-3),height=1,foreground=colors.lime,background=colors.black})
       local function redraw() masked:setText("PIN: "..string.rep("*",#value)) end
@@ -138,7 +146,7 @@ function M.secret(label)
       for i,key in ipairs(keys) do
         local row=math.floor((i-1)/3)
         local col=(i-1)%3
-        screen:addButton({x=2+col*cellW,y=8+row*2,width=math.min(cellW-1,w-(2+col*cellW)),height=1,background=colors.gray,foreground=colors.white})
+        screen:addButton({x=2+col*cellW,y=(h>=16 and 8+row*2 or 7+row),width=math.min(cellW-1,w-(2+col*cellW)),height=1,background=colors.gray,foreground=colors.white})
           :setText(key):onClick(function()
             if key=="Clear" then value=""
             elseif key=="⌫" then value=value:sub(1,-2)

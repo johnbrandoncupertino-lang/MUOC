@@ -687,7 +687,10 @@ def pay_merchant_checkout():
     checkout_id = str(data.get("checkout_id", "")).strip()
     if not checkout_id.isascii() or not checkout_id.isdigit() or len(checkout_id) > 20:
         return jsonify(error="A valid checkout_id is required."), 400
-    request_hash = hashlib.sha256(("PAYMENT:" + checkout_id).encode("utf-8")).hexdigest()
+    funding_source = str(data.get("funding_source", "BALANCE") or "BALANCE").upper()
+    if funding_source not in ("BALANCE", "CASHLINE"):
+        return jsonify(error="Choose MineBank Balance or Standard CashLine."), 400
+    request_hash = hashlib.sha256(("PAYMENT:" + checkout_id + ":" + funding_source).encode("utf-8")).hexdigest()
     pin_ok, pin_message = _verify_card_pin(token, data.get("wallet_pin"))
     if not pin_ok:
         return jsonify(error=pin_message or "Wallet PIN verification failed."), 401
@@ -743,8 +746,20 @@ def pay_merchant_checkout():
                 amount = int(checkout[2])
                 if amount < 1 or amount > MAX_MINECRAFT_CHECKOUT:
                     raise ValueError("Checkout amount is outside the permitted range.")
-                if int(card[8]) < amount:
-                    raise ValueError("Insufficient MineBank Balance.")
+                if funding_source == "BALANCE":
+                    if int(card[8]) < amount:
+                        raise ValueError("Insufficient MineBank Balance.")
+                else:
+                    from .minebank_core import cashline_outstanding, _assert_credicheck_product_access
+                    _assert_credicheck_product_access(cur, card[1], "CASHLINE")
+                    cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE", (card[2],))
+                    facility = cur.fetchone()
+                    if not facility or facility[1] != "ACTIVE":
+                        raise ValueError("Standard CashLine is not active for this account.")
+                    outstanding = cashline_outstanding(cur, card[2])
+                    available_credit = max(0, int(facility[0]) - outstanding)
+                    if amount > available_credit:
+                        raise ValueError("Insufficient Standard CashLine availability. Available: " + str(available_credit) + " Emerald.")
                 cur.execute("SELECT COALESCE(system_suspended,FALSE) FROM settings ORDER BY id LIMIT 1")
                 system_row = cur.fetchone()
                 if system_row and system_row[0]:
@@ -758,21 +773,33 @@ def pay_merchant_checkout():
                 if max_balance is not None and int(checkout[12]) + amount > int(max_balance):
                     raise ValueError("Merchant account balance limit would be exceeded.")
                 txid = __import__("bank_lib.minebank_core", fromlist=["next_transaction_id"]).next_transaction_id(cur)
-                cur.execute(
-                    """UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
-                       monthly_outgoing_period=%s,last_outgoing_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
-                       WHERE id=%s""",
-                    (amount, monthly_used + amount, period, card[2]),
-                )
+                if funding_source == "BALANCE":
+                    cur.execute(
+                        """UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
+                           monthly_outgoing_period=%s,last_outgoing_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+                           WHERE id=%s""",
+                        (amount, monthly_used + amount, period, card[2]),
+                    )
+                    transaction_type = "MINECRAFT_PAYMENT"
+                    transfer_kind = "MINECRAFT_PAYMENT"
+                else:
+                    cur.execute(
+                        """UPDATE bank_accounts SET monthly_outgoing_used=%s,
+                           monthly_outgoing_period=%s,last_outgoing_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+                           WHERE id=%s""",
+                        (monthly_used + amount, period, card[2]),
+                    )
+                    transaction_type = "TRANSFER"
+                    transfer_kind = "CASHLINE"
                 cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
                             (amount, checkout[7]))
                 from bank_lib.minebank_core import create_ledger_transaction, audit_event
                 create_ledger_transaction(
-                    cur, transaction_id=txid, transaction_type="MINECRAFT_PAYMENT",
+                    cur, transaction_id=txid, transaction_type=transaction_type,
                     amount=amount, currency="Emerald", sender_account_id=card[2],
                     recipient_account_id=checkout[7], status="COMPLETED",
-                    description=("Minecraft checkout: " + str(checkout[3]))[:500],
-                    reference_id=str(checkout[0]), transfer_kind="MINECRAFT_PAYMENT",
+                    description=("Minecraft checkout (" + funding_source + "): " + str(checkout[3]))[:500],
+                    reference_id=str(checkout[0]), transfer_kind=transfer_kind,
                 )
                 cur.execute("UPDATE minebank_minecraft_checkouts SET status='PAID',transaction_id=%s,paid_at=CURRENT_TIMESTAMP WHERE id=%s AND status='OPEN'",
                             (txid, checkout[0]))
@@ -782,7 +809,7 @@ def pay_merchant_checkout():
                     "status": "COMPLETED", "transaction_id": txid,
                     "checkout_id": str(checkout[0]), "amount": amount,
                     "currency": "emerald", "merchant": checkout[13],
-                    "description": checkout[3],
+                    "description": checkout[3], "funding_source": funding_source,
                 }
                 _save_operation(cur, client_id=card[1], card_id=card[0], account_id=card[2],
                                 key=key, op_type="PAYMENT", request_hash=request_hash,
