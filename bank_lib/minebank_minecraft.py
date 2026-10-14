@@ -938,10 +938,12 @@ def minecraft_player_transfer():
                 replay = _replay_operation(cur, client_id, key, "TRANSFER", request_hash)
                 if replay: return replay
                 sender = _card_row_for_update(cur, token)
-                cur.execute("""SELECT id,client_id,account_number,account_type,tier_id,balance,status
-                               FROM bank_accounts WHERE account_number=%s FOR UPDATE""", (recipient_number,))
+                cur.execute("""SELECT a.id,a.client_id,a.account_number,a.account_type,a.tier_id,a.balance,a.status,bc.status
+                               FROM bank_accounts a JOIN bank_clients bc ON bc.id=a.client_id
+                               WHERE a.account_number=%s FOR UPDATE OF a,bc""", (recipient_number,))
                 recipient = cur.fetchone()
-                if not recipient or recipient[6] != "ACTIVE": raise ValueError("Recipient account was not found or is not active.")
+                if not recipient or recipient[6] != "ACTIVE" or recipient[7] != "ACTIVE":
+                    raise ValueError("Recipient account was not found or is not active.")
                 if sender[6] == "BUSINESS" or recipient[3] == "BUSINESS":
                     raise ValueError("Business-account transfers must be completed through the MineBank portal, where business permissions and approvals are enforced.")
                 if int(recipient[0]) == int(sender[2]): raise ValueError("You cannot transfer to the same account.")
