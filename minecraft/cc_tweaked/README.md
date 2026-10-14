@@ -5,7 +5,7 @@ These programs connect CC:Tweaked computers/turtles to the feature-flagged MineB
 ## Programs
 
 - `branch_terminal.lua`: authenticates a MineBank customer, lets them select an eligible account and issues a revocable card credential onto a floppy.
-- Balance checks are part of the ATM workflow; `balance_reader.lua` is retained only for backwards compatibility and is not installed by the all-in-one installer.
+- Balance checks are part of the ATM workflow; the redundant standalone `balance_reader.lua` program has been removed.
 - `merchant_checkout.lua`: trusted shop terminal that creates a fixed-amount checkout using a dedicated merchant credential, then lets a customer pay with their MineBank card.
 - `atm.lua`: inventory-based ATM with withdrawals, deposits, transfers up to 1,000 Emeralds, recent history, card revocation, and durable journals for physical inventory operations.
 - `vending_machine.lua`: local per-machine product catalogue, fixed-price MineBank checkout, stock/output inventory checks, and a fail-closed fulfilment journal.
