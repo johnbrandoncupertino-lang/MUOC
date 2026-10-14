@@ -9,20 +9,36 @@ local MAX_WITHDRAWAL=4096
 local MAX_TRANSFER=1000
 
 local function save(path,value)
-  local tmp=path..".tmp"
+  local tmp,backup=path..".tmp",path..".bak"
   local h=fs.open(tmp,"w"); if not h then return false end
   local ok=pcall(function() h.write(textutils.serializeJSON(value)); h.close() end)
   if not ok then pcall(function() h.close() end); fs.delete(tmp); return false end
-  if fs.exists(path) then fs.delete(path) end
-  return pcall(function() fs.move(tmp,path) end)
+  if fs.exists(backup) then fs.delete(backup) end
+  if fs.exists(path) then
+    local moved=pcall(function() fs.move(path,backup) end)
+    if not moved then fs.delete(tmp); return false end
+  end
+  local moved=pcall(function() fs.move(tmp,path) end)
+  if not moved then
+    if fs.exists(backup) and not fs.exists(path) then pcall(function() fs.move(backup,path) end) end
+    return false
+  end
+  if fs.exists(backup) then fs.delete(backup) end
+  return true
 end
 local function load(path)
-  if not fs.exists(path) then return nil end
-  local h=fs.open(path,"r"); if not h then return nil end
+  if not fs.exists(path) and fs.exists(path..".bak") then
+    pcall(function() fs.move(path..".bak",path) end)
+  end
+  if not fs.exists(path) then
+    if fs.exists(path..".tmp") or fs.exists(path..".bak") then return {state="CORRUPT"} end
+    return nil
+  end
+  local h=fs.open(path,"r"); if not h then return {state="CORRUPT"} end
   local raw=h.readAll(); h.close()
   local ok,v=pcall(textutils.unserializeJSON,raw)
   if ok and type(v)=="table" then return v end
-  return nil
+  return {state="CORRUPT"}
 end
 local function countItems(inv,item)
   local n=0
