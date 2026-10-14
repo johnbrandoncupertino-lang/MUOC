@@ -32,6 +32,11 @@ jobs:
         run: pip install -r requirements.txt pytest
       - name: Compile Python sources
         run: python -m compileall -q .
+      - name: Validate CC:Tweaked Lua syntax
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.4
+          find minecraft/cc_tweaked -maxdepth 1 -name '*.lua' -print0 | xargs -0 -n1 luac5.4 -p
       - name: Run MineBank PostgreSQL integration tests
         env:
           DATABASE_URL: postgresql://postgres:test@localhost:5432/muoc_test
