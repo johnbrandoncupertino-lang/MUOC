@@ -1,0 +1,101 @@
+{% extends 'minebank_layout.html' %}
+{% block title %}Minecraft Shops — MineBank{% endblock %}
+{% block content %}
+<style>
+.minecraft-shops-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:14px}
+.minecraft-shop-panel{min-width:0}
+.minecraft-shop-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:18px;border-radius:8px;background:var(--panel-2,var(--card-bg,#f5f6f8));color:var(--text,#202833);border:1px solid var(--border-color,rgba(120,140,160,.22));margin-bottom:14px;min-height:90px;box-sizing:border-box}
+.minecraft-shop-head small{display:block;color:var(--muted,#6b7b8a);letter-spacing:.08em;text-transform:uppercase;font-size:10px}
+.minecraft-shop-head strong{display:block;font-size:17px;margin-top:8px;overflow-wrap:anywhere}
+.minecraft-shop-diamond{font-size:25px;color:var(--accent,var(--primary,#53677d));opacity:.9}
+.minecraft-shop-status{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.04em;padding:4px 8px;border-radius:4px;background:rgba(38,150,100,.12);color:#26825c}
+.minecraft-shop-status.inactive{background:rgba(160,70,70,.12);color:#b34c4c}
+.minecraft-shop-fields{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:14px 0}
+.minecraft-shop-fields span{display:block;font-size:11px;color:var(--muted,#6b7b8a);margin-bottom:4px}
+.minecraft-shop-fields strong{overflow-wrap:anywhere;font-size:13px}
+.minecraft-shop-actions{border-top:1px solid var(--border-color,rgba(120,140,160,.22));padding-top:14px;margin-top:14px;display:flex;gap:8px;flex-wrap:wrap}
+.minecraft-shop-create{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.minecraft-shop-create .field{min-width:0}
+.minecraft-shop-create label{font-size:12px;font-weight:700;display:block;margin-bottom:6px}
+.minecraft-shop-create input,.minecraft-shop-create select{width:100%;box-sizing:border-box}
+.minecraft-shop-secret{display:block;width:100%;box-sizing:border-box;padding:12px;border-radius:6px;border:1px solid var(--border-color,rgba(120,140,160,.3));background:var(--input-bg,var(--card-bg,#fff));color:var(--text,#202833);font-family:monospace;overflow-wrap:anywhere}
+.minecraft-shop-warning{border-left:3px solid var(--accent,var(--primary,#53677d));padding:10px 12px;background:var(--panel-2,var(--card-bg,#f5f6f8));margin:12px 0}
+@media(max-width:560px){.minecraft-shop-create{grid-template-columns:1fr}.minecraft-shop-fields{grid-template-columns:1fr 1fr}.minecraft-shop-actions form{width:100%}.minecraft-shop-actions button{width:100%}}
+</style>
+<div class="page-head">
+  <div><div class="eyebrow">MY BANKING · BUSINESS SERVICES</div><h1>Minecraft Shops</h1><p>Register and manage trusted Minecraft shop terminals linked to your Business account.</p></div>
+</div>
+{% if error %}<div class="notice error" role="alert">{{ error }}</div>{% endif %}
+{% if created_token %}
+<section class="panel" aria-labelledby="credential-created-title">
+  <div class="panel-title" id="credential-created-title">Shop credential created</div>
+  <p><strong>{{ created_shop_name }}</strong> · Receiving account {{ created_account_number }}</p>
+  <div class="minecraft-shop-warning"><strong>Copy this credential now.</strong> It is shown only in this response and cannot be recovered later. Store it only on the trusted shop terminal. Never share it with players, publish it, or commit it to source control.</div>
+  <input class="minecraft-shop-secret" type="text" readonly value="{{ created_token }}" aria-label="New Minecraft Shop credential" onclick="this.select()">
+  <p class="muted">If it is lost or exposed, rotate the credential below. The previous credential will stop working.</p>
+</section>
+{% endif %}
+<section class="panel">
+  <div class="panel-title">Register a shop</div>
+  <p class="muted">Only the owner of an active Business account can register a shop. Personal accounts and Business employees cannot create or manage shop credentials.</p>
+  {% if accounts %}
+  <form method="post" action="{{ url_for('minebank_minecraft_shops_page') }}" class="minecraft-shop-create">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="action" value="create">
+    <div class="field"><label for="minecraft-shop-name">Shop name</label><input id="minecraft-shop-name" name="display_name" maxlength="120" minlength="2" required placeholder="e.g. Emerald Market"></div>
+    <div class="field"><label for="minecraft-shop-account">Receiving Business account</label><select id="minecraft-shop-account" name="account_id" required>{% for account in accounts %}<option value="{{ account.id }}">{{ account.account_number }} · {{ account.tier_name }}</option>{% endfor %}</select></div>
+    <div class="field"><label for="minecraft-shop-pin">Wallet PIN</label><input id="minecraft-shop-pin" type="password" name="wallet_pin" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="off" required placeholder="6-digit PIN"></div>
+    <div class="field" style="display:flex;align-items:end"><button class="button" type="submit">Register shop</button></div>
+  </form>
+  {% else %}
+  <p class="muted">No eligible Business account was found. Open or use an active Business account that you own; employee access is not sufficient.</p>
+  {% endif %}
+</section>
+<section class="panel">
+  <div class="panel-title">Your shops</div>
+  <p class="muted">Each shop has its own credential. Revoking or rotating one shop does not affect your Minecraft Cards or other shops.</p>
+  {% if shops %}
+  <div class="minecraft-shops-grid">
+  {% for shop in shops %}
+    <article class="panel minecraft-shop-panel">
+      <div class="minecraft-shop-head">
+        <div><small>MineBank · Minecraft Shop</small><strong>{{ shop.display_name }}</strong><div style="font-size:12px;margin-top:8px;color:var(--muted,#6b7b8a)">Shop #{{ shop.id }}</div></div>
+        <div class="minecraft-shop-diamond" aria-hidden="true">◆</div>
+      </div>
+      <div class="panel-title"><span>Credential status</span><span class="minecraft-shop-status{% if not shop.active %} inactive{% endif %}">{% if shop.active %}ACTIVE{% else %}REVOKED{% endif %}</span></div>
+      <div class="minecraft-shop-fields">
+        <div><span>Receiving account</span><strong>{{ shop.account_number }}</strong></div>
+        <div><span>Created</span><strong>{{ shop.created_at.strftime('%d %b %Y, %H:%M') if shop.created_at else '—' }}</strong></div>
+      </div>
+      {% if shop.active %}
+      <div class="minecraft-shop-actions">
+        <form method="post" action="{{ url_for('minebank_minecraft_shops_page') }}" onsubmit="return confirm('Replace this shop credential? The old credential will stop working immediately.');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="rotate">
+          <input type="hidden" name="merchant_id" value="{{ shop.id }}">
+          <label for="rotate-pin-{{ shop.id }}">Wallet PIN</label>
+          <input id="rotate-pin-{{ shop.id }}" type="password" name="wallet_pin" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="off" required placeholder="6-digit PIN">
+          <button class="button" type="submit">Rotate credential</button>
+        </form>
+        <form method="post" action="{{ url_for('minebank_minecraft_shops_page') }}" onsubmit="return confirm('Revoke this shop credential? The shop will no longer be able to authenticate. This cannot be undone.');">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <input type="hidden" name="action" value="revoke">
+          <input type="hidden" name="merchant_id" value="{{ shop.id }}">
+          <label for="revoke-pin-{{ shop.id }}">Wallet PIN</label>
+          <input id="revoke-pin-{{ shop.id }}" type="password" name="wallet_pin" inputmode="numeric" pattern="[0-9]{6}" minlength="6" maxlength="6" autocomplete="off" required placeholder="6-digit PIN">
+          <button class="button secondary" type="submit">Revoke credential</button>
+        </form>
+      </div>
+      {% endif %}
+    </article>
+  {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No Minecraft Shops have been registered yet.</p>
+  {% endif %}
+</section>
+<section class="panel">
+  <div class="panel-title">Payment safety</div>
+  <p class="muted">Shop registration creates credentials only. Payment execution remains disabled until the Minecraft transaction flow has been validated. Do not enable the Minecraft transactions feature flag yet.</p>
+</section>
+{% endblock %}
