@@ -1,17 +1,18 @@
--- MineBank shared CC:Tweaked terminal utilities.
--- Save beside the MineBank programs as minebank_ui.lua.
+-- MineBank shared CC:Tweaked utilities and Basalt2 touch UI.
+-- The monitor is the interactive display; it is never just a keyboard prompt mirror.
 local M = {}
--- Use an attached monitor as the primary display when available. Keyboard input
--- still comes from the computer, while terminal output is redirected to the monitor.
-if peripheral and peripheral.find and term and term.redirect then
-  local monitor = peripheral.find("monitor")
-  if monitor then
-    pcall(function() monitor.setTextScale(0.5) end)
-    pcall(function() term.redirect(monitor) end)
-  end
-end
 M.API_BASE = "https://minebanksecurearea.vercel.app/api/v1/minecraft"
 M.CARD_FILE = "minebank.card"
+
+local monitor = peripheral and peripheral.find and peripheral.find("monitor")
+if monitor and term and term.redirect then
+  pcall(function() monitor.setTextScale(0.5) end)
+  pcall(function() term.redirect(monitor) end)
+end
+
+local basalt
+local basaltOk, basaltModule = pcall(require, "basalt")
+if basaltOk then basalt = basaltModule end
 
 function M.clear()
   term.setBackgroundColor(colors.black)
@@ -21,77 +22,166 @@ function M.clear()
 end
 
 function M.header(title, subtitle)
-  local w,h = term.getSize()
+  local w = term.getSize()
   term.setBackgroundColor(colors.black); term.setTextColor(colors.lime)
   term.setCursorPos(1,1); term.write("MINEBANK")
   term.setTextColor(colors.lightGray); term.setCursorPos(1,2)
-  term.write("THE NEW BANK  /  "..tostring(title or "TERMINAL"))
+  term.write("THE NEW BANK  /  " .. tostring(title or "TERMINAL"):sub(1, math.max(1,w-18)))
   term.setTextColor(colors.gray); term.setCursorPos(1,3); term.write(string.rep("-", math.max(1,w)))
-  if subtitle then term.setCursorPos(1,4); term.setTextColor(colors.white); term.write(tostring(subtitle):sub(1,w)) end
+  if subtitle then
+    term.setCursorPos(1,4); term.setTextColor(colors.white)
+    term.write(tostring(subtitle):gsub("[\r\n]", " "):sub(1, math.max(1,w)))
+  end
   term.setBackgroundColor(colors.black); term.setTextColor(colors.white)
+end
+
+local function addScreen(title, subtitle)
+  if not basalt then return nil, "Basalt2 is not installed. Run install.lua." end
+  local main = basalt.getMainFrame()
+  local w,h = term.getSize()
+  local screen = main:addFrame({x=1,y=1,width=w,height=h,background=colors.black})
+  screen:addLabel({x=2,y=1,width=math.max(1,w-3),height=1,foreground=colors.lime,background=colors.black}):setText("MINEBANK")
+  screen:addLabel({x=2,y=2,width=math.max(1,w-3),height=1,foreground=colors.lightGray,background=colors.black}):setText(tostring(title or "TERMINAL"):sub(1,math.max(1,w-3)))
+  screen:addLabel({x=2,y=3,width=math.max(1,w-3),height=1,foreground=colors.gray,background=colors.black}):setText(string.rep("-",math.max(1,w-3)))
+  if subtitle then screen:addLabel({x=2,y=4,width=math.max(1,w-3),height=2,foreground=colors.white,background=colors.black}):setText(tostring(subtitle):gsub("[\r\n]"," "):sub(1,math.max(1,w-3))) end
+  return screen, nil, w, h
+end
+
+local function closeScreen(screen)
+  if screen then pcall(function() screen:setVisible(false) end) end
+end
+
+function M.choose(title, options, subtitle)
+  if not basalt then
+    M.clear(); M.header(title, subtitle or "Type the option number.")
+    for i, option in ipairs(options) do print(tostring(i)..") "..tostring(option)) end
+    write("> "); local n=tonumber(read())
+    if n and n%1==0 and options[n] then return n end
+    return nil
+  end
+  local screen,err,w,h = addScreen(title,subtitle or "Touch an option to continue.")
+  if not screen then M.message(err,false); return nil end
+  local selected
+  local top=6
+  local usable=math.max(1,h-top)
+  local rowHeight=math.max(1,math.min(3,math.floor(usable/math.max(1,#options))))
+  for i,option in ipairs(options) do
+    local y=top+(i-1)*rowHeight
+    if y<=h then
+      local label=tostring(option)
+      local maxText=math.max(1,w-7)
+      if #label>maxText then label=label:sub(1,math.max(1,maxText-1)).."…" end
+      local b=screen:addButton({x=2,y=y,width=math.max(1,w-3),height=math.min(rowHeight,h-y+1),background=(i==#options and colors.gray or colors.green),foreground=colors.black})
+      b:setText(label)
+      b:onClick(function()
+        selected=i
+        basalt.stop()
+      end)
+    end
+  end
+  basalt.run()
+  closeScreen(screen)
+  return selected
 end
 
 function M.message(text, good)
   local w = term.getSize()
   term.setTextColor(good and colors.lime or colors.orange)
-  print(tostring(text):sub(1, math.max(1,w)))
+  term.setCursorPos(1, math.min(6, select(2,term.getSize())))
+  term.write(tostring(text):gsub("[\r\n]"," "):sub(1,math.max(1,w)))
   term.setTextColor(colors.white)
 end
 
 function M.pause()
-  print(""); write("Press Enter to continue. "); read()
+  if basalt then
+    M.choose("MINEBANK", {"Continue"}, "Touch Continue when you are ready.")
+  else
+    print(""); write("Press Enter to continue. "); read()
+  end
 end
 
 function M.secret(label)
-  write(label)
+  write(tostring(label or ""))
   return read("*")
 end
 
 function M.prompt(label, default)
-  if default then write(label.." ["..tostring(default).."]: ") else write(label..": ") end
-  local v = read()
-  if v == "" and default ~= nil then return tostring(default) end
-  return v
+  if not basalt then
+    if default then write(label.." ["..tostring(default).."]: ") else write(label..": ") end
+    local v=read()
+    if v=="" and default~=nil then return tostring(default) end
+    return v
+  end
+  local screen,err,w,h=addScreen("INPUT",label)
+  if not screen then return nil end
+  local value=tostring(default or "")
+  local input=screen:addInput({x=2,y=7,width=math.max(1,w-3),height=1,background=colors.white,foreground=colors.black})
+  input:setText(value)
+  local numeric= tostring(label):lower():find("amount") or tostring(label):lower():find("number") or tostring(label):lower():find("emerald")
+  local result,done
+  local function finish(v) result=v; done=true; basalt.stop() end
+  if numeric and h>=15 then
+    local digits={"1","2","3","4","5","6","7","8","9","0","⌫","Clear"}
+    local cols=math.min(3,math.max(1,math.floor((w-4)/6)))
+    local cellW=math.max(3,math.floor((w-4)/cols))
+    for i,digit in ipairs(digits) do
+      local row=math.floor((i-1)/cols)
+      local col=(i-1)%cols
+      local b=screen:addButton({x=2+col*cellW,y=9+row*2,width=math.min(cellW-1,w-(2+col*cellW)),height=1,background=colors.gray,foreground=colors.white})
+      b:setText(digit)
+      b:onClick(function()
+        local current=input:getText() or ""
+        if digit=="Clear" then current=""
+        elseif digit=="⌫" then current=current:sub(1,-2)
+        elseif #current<18 then current=current..digit end
+        input:setText(current)
+      end)
+    end
+    local buttonY=math.min(h-1,16)
+    screen:addButton({x=2,y=buttonY,width=math.max(1,math.floor((w-4)/2)),height=1,background=colors.green,foreground=colors.black}):setText("Submit"):onClick(function() finish(input:getText()) end)
+    screen:addButton({x=3+math.floor((w-4)/2),y=buttonY,width=math.max(1,w-(3+math.floor((w-4)/2))),height=1,background=colors.red,foreground=colors.white}):setText("Cancel"):onClick(function() finish(nil) end)
+  else
+    screen:addLabel({x=2,y=9,width=math.max(1,w-3),height=2,foreground=colors.gray,background=colors.black}):setText("Use the connected keyboard for this field.")
+    screen:addButton({x=2,y=math.max(11,h-2),width=math.max(1,math.floor((w-4)/2)),height=1,background=colors.green,foreground=colors.black}):setText("Submit"):onClick(function() finish(input:getText()) end)
+    screen:addButton({x=3+math.floor((w-4)/2),y=math.max(11,h-2),width=math.max(1,w-(3+math.floor((w-4)/2))),height=1,background=colors.red,foreground=colors.white}):setText("Cancel"):onClick(function() finish(nil) end)
+  end
+  basalt.run()
+  closeScreen(screen)
+  if result==nil and not done then return nil end
+  return result
 end
 
 function M.api(path, method, token, body, key, extraHeaders)
   if not http then return nil, "Enable the CC:Tweaked HTTP API in server settings." end
-  local headers = {Accept="application/json", ["Content-Type"]="application/json"}
-  if token then headers.Authorization = "Bearer "..token end
-  if key then headers["Idempotency-Key"] = key end
+  local headers={Accept="application/json",["Content-Type"]="application/json"}
+  if token then headers.Authorization="Bearer "..token end
+  if key then headers["Idempotency-Key"]=key end
   for name,value in pairs(extraHeaders or {}) do headers[name]=value end
   local url=M.API_BASE..path
-  local ok, response, err
-  if body then
-    ok, response, err = pcall(http.post, url, textutils.serializeJSON(body), headers)
-  else
-    ok, response, err = pcall(http.get, url, headers)
-  end
-  if not ok then return nil, "Network request failed: "..tostring(response) end
-  if not response then return nil, tostring(err or "MineBank could not be reached.") end
-  local status = response.getResponseCode and response.getResponseCode() or 200
-  local raw = response.readAll()
-  response.close()
-  local parsed, data = pcall(textutils.unserializeJSON, raw)
-  if not parsed or type(data) ~= "table" then return nil, "Invalid MineBank response (HTTP "..status..")." end
-  if status < 200 or status >= 300 then return nil, tostring(data.error or ("HTTP "..status)) end
+  local ok,response,err
+  if body then ok,response,err=pcall(http.post,url,textutils.serializeJSON(body),headers)
+  else ok,response,err=pcall(http.get,url,headers) end
+  if not ok then return nil,"Network request failed: "..tostring(response) end
+  if not response then return nil,tostring(err or "MineBank could not be reached.") end
+  local status=response.getResponseCode and response.getResponseCode() or 200
+  local raw=response.readAll(); response.close()
+  local parsed,data=pcall(textutils.unserializeJSON,raw)
+  if not parsed or type(data)~="table" then return nil,"Invalid MineBank response (HTTP "..status..")." end
+  if status<200 or status>=300 then return nil,tostring(data.error or ("HTTP "..status)) end
   return data
 end
 
 function M.card()
-  local drive = peripheral.find("drive")
-  if not drive or not drive.isDiskPresent or not drive.isDiskPresent() then return nil, "Insert your MineBank floppy card." end
-  local mount = drive.getMountPath and drive.getMountPath()
-  if not mount or not fs.exists(mount) then return nil, "The floppy is not mounted." end
-  local path = fs.combine(mount, M.CARD_FILE)
-  if not fs.exists(path) then return nil, "No MineBank card file found on this floppy." end
-  local h = fs.open(path,"r")
-  if not h then return nil, "Cannot read the floppy card." end
-  local raw = h.readAll(); h.close()
-  local ok, card = pcall(textutils.unserializeJSON,raw)
-  if not ok or type(card)~="table" or type(card.credential)~="string" or not card.credential:match("^mbmc_") then
-    return nil, "Invalid MineBank floppy card."
-  end
+  local drive=peripheral.find("drive")
+  if not drive or not drive.isDiskPresent or not drive.isDiskPresent() then return nil,"Insert your MineBank floppy card." end
+  local mount=drive.getMountPath and drive.getMountPath()
+  if not mount or not fs.exists(mount) then return nil,"The floppy is not mounted." end
+  local path=fs.combine(mount,M.CARD_FILE)
+  if not fs.exists(path) then return nil,"No MineBank card file found on this floppy." end
+  local h=fs.open(path,"r"); if not h then return nil,"Cannot read the floppy card." end
+  local raw=h.readAll(); h.close()
+  local ok,card=pcall(textutils.unserializeJSON,raw)
+  if not ok or type(card)~="table" or type(card.credential)~="string" or not card.credential:match("^mbmc_") then return nil,"Invalid MineBank floppy card." end
   return card
 end
 
@@ -100,38 +190,25 @@ function M.key(prefix)
 end
 
 function M.inventory(name)
-  if not name or name == "" then return nil end
-  local ok, inv = pcall(peripheral.wrap, name)
+  if not name or name=="" then return nil end
+  local ok,inv=pcall(peripheral.wrap,name)
   if not ok or not inv or not inv.list or not inv.pushItems then return nil end
   return inv
 end
 
 function M.findInventory()
-  local names = peripheral.getNames()
-  local found = {}
-  for _,name in ipairs(names) do
-    local inv = M.inventory(name)
-    if inv then found[#found+1] = name end
-  end
+  local names=peripheral.getNames(); local found={}
+  for _,name in ipairs(names) do if M.inventory(name) then found[#found+1]=name end end
   return found
 end
 
-function M.choose(title, options)
-  M.clear(); M.header(title, "Use number keys or type the option number.")
-  for i,option in ipairs(options) do print(string.format("%d) %s", i, option)) end
-  write("> ")
-  local n = tonumber(read())
-  if n and n % 1 == 0 and options[n] then return n end
-  return nil
-end
-
 function M.setup()
-  M.clear(); M.header("SETUP WIZARD", "MineBank terminal configuration")
+  M.clear(); M.header("SETUP WIZARD","MineBank terminal configuration")
   print("This wizard only saves local terminal configuration.")
   print("It does not change your MineBank account or portal.")
-  local base = M.prompt("HTTPS API base", M.API_BASE)
-  if not base:match("^https://") then return nil, "API base must use HTTPS." end
-  M.API_BASE = base:gsub("/+$","")
+  local base=M.prompt("HTTPS API base",M.API_BASE)
+  if not base or not base:match("^https://") then return nil,"API base must use HTTPS." end
+  M.API_BASE=base:gsub("/+$","")
   return {api_base=M.API_BASE}
 end
 
