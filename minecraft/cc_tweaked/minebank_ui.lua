@@ -60,22 +60,30 @@ function M.choose(title, options, subtitle)
     return nil
   end
   local w,h=term.getSize()
-  local pageSize=math.max(1,h-7)
+  local pageSize=math.max(1,h-8)
   local page=1
   while true do
-    local screen,err,sw,sh=addScreen(title,subtitle or "Touch an option to continue.")
+    local screen,err,sw,sh=addScreen(title,subtitle or "Select an option.")
     if not screen then M.message(err,false); return nil end
     local maxPage=math.max(1,math.ceil(#options/pageSize))
     local first=(page-1)*pageSize+1
     local last=math.min(#options,first+pageSize-1)
     local selected
+    local columns = sw >= 34 and 2 or 1
+    local rows = math.ceil((last-first+1)/columns)
+    local cellW = math.max(1,math.floor((sw-4-(columns-1))/columns))
     for i=first,last do
-      local y=6+(i-first)
+      local localIndex=i-first
+      local col=math.floor(localIndex/rows)
+      local row=localIndex%rows
+      local x=2+col*(cellW+1)
+      local y=6+row*2
       local label=tostring(options[i])
-      local maxText=math.max(1,sw-7)
+      local maxText=math.max(1,cellW-2)
       if #label>maxText then label=label:sub(1,math.max(1,maxText-1)).."…" end
-      screen:addButton({x=2,y=y,width=math.max(1,sw-3),height=1,background=(i==#options and colors.gray or colors.green),foreground=colors.black})
-        :setText(label):onClick(function() selected=i; basalt.stop() end)
+      local isCancel=label:lower():find("cancel",1,true) or label:lower():find("back",1,true)
+      screen:addButton({x=x,y=y,width=cellW,height=2,background=(isCancel and colors.gray or colors.green),foreground=colors.black})
+        :setText(" "..label):onClick(function() selected=i; basalt.stop() end)
     end
     if maxPage>1 then
       if page>1 then
