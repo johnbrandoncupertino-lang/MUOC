@@ -270,10 +270,8 @@ local function runTransfer()
     local recipient=ui.prompt("Recipient account number")
     local amount=tonumber(ui.prompt("Amount in Emeralds (1-1000)"))
     if not amount or amount%1~=0 or amount<1 or amount>MAX_TRANSFER then ui.message("Transfers are limited to 1,000 Emeralds. Use the portal for larger transfers.",false); ui.pause(); return end
-    ui.clear(); ui.header("CONFIRM TRANSFER")
-    print("Recipient: "..recipient); print("Amount: "..amount.." Emeralds")
-    write("Type TRANSFER to confirm: ")
-    if read()~="TRANSFER" then ui.message("Cancelled. No transfer submitted.",true); ui.pause(); return end
+    local confirm=ui.choose("CONFIRM TRANSFER",{"Transfer "..amount.." Emeralds","Cancel"},"Recipient: "..recipient)
+    if confirm~=1 then ui.message("Cancelled. No transfer submitted.",true); ui.pause(); return end
     order={version=1,key=ui.key("transfer"),amount=amount,recipient=recipient,state="REQUEST_PENDING",kind="TRANSFER",card_id=card.card_id}
     if not save(JOURNAL,order) then ui.message("Could not save transfer journal; no request sent.",false); ui.pause(); return end
   end
@@ -330,11 +328,8 @@ end
 
 local function runRevoke()
   local card=getCard(); if not card then return end
-  ui.clear(); ui.header("REVOKE CARD","This permanently disables the inserted floppy card.")
-  print("Card ID: "..tostring(card.card_id or "unknown"))
-  print("You must issue a new card to use MineBank again.")
-  write("Type REVOKE to confirm: ")
-  if read()~="REVOKE" then ui.message("Cancelled. The card remains active.",true); ui.pause(); return end
+  local confirm=ui.choose("REVOKE CARD",{"Permanently revoke card","Cancel"},"Card "..tostring(card.card_id or "unknown")..". A new card will be required.")
+  if confirm~=1 then ui.message("Cancelled. The card remains active.",true); ui.pause(); return end
   local p=pin(); if not p then return end
   local result,err=ui.api("/cards/revoke-self","POST",card.credential,{wallet_pin=p,confirm=true})
   if not result then ui.message("Revocation not confirmed: "..tostring(err),false)
