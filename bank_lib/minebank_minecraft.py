@@ -454,7 +454,7 @@ def _atm_authorized():
     """Only a configured trusted ATM may create physical deposits or withdrawals."""
     expected = os.environ.get("MINEBANK_MINECRAFT_ATM_TOKEN", "").strip()
     supplied = request.headers.get("X-MineBank-ATM-Token", "").strip()
-    return bool(expected and supplied and hmac.compare_digest(expected, supplied))
+    return bool(len(expected) >= 32 and supplied and hmac.compare_digest(expected, supplied))
 
 
 def _request_idempotency_key():
