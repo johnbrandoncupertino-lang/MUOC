@@ -295,6 +295,8 @@ while true do
     print("Stock emeralds: "..countEmeralds(stockInv))
     print("Output emeralds: "..countEmeralds(outputInv))
     print("HTTP enabled: "..tostring(http~=nil))
+    print("Modem detected (optional): "..tostring(peripheral.find("modem")~=nil))
+    print("Monitor detected: "..tostring(peripheral.find("monitor")~=nil))
     ui.pause()
   else break end
 end
