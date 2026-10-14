@@ -103,21 +103,36 @@ if not depositInv or not stockInv or not outputInv then ui.message("Configured i
 local function runWithdrawal()
   local card=getCard(); if not card then return end
   local p=pin(); if not p then return end
-  local amount=tonumber(ui.prompt("Whole Emeralds to withdraw (1-"..MAX_WITHDRAWAL..")"))
-  if not amount or amount%1~=0 or amount<1 or amount>MAX_WITHDRAWAL then ui.message("Invalid withdrawal amount.",false); ui.pause(); return end
-  if countEmeralds(stockInv)<amount then ui.message("Secure stock does not contain enough emeralds.",false); ui.pause(); return end
-  if not canFit(outputInv,"minecraft:emerald",amount) then ui.message("Output inventory lacks space. No debit requested.",false); ui.pause(); return end
   local old=load(JOURNAL)
-  if old and old.state~="COMPLETE" then ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.pause(); return end
-  local order={version=1,key=ui.key("withdraw"),amount=amount,state="REQUEST_PENDING",kind="WITHDRAWAL"}
-  if not save(JOURNAL,order) then ui.message("Could not persist journal. No request sent.",false); ui.pause(); return end
-  local result,err=ui.api("/withdrawals","POST",card.credential,{amount=amount,wallet_pin=p},order.key)
-  if not result then ui.message("Withdrawal not confirmed: "..tostring(err)..". Re-run only after checking the saved journal.",false); ui.pause(); return end
-  order.state="AUTHORIZED"; order.transaction_id=result.transaction_id
-  if not save(JOURNAL,order) then ui.message("MineBank debited the account but the local ticket could not be saved. Do not dispense.",false); ui.pause(); return end
+  local order
+  if old and old.state~="COMPLETE" then
+    if old.kind~="WITHDRAWAL" or (old.state~="REQUEST_PENDING" and old.state~="AUTHORIZED") then
+      ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.pause(); return
+    end
+    order=old
+  else
+    local amount=tonumber(ui.prompt("Whole Emeralds to withdraw (1-"..MAX_WITHDRAWAL..")"))
+    if not amount or amount%1~=0 or amount<1 or amount>MAX_WITHDRAWAL then ui.message("Invalid withdrawal amount.",false); ui.pause(); return end
+    if countEmeralds(stockInv)<amount then ui.message("Secure stock does not contain enough emeralds.",false); ui.pause(); return end
+    if not canFit(outputInv,"minecraft:emerald",amount) then ui.message("Output inventory lacks space. No debit requested.",false); ui.pause(); return end
+    order={version=1,key=ui.key("withdraw"),amount=amount,state="REQUEST_PENDING",kind="WITHDRAWAL"}
+    if not save(JOURNAL,order) then ui.message("Could not persist journal. No request sent.",false); ui.pause(); return end
+  end
+  if countEmeralds(stockInv)<order.amount then ui.message("Secure stock is short. The saved withdrawal has not been re-requested.",false); ui.pause(); return end
+  if not canFit(outputInv,"minecraft:emerald",order.amount) then ui.message("Output inventory lacks space. No new debit requested.",false); ui.pause(); return end
+  local result
+  if order.state=="REQUEST_PENDING" then
+    local err
+    result,err=ui.api("/withdrawals","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key)
+    if not result then ui.message("Withdrawal not confirmed: "..tostring(err)..". The same key is saved; check status before starting another.",false); ui.pause(); return end
+    order.state="AUTHORIZED"; order.transaction_id=result.transaction_id
+    if not save(JOURNAL,order) then ui.message("MineBank debited the account but the local ticket could not be saved. Do not dispense.",false); ui.pause(); return end
+  else
+    result={transaction_id=order.transaction_id,amount=order.amount}
+  end
   order.state="DISPENSE_STARTED"
   if not save(JOURNAL,order) then ui.message("Could not lock the dispense journal. No items moved; operator reconciliation required.",false); ui.pause(); return end
-  local remaining=amount
+  local remaining=order.amount
   for slot,detail in pairs(stockInv.list()) do
     if detail.name=="minecraft:emerald" and remaining>0 then
       local moved=stockInv.pushItems(cfg.output_inventory,slot,math.min(remaining,detail.count))
@@ -128,7 +143,7 @@ local function runWithdrawal()
   if remaining>0 then ui.message("Partial dispense detected. Do not retry. Operator reconciliation required.",false); ui.pause(); return end
   order.state="COMPLETE"; order.completed_at=os.epoch("utc")
   if not save(JOURNAL,order) then ui.message("Items moved but journal completion failed. Lock ATM and reconcile.",false); ui.pause(); return end
-  ui.message("WITHDRAWAL COMPLETE — "..amount.." Emeralds",true)
+  ui.message("WITHDRAWAL COMPLETE — "..order.amount.." Emeralds",true)
   print("Transaction: "..tostring(result.transaction_id)); ui.pause()
 end
 
@@ -136,24 +151,33 @@ local function runDeposit()
   local card=getCard(); if not card then return end
   local p=pin(); if not p then return end
   local old=load(JOURNAL)
-  if old and old.state~="COMPLETE" then ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.pause(); return end
-  local amount=countEmeralds(depositInv)
-  if amount<1 then ui.message("Place emeralds in the deposit inventory first.",false); ui.pause(); return end
-  if amount>4096 then ui.message("Deposit is limited to 4,096 Emeralds per operation.",false); ui.pause(); return end
-  local order={version=1,key=ui.key("deposit"),amount=amount,state="ESCROW_PENDING",kind="DEPOSIT"}
-  if not save(JOURNAL,order) then ui.message("Could not persist deposit journal; items left untouched.",false); ui.pause(); return end
-  local moved=moveEmeralds(depositInv,cfg.stock_inventory)
-  if moved~=amount then ui.message("Only "..moved.." of "..amount.." Emeralds entered escrow. Stop and reconcile.",false); ui.pause(); return end
-  order.state="REQUEST_PENDING"
-  if not save(JOURNAL,order) then ui.message("Emeralds are secured in escrow but journal failed. Do not move them.",false); ui.pause(); return end
-  local result,err=ui.api("/deposits","POST",card.credential,{amount=amount,wallet_pin=p},order.key)
+  local order
+  if old and old.state~="COMPLETE" then
+    if old.kind~="DEPOSIT" or (old.state~="REQUEST_PENDING" and old.state~="ESCROW_PENDING") then
+      ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.pause(); return
+    end
+    order=old
+  else
+    local amount=countEmeralds(depositInv)
+    if amount<1 then ui.message("Place emeralds in the deposit inventory first.",false); ui.pause(); return end
+    if amount>4096 then ui.message("Deposit is limited to 4,096 Emeralds per operation.",false); ui.pause(); return end
+    order={version=1,key=ui.key("deposit"),amount=amount,state="ESCROW_PENDING",kind="DEPOSIT"}
+    if not save(JOURNAL,order) then ui.message("Could not persist deposit journal; items left untouched.",false); ui.pause(); return end
+  end
+  if order.state=="ESCROW_PENDING" then
+    local moved=moveEmeralds(depositInv,cfg.stock_inventory)
+    if moved~=order.amount then ui.message("Only "..moved.." of "..order.amount.." Emeralds entered escrow. Stop and reconcile.",false); ui.pause(); return end
+    order.state="REQUEST_PENDING"
+    if not save(JOURNAL,order) then ui.message("Emeralds are secured in escrow but journal failed. Do not move them.",false); ui.pause(); return end
+  end
+  local result,err=ui.api("/deposits","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key)
   if not result then
-    ui.message("Deposit not confirmed: "..tostring(err)..". Emeralds remain in secure stock; rerun to retry the same operation.",false)
+    ui.message("Deposit not confirmed: "..tostring(err)..". Emeralds remain in secure stock; re-run to retry the same operation.",false)
     ui.pause(); return
   end
   order.state="COMPLETE"; order.transaction_id=result.transaction_id; order.completed_at=os.epoch("utc")
   if not save(JOURNAL,order) then ui.message("MineBank confirmed the deposit but journal update failed. Preserve the operation key and reconcile.",false); ui.pause(); return end
-  ui.message("DEPOSIT COMPLETE — "..amount.." Emeralds",true)
+  ui.message("DEPOSIT COMPLETE — "..order.amount.." Emeralds",true)
   print("Transaction: "..tostring(result.transaction_id)); ui.pause()
 end
 
