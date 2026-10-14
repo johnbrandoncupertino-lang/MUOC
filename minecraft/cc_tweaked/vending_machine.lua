@@ -2,7 +2,10 @@
 -- Requires a trusted merchant token, a stock inventory and a separate output inventory.
 -- A paid order is journalled before dispensing; interrupted physical delivery is never replayed automatically.
 
-local ui = dofile("minebank_ui.lua")
+local runningProgram = shell.getRunningProgram()
+local programDir = fs.getDir(runningProgram)
+local uiPath = fs.combine(programDir, "minebank_ui.lua")
+local ui = dofile(uiPath)
 local CONFIG = "minebank_vending.json"
 local JOURNAL = "minebank_vending_journal.json"
 local function save(path,value)
