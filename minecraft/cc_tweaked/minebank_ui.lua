@@ -1,7 +1,7 @@
 -- MineBank shared CC:Tweaked terminal utilities.
 -- Save beside the MineBank programs as minebank_ui.lua.
 local M = {}
-M.API_BASE = "https://muoc-pietroaccordi09-4057.vercel.app/api/v1/minecraft"
+M.API_BASE = "https://minebanksecurearea.vercel.app/api/v1/minecraft"
 M.CARD_FILE = "minebank.card"
 
 function M.clear()
