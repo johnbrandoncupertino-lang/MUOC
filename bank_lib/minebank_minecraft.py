@@ -670,6 +670,40 @@ def create_merchant_checkout():
         release_db_connection(conn)
 
 
+def _merchant_payment_status_code(message):
+    """Use 409 only for genuine checkout/idempotency state conflicts."""
+    message = str(message or "")
+    if message == "Checkout not found.":
+        return 404
+    if message in (
+        "Checkout has expired or has already been paid.",
+        "Checkout was already settled.",
+        "This Idempotency-Key was already used for a different request.",
+    ):
+        return 409
+    return 422
+
+
+def _merchant_payment_error_code(message):
+    """Expose a stable, machine-readable reason without exposing exception details."""
+    message = str(message or "")
+    if message == "Checkout not found.":
+        return "CHECKOUT_NOT_FOUND"
+    if message == "This Idempotency-Key was already used for a different request.":
+        return "IDEMPOTENCY_CONFLICT"
+    if "Checkout" in message and ("expired" in message or "paid" in message or "settled" in message):
+        return "CHECKOUT_CONFLICT"
+    if "CrediCheck" in message or "credit product" in message:
+        return "CREDICHECK_REJECTED"
+    if "CashLine" in message:
+        return "CASHLINE_NOT_AVAILABLE"
+    if "Insufficient MineBank Balance" in message:
+        return "INSUFFICIENT_BALANCE"
+    if "locked" in message.lower() or "suspended" in message.lower():
+        return "BANKING_UNAVAILABLE"
+    return "PAYMENT_REJECTED"
+
+
 @minecraft_bp.post("/payments")
 def pay_merchant_checkout():
     """Pay the fixed amount in an open checkout, atomically and idempotently."""
@@ -823,7 +857,9 @@ def pay_merchant_checkout():
     except PermissionError as exc:
         return jsonify(error=str(exc)), 401
     except ValueError as exc:
-        return jsonify(error=str(exc)), 409
+        message = str(exc)
+        status_code = _merchant_payment_status_code(message)
+        return jsonify(error=message, error_code=_merchant_payment_error_code(message)), status_code
     except Exception as exc:
         current_app.logger.error("Minecraft payment failed: %s", type(exc).__name__)
         return jsonify(error="Payment could not be completed. Check transaction history before retrying."), 503
