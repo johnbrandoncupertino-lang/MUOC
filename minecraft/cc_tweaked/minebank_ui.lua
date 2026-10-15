@@ -61,10 +61,12 @@ function M.useTarget(name)
   else
     target = "terminal"
   end
-  if not basalt and term.redirect then
-    pcall(term.redirect, displayFor(target))
-  end
+  if term.redirect then pcall(term.redirect, displayFor(target)) end
   return target
+end
+
+function M.hasMonitor()
+  return monitor ~= nil and roots.monitor ~= nil
 end
 
 local function currentDisplay()
@@ -633,4 +635,5 @@ function M.setup()
   return {api_base=M.API_BASE}
 end
 
+M.useTarget(target)
 return M
