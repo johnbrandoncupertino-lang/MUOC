@@ -184,12 +184,23 @@ while true do
       local order={version=1,key=ui.key("vending"),item=product.item,count=product.count,amount=product.price,state="CHECKOUT_PENDING"}
       if not save(JOURNAL,order) then ui.message("Could not persist order; no checkout created.",false); ui.pause()
       else
-        local checkout,err=ui.api("/merchant/checkouts","POST",cfg.merchant_token,
+        local checkout,err,checkoutHttp=ui.api("/merchant/checkouts","POST",cfg.merchant_token,
           {amount=product.price,description="Vending: "..product.item.." x"..product.count,reference=order.key},order.key)
-        if not checkout then ui.message("Checkout not confirmed: "..tostring(err),false); ui.pause()
+        if not checkout then
+          order.state="CHECKOUT_REVIEW"
+          order.checkout_http_status=checkoutHttp
+          order.checkout_error=tostring(err or "Unknown checkout creation result")
+          save(JOURNAL,order)
+          ui.message("Checkout creation was not confirmed (HTTP "..tostring(checkoutHttp or "unknown").."): "..tostring(err),false)
+          ui.message("The request will not be resent automatically. The register is locked so an uncertain checkout cannot be duplicated.",false)
+          ui.pause()
+          return
         else
           order.checkout_id=tostring(checkout.checkout_id); order.state="AWAITING_PAYMENT"
-          if not save(JOURNAL,order) then ui.message("Checkout exists but journal failed. Do not create another checkout; operator reconciliation required.",false); ui.pause()
+          if not save(JOURNAL,order) then
+            ui.message("MineBank returned a checkout ID but it could not be persisted. Do not open another sale; operator reconciliation is required.",false)
+            ui.pause()
+            return
           else
              local card
              while not card do
@@ -266,7 +277,7 @@ while true do
                          ui.pause()
                        end
                      end
-                     if order.state=="PAYMENT_REVIEW" then return end
+                     if order.state~="COMPLETE" and order.state~="CANCELLED" then return end
                    else
                      order.state="CANCELLED"; save(JOURNAL,order)
                      ui.message("Purchase cancelled. No payment was sent.",true); ui.pause()
