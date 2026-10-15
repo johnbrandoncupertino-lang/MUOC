@@ -3,6 +3,7 @@
 local runningProgram = shell.getRunningProgram()
 local programDir = fs.getDir(runningProgram)
 local ui = dofile(fs.combine(programDir, "minebank_ui.lua"))
+if not ui.hasBasalt() then ui.showMissingBasalt(); return end
 ui.useTarget("terminal")
 local CONFIG = fs.combine(programDir, "minebank_merchant.json")
 local REVIEW = fs.combine(programDir, "minebank_merchant_review.json")
