@@ -143,9 +143,19 @@ local function customerPayment(cfg,checkout)
     paymentKey)
   pin=nil
   if not paid then
-    -- A 409 is a definitive business conflict, not a transient network error.
-    -- Never send a second POST automatically. Only GET the existing checkout
-    -- to determine whether the original operation committed.
+    -- A 400/401/403/404/422 is a definitive rejection from the endpoint. It
+    -- cannot be mistaken for a transient transport failure, and no payment POST
+    -- is resent. CashLine eligibility/limit rejections arrive as HTTP 422.
+    if httpStatus and (httpStatus==400 or httpStatus==401 or httpStatus==403 or httpStatus==404 or httpStatus==422) then
+      ui.clear(); ui.header("PAYMENT REJECTED","MineBank did not authorise this payment")
+      ui.message("MineBank response (HTTP "..tostring(httpStatus).."): "..tostring(err),false)
+      ui.message("The payment was rejected; no debit or merchant credit was committed. Return to the cashier and choose another available payment method.",true)
+      ui.pause()
+      return false,"Payment rejected by MineBank (HTTP "..tostring(httpStatus).."). No money was moved; use another payment method or resolve the account restriction."
+    end
+    -- A real 409, a timeout, or a server/network failure can leave the caller
+    -- uncertain about the original operation. Never send another POST: only
+    -- GET the same checkout to reconcile its authoritative state.
     ui.clear(); ui.header("PAYMENT REQUIRES REVIEW","No automatic payment retry will be sent")
     ui.message("MineBank response"..(httpStatus and (" (HTTP "..tostring(httpStatus)..")") or "")..": "..tostring(err),false)
     ui.message("Checking the original checkout status. Keep this checkout ID and do not repeat the payment.",true)
