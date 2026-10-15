@@ -152,7 +152,7 @@ local function makeScreen(title, subtitle)
   end
   frame:addFrame({x=1, y=4, width=w, height=1, background=colors.lime})
 
-  local sideWidth = w >= 54 and 12 or 0
+  local sideWidth = (w >= 54 and h >= 14) and 12 or 0
   local bodyX = sideWidth > 0 and 15 or 2
   local bodyW = math.max(1, w - bodyX - 1)
   local bodyH = math.max(1, h - 5)
