@@ -79,13 +79,13 @@ local function displaySize()
 end
 
 local function safeText(value)
-  return tostring(value or ""):gsub("[\\r\\n]+", " "):gsub("%s+", " ")
+  return tostring(value or ""):gsub("[\r\n]+", " "):gsub("%s+", " ")
 end
 
 local function wrapText(value, width, maxLines)
   width = math.max(1, math.floor(width or 1))
   local lines = {}
-  for paragraph in tostring(value or ""):gmatch("[^\\r\\n]+") do
+  for paragraph in tostring(value or ""):gmatch("[^\r\n]+") do
     local line = ""
     for word in paragraph:gmatch("%S+") do
       if #line == 0 then
@@ -329,7 +329,7 @@ function M.choose(title, options, subtitle)
         x=x,y=y,width=cellW,height=tileH,
         background=bg,foreground=fg,
       })
-      button:setText(table.concat(lines,"\\n"))
+      button:setText(table.concat(lines,"\n"))
       button:onClick(function() selected=i; basalt.stop() end)
     end
     if pages>1 then
