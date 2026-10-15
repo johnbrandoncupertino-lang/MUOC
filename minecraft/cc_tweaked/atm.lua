@@ -6,6 +6,7 @@ local runningProgram = shell.getRunningProgram()
 local programDir = fs.getDir(runningProgram)
 local uiPath = fs.combine(programDir, "minebank_ui.lua")
 local ui = dofile(uiPath)
+if not ui.hasBasalt() then ui.showMissingBasalt(); return end
 ui.useTarget("terminal")
 local function print(...)
   local values = {}
