@@ -1,219 +1,502 @@
--- MineBank shared CC:Tweaked utilities and Basalt2 touch UI.
--- The monitor is the interactive display; it is never just a keyboard prompt mirror.
+-- MineBank shared CC:Tweaked utilities and full Basalt2 touch interface.
+-- Visual reference: a polished, information-dense CC:Tweaked app; banking-only behavior.
+-- Computer and monitor are independent Basalt roots. The merchant can keep cashier
+-- controls private on the computer while showing checkout steps on a customer monitor.
 local M = {}
 M.API_BASE = "https://minebanksecurearea.vercel.app/api/v1/minecraft"
 M.CARD_FILE = "minebank.card"
 
-local monitor = peripheral and peripheral.find and peripheral.find("monitor")
-if monitor and term and term.redirect then
-  pcall(function() monitor.setTextScale(0.5) end)
-  pcall(function() term.redirect(monitor) end)
-end
+local nativeTerm = (term.native and term.native()) or term.current()
+local monitor = peripheral and peripheral.find and peripheral.find("monitor") or nil
+if monitor then pcall(function() monitor.setTextScale(0.5) end) end
 
 local basalt
 local basaltOk, basaltModule = pcall(require, "basalt")
 if basaltOk then basalt = basaltModule end
 
+local roots = {}
+if basalt then
+  local ok, frame = pcall(basalt.createFrame, nativeTerm)
+  if ok and frame then roots.terminal = frame else roots.terminal = basalt.getMainFrame() end
+  if monitor then
+    local monitorOk, monitorFrame = pcall(basalt.createFrame, monitor)
+    if monitorOk and monitorFrame then roots.monitor = monitorFrame end
+  end
+end
+
+local target = monitor and roots.monitor and "monitor" or "terminal"
+local screens = {}
+local metaByFrame = {}
+local terminalRedirect = nativeTerm
+
+local function displayFor(name)
+  if name == "monitor" and monitor then return monitor end
+  return nativeTerm
+end
+
+local function rootFor(name)
+  if not basalt then return nil end
+  return roots[name] or roots.terminal
+end
+
+local function hideFrame(frame)
+  if not frame then return end
+  pcall(function() frame:setVisible(false) end)
+  -- Basalt builds differ slightly in frame disposal support. Prefer disposal when
+  -- available so a 24/7 terminal does not accumulate hundreds of hidden views.
+  pcall(function() frame:remove() end)
+end
+
+local function closeScreen(name)
+  local meta = screens[name]
+  if meta then
+    hideFrame(meta.frame)
+    screens[name] = nil
+  end
+end
+
+function M.useTarget(name)
+  if name == "monitor" and monitor and roots.monitor then
+    target = "monitor"
+  else
+    target = "terminal"
+  end
+  if not basalt and term.redirect then
+    pcall(term.redirect, displayFor(target))
+  end
+  return target
+end
+
+local function currentDisplay()
+  return displayFor(target)
+end
+
+local function displaySize()
+  local display = currentDisplay()
+  local ok, w, h = pcall(function() return display.getSize() end)
+  if ok and type(w) == "number" and type(h) == "number" then return w, h end
+  return 51, 19
+end
+
+local function safeText(value)
+  return tostring(value or ""):gsub("[\\r\\n]+", " "):gsub("%s+", " ")
+end
+
+local function wrapText(value, width, maxLines)
+  width = math.max(1, math.floor(width or 1))
+  local lines = {}
+  for paragraph in tostring(value or ""):gmatch("[^\\r\\n]+") do
+    local line = ""
+    for word in paragraph:gmatch("%S+") do
+      if #line == 0 then
+        line = word
+      elseif #line + #word + 1 <= width then
+        line = line .. " " .. word
+      else
+        lines[#lines + 1] = line
+        line = word
+      end
+    end
+    if #line > 0 then lines[#lines + 1] = line end
+  end
+  if #lines == 0 then lines[1] = "" end
+  if maxLines and #lines > maxLines then
+    while #lines > maxLines do table.remove(lines) end
+    local last = lines[#lines] or ""
+    if #last >= width then last = last:sub(1, math.max(1, width - 1)) end
+    lines[#lines] = last .. (width > 1 and "…" or "")
+  end
+  return lines
+end
+
+local function makeScreen(title, subtitle)
+  if not basalt then return nil, "Basalt2 is not installed. Install Basalt 2.5 beside the program." end
+  closeScreen(target)
+  local root = rootFor(target)
+  local w, h = displaySize()
+  w, h = math.max(12, w), math.max(8, h)
+  local frame = root:addFrame({
+    x = 1, y = 1, width = w, height = h,
+    background = colors.black,
+  })
+
+  -- Header band, accent separator, side rail, content canvas and footer.
+  local top = frame:addFrame({x=1, y=1, width=w, height=4, background=colors.green})
+  top:addLabel({
+    x=2, y=1, width=math.max(1, math.min(18, w-3)), height=1,
+    foreground=colors.lime, background=colors.green,
+  }):setText("MINEBANK")
+  top:addLabel({
+    x=2, y=2, width=math.max(1, w-4), height=1,
+    foreground=colors.white, background=colors.green,
+  }):setText(("THE NEW BANK  /  " .. safeText(title)):sub(1, math.max(1, w-3)))
+  local sub = safeText(subtitle)
+  if sub ~= "" then
+    top:addLabel({
+      x=2, y=3, width=math.max(1, w-3), height=1,
+      foreground=colors.lightGray, background=colors.green,
+    }):setText(sub:sub(1, math.max(1, w-3)))
+  else
+    top:addLabel({
+      x=2, y=3, width=math.max(1, w-3), height=1,
+      foreground=colors.lightGray, background=colors.green,
+    }):setText("SECURE BANKING SERVICES")
+  end
+  if w >= 38 then
+    top:addLabel({
+      x=math.max(2,w-17), y=1, width=16, height=1,
+      foreground=colors.white, background=colors.green,
+    }):setText("SECURE SESSION")
+  end
+  frame:addFrame({x=1, y=4, width=w, height=1, background=colors.lime})
+
+  local sideWidth = w >= 54 and 12 or 0
+  local bodyX = sideWidth > 0 and 15 or 2
+  local bodyW = math.max(1, w - bodyX - 1)
+  local bodyH = math.max(1, h - 5)
+  if sideWidth > 0 then
+    local side = frame:addFrame({
+      x=2, y=5, width=sideWidth, height=bodyH, background=colors.gray,
+    })
+    side:addLabel({x=2,y=2,width=sideWidth-2,height=1,foreground=colors.lime,background=colors.gray}):setText("WORKSPACE")
+    side:addLabel({x=2,y=4,width=sideWidth-2,height=1,foreground=colors.white,background=colors.gray}):setText("OVERVIEW")
+    side:addLabel({x=2,y=6,width=sideWidth-2,height=1,foreground=colors.white,background=colors.gray}):setText("SERVICES")
+    side:addLabel({x=2,y=8,width=sideWidth-2,height=1,foreground=colors.white,background=colors.gray}):setText("SECURITY")
+    side:addLabel({x=2,y=math.max(2,bodyH-2),width=sideWidth-2,height=2,foreground=colors.lightGray,background=colors.gray}):setText("MINEBANK\\nONLINE")
+  end
+  local body = frame:addFrame({
+    x=bodyX, y=5, width=bodyW, height=bodyH, background=colors.black,
+  })
+  local footer = frame:addFrame({x=1,y=h,width=w,height=1,background=colors.green})
+  footer:addLabel({
+    x=2,y=1,width=math.max(1,w-3),height=1,
+    foreground=colors.white,background=colors.green,
+  }):setText("MINEBANK  •  THE NEW BANK  •  PROTECTED SESSION")
+
+  local meta = {
+    frame=frame, body=body, w=w, h=h,
+    bodyW=bodyW, bodyH=bodyH, bodyX=bodyX, sideWidth=sideWidth,
+    target=target, nextY=2,
+  }
+  screens[target] = meta
+  metaByFrame[frame] = meta
+  return meta, nil, w, h
+end
+
 function M.clear()
-  term.setBackgroundColor(colors.black)
-  term.setTextColor(colors.white)
-  term.clear()
-  term.setCursorPos(1,1)
+  closeScreen(target)
+  if not basalt then
+    local d = currentDisplay()
+    pcall(d.setBackgroundColor, colors.black)
+    pcall(d.setTextColor, colors.white)
+    pcall(d.clear)
+    pcall(d.setCursorPos, 1, 1)
+  end
 end
 
 function M.header(title, subtitle)
-  local w = term.getSize()
-  term.setBackgroundColor(colors.black); term.setTextColor(colors.lime)
-  term.setCursorPos(1,1); term.write("MINEBANK")
-  term.setTextColor(colors.lightGray); term.setCursorPos(1,2)
-  term.write("THE NEW BANK  /  " .. tostring(title or "TERMINAL"):sub(1, math.max(1,w-18)))
-  term.setTextColor(colors.gray); term.setCursorPos(1,3); term.write(string.rep("-", math.max(1,w)))
-  if subtitle then
-    term.setCursorPos(1,4); term.setTextColor(colors.white)
-    term.write(tostring(subtitle):gsub("[\r\n]", " "):sub(1, math.max(1,w)))
+  M.clear()
+  if not basalt then
+    local d = currentDisplay()
+    local w = select(1, d.getSize())
+    d.setBackgroundColor(colors.black); d.setTextColor(colors.lime)
+    d.setCursorPos(1,1); d.write("MINEBANK")
+    d.setTextColor(colors.lightGray); d.setCursorPos(1,2)
+    d.write(("THE NEW BANK  /  " .. safeText(title)):sub(1, math.max(1,w)))
+    d.setTextColor(colors.white); d.setCursorPos(1,3)
+    if subtitle then d.write(safeText(subtitle):sub(1, math.max(1,w))) end
+    return
   end
-  term.setBackgroundColor(colors.black); term.setTextColor(colors.white)
+  local meta = makeScreen(title, subtitle)
+  if meta and subtitle and safeText(subtitle) ~= "" then
+    M.message(subtitle, true)
+  end
 end
 
-local function addScreen(title, subtitle)
-  if not basalt then return nil, "Basalt2 is not installed. Run install.lua." end
-  local main = basalt.getMainFrame()
-  local w,h = term.getSize()
-  local screen = main:addFrame({x=1,y=1,width=w,height=h,background=colors.black})
-  screen:addLabel({x=2,y=1,width=math.max(1,w-3),height=1,foreground=colors.lime,background=colors.black}):setText("MINEBANK")
-  screen:addLabel({x=2,y=2,width=math.max(1,w-3),height=1,foreground=colors.lightGray,background=colors.black}):setText(tostring(title or "TERMINAL"):sub(1,math.max(1,w-3)))
-  screen:addLabel({x=2,y=3,width=math.max(1,w-3),height=1,foreground=colors.gray,background=colors.black}):setText(string.rep("-",math.max(1,w-3)))
-  if subtitle then screen:addLabel({x=2,y=4,width=math.max(1,w-3),height=2,foreground=colors.white,background=colors.black}):setText(tostring(subtitle):gsub("[\r\n]"," "):sub(1,math.max(1,w-3))) end
-  return screen, nil, w, h
+function M.message(text, good)
+  if not basalt then
+    local d = currentDisplay()
+    local w,h = d.getSize()
+    local lines = wrapText(text, w, math.max(1,h-5))
+    d.setTextColor(good and colors.lime or colors.orange)
+    local y = 5
+    for _, line in ipairs(lines) do
+      if y > h-1 then break end
+      d.setCursorPos(1,y); d.write(line:sub(1,w)); y=y+1
+    end
+    d.setTextColor(colors.white)
+    return
+  end
+  local meta = screens[target]
+  if not meta then
+    local created = makeScreen("NOTICE", nil)
+    meta = created
+  end
+  if not meta then return end
+  local maxLines = math.max(1, math.min(5, meta.bodyH - meta.nextY - 2))
+  local lines = wrapText(text, math.max(1,meta.bodyW-5), maxLines)
+  local cardH = math.min(meta.bodyH-meta.nextY+1, #lines+2)
+  if cardH < 1 then
+    -- Roll the transcript forward on long-running status pages rather than
+    -- drawing over controls or growing the tree without bound.
+    M.header("STATUS", "Latest operation details")
+    meta = screens[target]
+    if not meta then return end
+    lines = wrapText(text, math.max(1,meta.bodyW-5), math.max(1,math.min(5,meta.bodyH-4)))
+    cardH = math.min(meta.bodyH-2, #lines+2)
+  end
+  local y = math.max(1, math.min(meta.bodyH-cardH, meta.nextY))
+  local card = meta.body:addFrame({
+    x=1,y=y,width=meta.bodyW,height=math.max(1,cardH),
+    background=colors.gray,
+  })
+  local fg = good and colors.lime or colors.orange
+  for i,line in ipairs(lines) do
+    card:addLabel({
+      x=2,y=i,width=math.max(1,meta.bodyW-4),height=1,
+      foreground=fg,background=colors.gray,
+    }):setText(line)
+  end
+  meta.nextY = y + cardH + 1
 end
 
-local function closeScreen(screen)
-  if screen then pcall(function() screen:setVisible(false) end) end
+function M.pause()
+  if not basalt then
+    local d=currentDisplay()
+    d.setCursorPos(1, math.max(1,select(2,d.getSize())-1))
+    d.setTextColor(colors.lightGray); d.write("Press Enter to continue.")
+    read()
+    return
+  end
+  local meta = screens[target]
+  if not meta then meta = makeScreen("NOTICE", "Review the message below.") end
+  if not meta then return end
+  local result
+  local y=math.max(2,meta.bodyH-1)
+  local x=math.max(2,math.floor((meta.bodyW-22)/2))
+  meta.body:addButton({
+    x=x,y=y,width=math.max(10,math.min(22,meta.bodyW-2)),height=1,
+    background=colors.green,foreground=colors.white,
+  }):setText("Continue"):onClick(function() result=true; basalt.stop() end)
+  basalt.run()
+  closeScreen(target)
+  return result
 end
 
 function M.choose(title, options, subtitle)
+  options = options or {}
   if not basalt then
-    M.clear(); M.header(title, subtitle or "Type the option number.")
-    for i, option in ipairs(options) do print(tostring(i)..") "..tostring(option)) end
-    write("> "); local n=tonumber(read())
-    if n and n%1==0 and options[n] then return n end
+    M.clear(); M.header(title, subtitle or "Choose an option by name.")
+    local d=currentDisplay()
+    for _, option in ipairs(options) do
+      d.setTextColor(colors.lime); d.write("  > ")
+      d.setTextColor(colors.white); d.write(safeText(option):sub(1,math.max(1,select(1,d.getSize())-4)))
+      local _,cy=d.getCursorPos()
+      if cy < select(2,d.getSize())-2 then d.setCursorPos(1,cy+1) end
+    end
+    d.setTextColor(colors.lightGray); d.write("Type the option exactly: ")
+    local value=read()
+    for i, option in ipairs(options) do if value==tostring(option) then return i end end
     return nil
   end
-  local w,h=term.getSize()
-  local pageSize=math.max(1,h-8)
   local page=1
   while true do
-    local screen,err,sw,sh=addScreen(title,subtitle or "Select an option.")
-    if not screen then M.message(err,false); return nil end
-    local maxPage=math.max(1,math.ceil(#options/pageSize))
-    local first=(page-1)*pageSize+1
-    local last=math.min(#options,first+pageSize-1)
+    local meta,err=makeScreen(title, subtitle or "Select a service to continue.")
+    if not meta then M.message(err,false); return nil end
+    local cols = meta.bodyW >= 66 and 3 or (meta.bodyW >= 34 and 2 or 1)
+    local tileH = meta.bodyH >= 12 and 3 or 2
+    local rowsPerPage = math.max(1, math.floor((meta.bodyH-4)/(tileH+1)))
+    local pageSize = math.max(1, rowsPerPage*cols)
+    local pages = math.max(1, math.ceil(#options/pageSize))
+    local first = (page-1)*pageSize+1
+    local last = math.min(#options, first+pageSize-1)
     local selected
-    local columns = sw >= 34 and 2 or 1
-    local rows = math.ceil((last-first+1)/columns)
-    local cellW = math.max(1,math.floor((sw-4-(columns-1))/columns))
+    local gap=1
+    local cellW=math.max(1,math.floor((meta.bodyW-4-(cols-1)*gap)/cols))
     for i=first,last do
-      local localIndex=i-first
-      local col=math.floor(localIndex/rows)
-      local row=localIndex%rows
-      local x=2+col*(cellW+1)
-      local y=6+row*2
-      local label=tostring(options[i])
-      local maxText=math.max(1,cellW-2)
-      if #label>maxText then label=label:sub(1,math.max(1,maxText-1)).."…" end
-      local isCancel=label:lower():find("cancel",1,true) or label:lower():find("back",1,true)
-      screen:addButton({x=x,y=y,width=cellW,height=2,background=(isCancel and colors.gray or colors.green),foreground=colors.black})
-        :setText(" "..label):onClick(function() selected=i; basalt.stop() end)
+      local k=i-first
+      local col=math.floor(k/rowsPerPage)
+      local row=k%rowsPerPage
+      local x=2+col*(cellW+gap)
+      local y=2+row*(tileH+1)
+      local label=safeText(options[i])
+      local lines=wrapText(label,math.max(1,cellW-3),tileH)
+      local cancel=label:lower():find("cancel",1,true) or label:lower():find("back",1,true) or label:lower():find("exit",1,true)
+      local danger=label:lower():find("revoke",1,true) or label:lower():find("delete",1,true)
+      local bg=danger and colors.red or (cancel and colors.gray or colors.green)
+      local fg=cancel and colors.white or colors.black
+      local button=meta.body:addButton({
+        x=x,y=y,width=cellW,height=tileH,
+        background=bg,foreground=fg,
+      })
+      button:setText(table.concat(lines,"\\n"))
+      button:onClick(function() selected=i; basalt.stop() end)
     end
-    if maxPage>1 then
+    if pages>1 then
+      local footerY=math.max(2,meta.bodyH-1)
       if page>1 then
-        screen:addButton({x=2,y=sh-1,width=math.max(1,math.floor((sw-4)/2)),height=1,background=colors.gray,foreground=colors.white})
-          :setText("Previous"):onClick(function() selected=-1; basalt.stop() end)
+        meta.body:addButton({x=2,y=footerY,width=math.max(8,math.floor((meta.bodyW-5)/2)),height=1,background=colors.gray,foreground=colors.white})
+          :setText("Previous page"):onClick(function() selected=-1; basalt.stop() end)
       end
-      if page<maxPage then
-        screen:addButton({x=3+math.floor((sw-4)/2),y=sh-1,width=math.max(1,sw-(3+math.floor((sw-4)/2))),height=1,background=colors.gray,foreground=colors.white})
-          :setText("Next"):onClick(function() selected=-2; basalt.stop() end)
+      if page<pages then
+        meta.body:addButton({x=math.max(2,meta.bodyW-math.floor((meta.bodyW-5)/2)),y=footerY,width=math.max(8,math.floor((meta.bodyW-5)/2)),height=1,background=colors.gray,foreground=colors.white})
+          :setText("Next page"):onClick(function() selected=-2; basalt.stop() end)
       end
+    else
+      meta.body:addLabel({x=2,y=math.max(2,meta.bodyH-1),width=math.max(1,meta.bodyW-3),height=1,foreground=colors.lightGray,background=colors.black})
+        :setText("Touch a card to continue. No numeric menu codes.")
     end
     basalt.run()
-    closeScreen(screen)
+    closeScreen(target)
     if selected==-1 then page=math.max(1,page-1)
-    elseif selected==-2 then page=math.min(maxPage,page+1)
+    elseif selected==-2 then page=math.min(pages,page+1)
     else return selected end
   end
 end
-function M.message(text, good)
-  local w,h=term.getSize()
-  local value=tostring(text or ""):gsub("[\r\n]+"," ")
-  local lines={}
-  local line=""
-  for word in value:gmatch("%S+") do
-    if #line==0 then line=word
-    elseif #line+#word+1<=math.max(1,w) then line=line.." "..word
-    else lines[#lines+1]=line; line=word end
-  end
-  if #line>0 then lines[#lines+1]=line end
-  term.setTextColor(good and colors.lime or colors.orange)
-  local y=6
-  for _,part in ipairs(lines) do
-    if y>h then break end
-    term.setCursorPos(1,y)
-    term.write(part:sub(1,math.max(1,w)))
-    y=y+1
-  end
-  term.setTextColor(colors.white)
-end
-function M.pause()
-  if monitor and basalt then
-    while true do
-      local event=os.pullEventRaw()
-      if event=="monitor_touch" or event=="key" or event=="terminate" then return end
-    end
-  end
-  print(""); write("Press Enter to continue. "); read()
-end
 
 function M.secret(label)
-  local lower=tostring(label or ""):lower()
-  if basalt and lower:find("pin") then
-    local screen,err,w,h=addScreen("SECURE PIN",label or "Enter PIN")
-    if screen and w>=12 and h>=12 then
-      local value,result,done=""
-      local masked=screen:addLabel({x=2,y=6,width=math.max(1,w-3),height=1,foreground=colors.lime,background=colors.black})
-      local function redraw() masked:setText("PIN: "..string.rep("*",#value)) end
-      local keys={"1","2","3","4","5","6","7","8","9","Clear","0","⌫"}
-      local cellW=math.max(3,math.floor((w-4)/3))
-      for i,key in ipairs(keys) do
-        local row=math.floor((i-1)/3)
-        local col=(i-1)%3
-        screen:addButton({x=2+col*cellW,y=(h>=16 and 8+row*2 or 7+row),width=math.min(cellW-1,w-(2+col*cellW)),height=1,background=colors.gray,foreground=colors.white})
-          :setText(key):onClick(function()
-            if key=="Clear" then value=""
-            elseif key=="⌫" then value=value:sub(1,-2)
-            elseif #value<6 then value=value..key end
-            redraw()
-          end)
-      end
-      local y=h-1
-      screen:addButton({x=2,y=y,width=math.max(1,math.floor((w-4)/2)),height=1,background=colors.green,foreground=colors.black})
-        :setText("Submit"):onClick(function() if #value==6 then result=value; done=true; basalt.stop() end end)
-      screen:addButton({x=3+math.floor((w-4)/2),y=y,width=math.max(1,w-(3+math.floor((w-4)/2))),height=1,background=colors.red,foreground=colors.white})
-        :setText("Cancel"):onClick(function() result=nil; done=true; basalt.stop() end)
-      basalt.run()
-      closeScreen(screen)
-      if done then return result end
-      return nil
+  local lower=safeText(label):lower()
+  if basalt and (lower:find("pin",1,true) or lower:find("passcode",1,true)) then
+    local meta,err=makeScreen("SECURE INPUT",label or "Enter your six-digit Wallet PIN")
+    if not meta then M.message(err,false); return nil end
+    local value,result,done=""; nil; false
+    local masked=meta.body:addLabel({
+      x=2,y=2,width=math.max(1,meta.bodyW-4),height=1,
+      foreground=colors.lime,background=colors.black,
+    })
+    local function redraw()
+      masked:setText("ENTERED  " .. string.rep("*",#value) .. "  ("..#value.."/6)")
     end
-    closeScreen(screen)
+    local keys={"1","2","3","4","5","6","7","8","9","Clear","0","Del"}
+    local cols=3
+    local cellW=math.max(3,math.floor((meta.bodyW-5)/cols))
+    for i,key in ipairs(keys) do
+      local row=math.floor((i-1)/cols)
+      local col=(i-1)%cols
+      meta.body:addButton({
+        x=2+col*(cellW+1),y=4+row,width=math.max(2,cellW),height=1,
+        background=colors.gray,foreground=colors.white,
+      }):setText(key):onClick(function()
+        if key=="Clear" then value=""
+        elseif key=="Del" then value=value:sub(1,-2)
+        elseif #value<6 then value=value..key end
+        redraw()
+      end)
+    end
+    local y=math.max(9,meta.bodyH-1)
+    meta.body:addButton({x=2,y=y,width=math.max(1,math.floor((meta.bodyW-5)/2)),height=1,background=colors.green,foreground=colors.white})
+      :setText("Confirm PIN"):onClick(function() if #value==6 then result=value; done=true; basalt.stop() end end)
+    meta.body:addButton({x=math.max(3,meta.bodyW-math.floor((meta.bodyW-5)/2)),y=y,width=math.max(1,math.floor((meta.bodyW-5)/2)),height=1,background=colors.red,foreground=colors.white})
+      :setText("Cancel"):onClick(function() result=nil; done=true; basalt.stop() end)
+    redraw()
+    basalt.run()
+    closeScreen(target)
+    if done then return result end
+    return nil
   end
-  write(tostring(label or ""))
-  return read("*")
+  if not basalt then
+    local d=currentDisplay()
+    d.setCursorPos(1, math.max(1,select(2,d.getSize())-2))
+    d.write(safeText(label) .. ": ")
+    return read("*")
+  end
+  local result
+  local meta,err=makeScreen("PRIVATE INPUT",label or "Enter private value")
+  if not meta then M.message(err,false); return nil end
+  local input=meta.body:addInput({x=2,y=3,width=math.max(1,meta.bodyW-4),height=1,background=colors.white,foreground=colors.black})
+  input:setText("")
+  pcall(function() input:focus() end)
+  local y=math.max(5,meta.bodyH-1)
+  meta.body:addButton({x=2,y=y,width=math.max(1,math.floor((meta.bodyW-5)/2)),height=1,background=colors.green,foreground=colors.white})
+    :setText("Continue"):onClick(function() result=input:getText(); basalt.stop() end)
+  meta.body:addButton({x=math.max(3,meta.bodyW-math.floor((meta.bodyW-5)/2)),y=y,width=math.max(1,math.floor((meta.bodyW-5)/2)),height=1,background=colors.red,foreground=colors.white})
+    :setText("Cancel"):onClick(function() result=nil; basalt.stop() end)
+  basalt.run()
+  closeScreen(target)
+  return result
 end
 
 function M.prompt(label, default)
+  local valueDefault=tostring(default or "")
   if not basalt then
-    if default then write(label.." ["..tostring(default).."]: ") else write(label..": ") end
-    local v=read()
-    if v=="" and default~=nil then return tostring(default) end
-    return v
+    local d=currentDisplay()
+    d.setCursorPos(1, math.max(1,select(2,d.getSize())-2))
+    d.write(safeText(label) .. (default~=nil and (" ["..valueDefault.."]") or "") .. ": ")
+    local value=read()
+    if value=="" and default~=nil then return valueDefault end
+    return value
   end
-  local screen,err,w,h=addScreen("INPUT",label)
-  if not screen then return nil end
-  local value=tostring(default or "")
-  local input=screen:addInput({x=2,y=7,width=math.max(1,w-3),height=1,background=colors.white,foreground=colors.black})
-  input:setText(value)
-  local numeric= tostring(label):lower():find("amount") or tostring(label):lower():find("number") or tostring(label):lower():find("emerald")
-  local result,done
-  local function finish(v) result=v; done=true; basalt.stop() end
-  if numeric and h>=17 and w>=18 then
-    local digits={"1","2","3","4","5","6","7","8","9","0","⌫","Clear"}
-    local cols=3
-    local cellW=math.max(3,math.floor((w-4)/cols))
+  local meta,err=makeScreen("WORKSPACE INPUT",label or "Enter a value")
+  if not meta then M.message(err,false); return nil end
+  local input=meta.body:addInput({
+    x=2,y=2,width=math.max(1,meta.bodyW-4),height=1,
+    background=colors.white,foreground=colors.black,
+  })
+  input:setText(valueDefault)
+  pcall(function() input:focus() end)
+  local lower=safeText(label):lower()
+  local numeric=lower:find("amount",1,true) or lower:find("number",1,true) or lower:find("emerald",1,true) or lower:find("price",1,true) or lower:find("quantity",1,true)
+  if numeric and meta.bodyW>=20 and meta.bodyH>=12 then
+    local digits={"1","2","3","4","5","6","7","8","9","Clear","0","Del"}
+    local cellW=math.max(3,math.floor((meta.bodyW-5)/3))
     for i,digit in ipairs(digits) do
-      local row=math.floor((i-1)/cols)
-      local col=(i-1)%cols
-      local b=screen:addButton({x=2+col*cellW,y=9+row*2,width=math.min(cellW-1,w-(2+col*cellW)),height=1,background=colors.gray,foreground=colors.white})
-      b:setText(digit)
-      b:onClick(function()
+      local row=math.floor((i-1)/3)
+      local col=(i-1)%3
+      meta.body:addButton({
+        x=2+col*(cellW+1),y=4+row,width=cellW,height=1,
+        background=colors.gray,foreground=colors.white,
+      }):setText(digit):onClick(function()
         local current=input:getText() or ""
         if digit=="Clear" then current=""
-        elseif digit=="⌫" then current=current:sub(1,-2)
-        elseif #current<18 then current=current..digit end
+        elseif digit=="Del" then current=current:sub(1,-2)
+        elseif #current<24 then current=current..digit end
         input:setText(current)
       end)
     end
-    local buttonY=h-1
-    screen:addButton({x=2,y=buttonY,width=math.max(1,math.floor((w-4)/2)),height=1,background=colors.green,foreground=colors.black}):setText("Submit"):onClick(function() finish(input:getText()) end)
-    screen:addButton({x=3+math.floor((w-4)/2),y=buttonY,width=math.max(1,w-(3+math.floor((w-4)/2))),height=1,background=colors.red,foreground=colors.white}):setText("Cancel"):onClick(function() finish(nil) end)
   else
-    screen:addLabel({x=2,y=9,width=math.max(1,w-3),height=2,foreground=colors.gray,background=colors.black}):setText("Use the connected keyboard for this field.")
-    screen:addButton({x=2,y=math.max(11,h-2),width=math.max(1,math.floor((w-4)/2)),height=1,background=colors.green,foreground=colors.black}):setText("Submit"):onClick(function() finish(input:getText()) end)
-    screen:addButton({x=3+math.floor((w-4)/2),y=math.max(11,h-2),width=math.max(1,w-(3+math.floor((w-4)/2))),height=1,background=colors.red,foreground=colors.white}):setText("Cancel"):onClick(function() finish(nil) end)
+    meta.body:addLabel({
+      x=2,y=4,width=math.max(1,meta.bodyW-4),height=2,
+      foreground=colors.lightGray,background=colors.black,
+    }):setText("Use the connected keyboard for text. Only this field is captured.")
   end
+  local result,done
+  local buttonY=math.max(5,meta.bodyH-1)
+  local half=math.max(1,math.floor((meta.bodyW-5)/2))
+  meta.body:addButton({x=2,y=buttonY,width=half,height=1,background=colors.green,foreground=colors.white})
+    :setText("Save / continue"):onClick(function() result=input:getText(); done=true; basalt.stop() end)
+  meta.body:addButton({x=math.max(3,meta.bodyW-half),y=buttonY,width=half,height=1,background=colors.red,foreground=colors.white})
+    :setText("Cancel"):onClick(function() result=nil; done=true; basalt.stop() end)
   basalt.run()
-  closeScreen(screen)
-  if result==nil and not done then return nil end
+  closeScreen(target)
+  if not done then return nil end
+  if result=="" and default~=nil then return valueDefault end
   return result
+end
+
+function M.kioskIdle()
+  if not monitor or not roots.monitor or not basalt then return false end
+  local previous=target
+  M.useTarget("monitor")
+  local meta=makeScreen("PAYMENT POINT", "MINEBANK SECURE CHECKOUT")
+  if meta then
+    local heroH=math.max(3,math.min(6,meta.bodyH-5))
+    local hero=meta.body:addFrame({x=2,y=2,width=math.max(1,meta.bodyW-4),height=heroH,background=colors.green})
+    hero:addLabel({x=2,y=2,width=math.max(1,meta.bodyW-7),height=1,foreground=colors.lime,background=colors.green})
+      :setText("MINEBANK  /  THE NEW BANK")
+    hero:addLabel({x=2,y=3,width=math.max(1,meta.bodyW-7),height=math.max(1,heroH-3),foreground=colors.white,background=colors.green})
+      :setText("Your cashier will send a purchase here.\nReview the amount, choose a payment source, and authorise securely.")
+    local statusY=math.max(2,meta.bodyH-3)
+    meta.body:addLabel({x=2,y=statusY,width=math.max(1,meta.bodyW-4),height=1,foreground=colors.lime,background=colors.black})
+      :setText("READY  •  WAITING FOR CASHIER")
+    meta.body:addLabel({x=2,y=statusY+1,width=math.max(1,meta.bodyW-4),height=1,foreground=colors.lightGray,background=colors.black})
+      :setText("No payment is requested. Your card is not needed yet.")
+  end
+  M.useTarget(previous)
+  return meta ~= nil
+end
+
+function M.line(label, value, good)
+  return M.message(tostring(label or "") .. (value~=nil and (": " .. tostring(value)) or ""), good)
 end
 
 function M.api(path, method, token, body, key, extraHeaders)
