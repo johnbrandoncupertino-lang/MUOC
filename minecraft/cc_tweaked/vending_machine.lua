@@ -218,20 +218,32 @@ while true do
                      local paid,payErr,payStatus=ui.api("/payments","POST",card.credential,
                        {checkout_id=order.checkout_id,wallet_pin=pin,funding_source=funding},payKey)
                      if not paid then
-                       ui.message("Payment not confirmed (HTTP "..tostring(payStatus or "unknown").."): "..tostring(payErr),false)
-                       local status,statusErr=ui.api("/merchant/checkouts/"..order.checkout_id,"GET",cfg.merchant_token)
-                       if status and status.status=="PAID" then
-                         order.state="PAID"; order.transaction_id=status.transaction_id
-                         if save(JOURNAL,order) then ui.message("MineBank confirms the original checkout is paid. The item can be reconciled; no payment was resent.",true)
-                         else ui.message("Payment is confirmed but local journal failed. Lock machine and reconcile.",false) end
-                       else
-                         order.state="PAYMENT_REVIEW"
+                       ui.message("Payment rejected / not confirmed (HTTP "..tostring(payStatus or "unknown").."): "..tostring(payErr),false)
+                       if payStatus and (payStatus==400 or payStatus==401 or payStatus==403 or payStatus==404 or payStatus==422) then
+                         -- A definite endpoint rejection is not an ambiguous transaction.
+                         -- Never resend the POST; the rejected transaction was not committed.
+                         order.state="CANCELLED"
                          order.payment_http_status=payStatus
-                         order.payment_error=tostring(payErr or "Unknown payment error")
-                         order.checkout_status=status and status.status or "UNKNOWN"
-                         order.status_error=statusErr and tostring(statusErr) or nil
+                         order.payment_error=tostring(payErr or "Payment was rejected")
                          save(JOURNAL,order)
-                         ui.message("No payment retry was sent. Order is locked for reconciliation before a new sale.",false)
+                         ui.message("MineBank rejected this payment. No balance debit or merchant credit was committed. Start a new purchase with another valid payment source.",false)
+                       else
+                         -- For 409/network/5xx/timeout, query the existing checkout only.
+                         -- Never retry the payment POST automatically.
+                         local status,statusErr=ui.api("/merchant/checkouts/"..order.checkout_id,"GET",cfg.merchant_token)
+                         if status and status.status=="PAID" then
+                           order.state="PAID"; order.transaction_id=status.transaction_id
+                           if save(JOURNAL,order) then ui.message("MineBank confirms the original checkout is paid. The item can be reconciled; no payment was resent.",true)
+                           else ui.message("Payment is confirmed but local journal failed. Lock machine and reconcile.",false) end
+                         else
+                           order.state="PAYMENT_REVIEW"
+                           order.payment_http_status=payStatus
+                           order.payment_error=tostring(payErr or "Unknown payment error")
+                           order.checkout_status=status and status.status or "UNKNOWN"
+                           order.status_error=statusErr and tostring(statusErr) or nil
+                           save(JOURNAL,order)
+                           ui.message("No payment retry was sent. Order is locked for reconciliation before a new sale.",false)
+                         end
                        end
                        ui.pause()
                      elseif paid.status~="COMPLETED" then
