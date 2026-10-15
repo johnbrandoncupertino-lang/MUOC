@@ -68,6 +68,21 @@ for i, file in ipairs(files) do
     say("Existing installation left unchanged.", colors.yellow)
     return
   end
+
+  -- Basalt2's full bundle may be run in an environment without native
+  -- require(), and some releases pass module paths with a trailing .lua.
+  -- Normalize those paths before consulting the embedded module registry.
+  if file.name == "basalt.lua" then
+    local original = 'local baseRequire = require\nrequire = function(path) if(project[path..".lua"])then if(loadedProject[path]==nil)then loadedProject[path] = project[path..".lua"]() end return loadedProject[path] end return baseRequire(path) end'
+    local patched = 'local baseRequire = require\nrequire = function(path) local key = path .. ".lua"; if project[key] == nil and type(path) == "string" and path:sub(-4) == ".lua" then key = path end; if project[key] then if loadedProject[key] == nil then loadedProject[key] = project[key]() end return loadedProject[key] end; if baseRequire then return baseRequire(path) end; error("Basalt2 bundled module not found: " .. tostring(path)) end'
+    if body:find(original, 1, true) then
+      body = body:gsub(original, function() return patched end, 1)
+      say("Applied Basalt2 require compatibility patch.", colors.lime)
+    else
+      say("WARNING: Basalt2 require wrapper did not match; using downloaded bundle unchanged.", colors.yellow)
+    end
+  end
+
   local path = fs.combine(tempDir, file.name)
   local handle = fs.open(path, "w")
   if not handle then
