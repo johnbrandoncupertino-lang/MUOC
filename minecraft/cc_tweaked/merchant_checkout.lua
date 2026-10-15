@@ -282,6 +282,12 @@ local function runSale(cfg)
     ui.message(tostring(err),false); ui.pause()
     return
   end
+  ui.useTarget("terminal")
+  ui.clear(); ui.header("CUSTOMER CHECKOUT","Waiting for customer on the monitor")
+  ui.message("Checkout ID: "..tostring(checkout.checkout_id),true)
+  ui.message("Amount due: "..tostring(checkout.amount).." Emerald",true)
+  ui.message("Description: "..tostring(checkout.description or description),true)
+  ui.message("The customer is using the separate touchscreen display. Do not open another checkout until this one is resolved.",true)
   local success,detail=customerPayment(cfg,checkout)
   ui.useTarget("terminal")
   ui.kioskIdle()
