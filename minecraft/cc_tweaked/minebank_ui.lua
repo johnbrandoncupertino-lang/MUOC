@@ -24,28 +24,54 @@ local programDir = ""
 pcall(function()
   if fs and fs.getDir then programDir = fs.getDir(runningProgram) or "" end
 end)
-local bundledBasalt = "basalt.lua"
-if programDir ~= "" then
-  pcall(function() bundledBasalt = fs.combine(programDir, "basalt.lua") end)
-end
-
 local function isBasaltModule(value)
   return type(value) == "table" and type(value.getMainFrame) == "function"
 end
 
-local bundleExists = false
-pcall(function() bundleExists = fs and fs.exists and fs.exists(bundledBasalt) or false end)
-if bundleExists then
-  local loaded, module = pcall(dofile, bundledBasalt)
-  if loaded and isBasaltModule(module) then
-    basalt = module
-  elseif not loaded then
-    basaltLoadError = "dofile(" .. bundledBasalt .. ") failed: " .. tostring(module)
-  else
-    basaltLoadError = "The file " .. bundledBasalt .. " ran but returned no valid Basalt2 module."
+-- Try the program's own folder and the standard installer directory. This
+-- also supports launching a MineBank program from the computer root or a
+-- startup launcher while the shared UI code lives under /minebank.
+local basaltCandidates = {}
+local function addBasaltCandidate(path)
+  if type(path) ~= "string" or path == "" then return end
+  for _, existing in ipairs(basaltCandidates) do
+    if existing == path then return end
   end
-else
-  basaltLoadError = "Basalt bundle not found at " .. tostring(bundledBasalt)
+  basaltCandidates[#basaltCandidates + 1] = path
+end
+if programDir ~= "" then
+  pcall(function() addBasaltCandidate(fs.combine(programDir, "basalt.lua")) end)
+end
+addBasaltCandidate("basalt.lua")
+addBasaltCandidate("/minebank/basalt.lua")
+addBasaltCandidate("minebank/basalt.lua")
+
+local attemptedBasaltPaths = {}
+for _, path in ipairs(basaltCandidates) do
+  local exists = false
+  local existsOk, existsResult = pcall(function()
+    return fs and fs.exists and fs.exists(path) or false
+  end)
+  if existsOk then exists = existsResult end
+  attemptedBasaltPaths[#attemptedBasaltPaths + 1] = path .. (exists and " [exists]" or " [missing]")
+  if exists then
+    local loaded, module = pcall(dofile, path)
+    if loaded and isBasaltModule(module) then
+      basalt = module
+      bundledBasalt = path
+      basaltLoadError = nil
+      break
+    elseif not loaded then
+      basaltLoadError = "dofile(" .. path .. ") failed: " .. tostring(module)
+    else
+      basaltLoadError = "The file " .. path .. " ran but returned no valid Basalt2 module."
+    end
+  end
+end
+if not basalt and not basaltLoadError then
+  basaltLoadError = "Basalt bundle not found. Checked: " .. table.concat(attemptedBasaltPaths, ", ")
+elseif not basalt and #attemptedBasaltPaths > 0 then
+  basaltLoadError = tostring(basaltLoadError) .. " | Checked: " .. table.concat(attemptedBasaltPaths, ", ")
 end
 
 -- Optional fallback for environments that provide Basalt as an installed module.
