@@ -8,6 +8,24 @@ local runningProgram = shell.getRunningProgram()
 local programDir = fs.getDir(runningProgram)
 local uiPath = fs.combine(programDir, "minebank_ui.lua")
 local ui = dofile(uiPath)
+if not ui.hasBasalt() then ui.showMissingBasalt(); return end
+ui.useTarget("terminal")
+local function print(...)
+  local values = {}
+  for i = 1, select("#", ...) do
+    local value = select(i, ...)
+    if value ~= nil then values[#values + 1] = tostring(value) end
+  end
+  local message = table.concat(values, " ")
+  if message == "" then return end
+  local lower = message:lower()
+  local good = not (lower:find("error",1,true) or lower:find("failed",1,true)
+    or lower:find("failure",1,true) or lower:find("invalid",1,true)
+    or lower:find("cannot",1,true) or lower:find("could not",1,true)
+    or lower:find("not found",1,true) or lower:find("required",1,true)
+    or lower:find("unavailable",1,true) or lower:find("rejected",1,true))
+  ui.message(message, good)
+end
 ui.API_BASE = API_BASE
 
 local function pause() ui.pause() end

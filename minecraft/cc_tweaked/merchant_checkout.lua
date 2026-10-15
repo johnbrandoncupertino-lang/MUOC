@@ -3,7 +3,10 @@
 local runningProgram = shell.getRunningProgram()
 local programDir = fs.getDir(runningProgram)
 local ui = dofile(fs.combine(programDir, "minebank_ui.lua"))
+if not ui.hasBasalt() then ui.showMissingBasalt(); return end
+ui.useTarget("terminal")
 local CONFIG = fs.combine(programDir, "minebank_merchant.json")
+local REVIEW = fs.combine(programDir, "minebank_merchant_review.json")
 local DEFAULT_API = "https://minebanksecurearea.vercel.app/api/v1/minecraft"
 
 local function loadConfig()
@@ -52,18 +55,46 @@ local function readCard()
   return card,err
 end
 
+local function readJSON(path)
+  if not fs.exists(path) then return nil end
+  local h=fs.open(path,"r")
+  if not h then return nil end
+  local raw=h.readAll(); h.close()
+  local ok,value=pcall(textutils.unserializeJSON,raw)
+  if ok and type(value)=="table" then return value end
+  return nil
+end
+
+local function saveJSON(path,value)
+  local tmp=path..".tmp"
+  local h=fs.open(tmp,"w")
+  if not h then return false end
+  local ok=pcall(function() h.write(textutils.serializeJSON(value)); h.close() end)
+  if not ok then pcall(function() h.close() end); pcall(fs.delete,tmp); return false end
+  if fs.exists(path) then pcall(fs.delete,path) end
+  local moved=pcall(fs.move,tmp,path)
+  if not moved then pcall(fs.delete,tmp); return false end
+  return true
+end
+
+local function clearReview()
+  pcall(function() if fs.exists(REVIEW) then fs.delete(REVIEW) end end)
+  pcall(function() if fs.exists(REVIEW..".tmp") then fs.delete(REVIEW..".tmp") end end)
+end
+
+local function saveReview(value)
+  return saveJSON(REVIEW,value)
+end
+
 local function waitForCard()
   while true do
     local card=readCard()
     if card then return card end
-    ui.clear(); ui.header("MINEBANK PAYMENT","Waiting for customer card")
-    ui.message("Insert your MineBank card floppy into the reader. This terminal stays ready without a card.",true)
-    local timer=os.startTimer(1)
-    while true do
-      local event=os.pullEventRaw()
-      if event=="timer" then break end
-      if event=="terminate" then pcall(os.cancelTimer,timer); return nil,"cancelled" end
-    end
+    local choice=ui.choose("CARD REQUIRED",{
+      "I have inserted the MineBank card",
+      "Cancel this purchase",
+    },"Insert the customer's MineBank floppy card into the drive, then touch the first action. No card is required while the terminal is idle.")
+    if choice~=1 then return nil,"Customer cancelled before authorisation." end
   end
 end
 
@@ -74,6 +105,7 @@ local function createCheckout(cfg,amount,description)
 end
 
 local function customerPayment(cfg,checkout)
+  ui.useTarget("monitor")
   ui.clear(); ui.header("MINEBANK PAYMENT","Secure customer checkout")
   local confirmed=ui.choose("CONFIRM PURCHASE",{
     "Pay "..tostring(checkout.amount).." Emerald",
@@ -106,34 +138,134 @@ local function customerPayment(cfg,checkout)
 
   ui.clear(); ui.header("MINEBANK PAYMENT","Checking with MineBank")
   ui.message("Verifying card, PIN, account status, limits and available funds. Do not remove the card.",true)
-  local paid,err=ui.api("/payments","POST",card.credential,
+  local paymentKey="checkout-"..tostring(checkout.checkout_id).."-"..funding
+  local paid,err,httpStatus=ui.api("/payments","POST",card.credential,
     {checkout_id=tostring(checkout.checkout_id),wallet_pin=pin,funding_source=funding},
-    "checkout-"..tostring(checkout.checkout_id).."-"..funding)
+    paymentKey)
   pin=nil
   if not paid then
-    ui.clear(); ui.header("PAYMENT NOT CONFIRMED")
-    ui.message(tostring(err)..". Do not retry blindly; check the original checkout status.",false)
+    -- A 400/401/403/404/422 is a definitive rejection from the endpoint. It
+    -- cannot be mistaken for a transient transport failure, and no payment POST
+    -- is resent. CashLine eligibility/limit rejections arrive as HTTP 422.
+    if httpStatus and (httpStatus==400 or httpStatus==401 or httpStatus==403 or httpStatus==404 or httpStatus==422) then
+      ui.clear(); ui.header("PAYMENT REJECTED","MineBank did not authorise this payment")
+      ui.message("MineBank response (HTTP "..tostring(httpStatus).."): "..tostring(err),false)
+      ui.message("The payment was rejected; no debit or merchant credit was committed. Return to the cashier and choose another available payment method.",true)
+      ui.pause()
+      return false,"Payment rejected by MineBank (HTTP "..tostring(httpStatus).."). No money was moved; use another payment method or resolve the account restriction."
+    end
+    -- A real 409, a timeout, or a server/network failure can leave the caller
+    -- uncertain about the original operation. Never send another POST: only
+    -- GET the same checkout to reconcile its authoritative state.
+    ui.clear(); ui.header("PAYMENT REQUIRES REVIEW","No automatic payment retry will be sent")
+    ui.message("MineBank response"..(httpStatus and (" (HTTP "..tostring(httpStatus)..")") or "")..": "..tostring(err),false)
+    ui.message("Checking the original checkout status. Keep this checkout ID and do not repeat the payment.",true)
     ui.pause()
-    local status=ui.api("/merchant/checkouts/"..tostring(checkout.checkout_id),"GET",cfg.merchant_token)
+    local status,statusErr,statusCode=ui.api("/merchant/checkouts/"..tostring(checkout.checkout_id),"GET",cfg.merchant_token)
     if status and status.status=="PAID" then
-      ui.clear(); ui.header("PAYMENT COMPLETED")
-      ui.message("MineBank confirms this checkout is paid. Transaction: "..tostring(status.transaction_id),true)
+      clearReview()
+      ui.clear(); ui.header("PAYMENT COMPLETED","Confirmed by the original checkout")
+      ui.message("MineBank confirms the existing checkout is paid.",true)
+      ui.message("Transaction: "..tostring(status.transaction_id),true)
       ui.pause()
       return true,"Payment confirmed by checkout status."
     end
-    return false,"Payment not confirmed."
+    local review={
+      checkout_id=tostring(checkout.checkout_id),
+      amount=tonumber(checkout.amount) or 0,
+      funding_source=funding,
+      idempotency_key=paymentKey,
+      payment_http_status=httpStatus,
+      payment_error=tostring(err or "Unknown payment error"),
+      checkout_status=status and tostring(status.status) or "UNKNOWN",
+      status_error=statusErr and tostring(statusErr) or nil,
+      status_http_status=statusCode,
+      recorded_at=os.epoch("utc"),
+    }
+    if not saveReview(review) then
+      ui.message("CRITICAL: could not save local reconciliation record. Do not open another sale until this checkout is manually checked.",false)
+    end
+    ui.clear(); ui.header("PAYMENT NOT CONFIRMED","Original checkout retained for reconciliation")
+    ui.message("Checkout: "..tostring(checkout.checkout_id).." • HTTP "..tostring(httpStatus or "unknown"),false)
+    ui.message("Payment result: "..tostring(err or "unknown"),false)
+    if status then
+      ui.message("Current checkout status: "..tostring(status.status)..". No second payment request was sent.",false)
+    else
+      ui.message("Checkout status could not be verified: "..tostring(statusErr or "unknown")..". Outcome must be reconciled before another sale.",false)
+    end
+    ui.pause()
+    return false,"Payment requires reconciliation."
   end
-  if paid.status~="COMPLETED" then return false,"MineBank did not confirm a completed payment. No success is shown." end
+  if paid.status~="COMPLETED" then
+    saveReview({
+      checkout_id=tostring(checkout.checkout_id),amount=tonumber(checkout.amount) or 0,
+      funding_source=funding,idempotency_key=paymentKey,
+      payment_http_status=200,payment_error="Unexpected response status: "..tostring(paid.status),
+      checkout_status=tostring(paid.status),recorded_at=os.epoch("utc"),
+    })
+    ui.clear(); ui.header("PAYMENT REQUIRES REVIEW","MineBank did not confirm COMPLETED")
+    ui.message("No success is shown. Reconcile checkout "..tostring(checkout.checkout_id).." before accepting another payment.",false)
+    ui.pause()
+    return false,"Unexpected payment status; reconciliation required."
+  end
+  clearReview()
   ui.clear(); ui.header("PAYMENT APPROVED","Thank you for banking with MineBank")
   ui.message(tostring(paid.amount).." Emerald paid successfully.",true)
+  ui.message("Funding source: "..tostring(paid.funding_source or funding),true)
   ui.message("Transaction: "..tostring(paid.transaction_id),true)
   ui.pause()
   return true,"Payment completed."
 end
 
+local function resolvePriorCheckout(cfg)
+  local review=readJSON(REVIEW)
+  if not review then return true end
+  local checkoutId=tostring(review.checkout_id or "")
+  ui.useTarget("terminal")
+  local status,statusErr=ui.api("/merchant/checkouts/"..checkoutId,"GET",cfg.merchant_token)
+  if status and status.status=="PAID" then
+    clearReview()
+    ui.clear(); ui.header("PRIOR CHECKOUT RECONCILED","Payment already completed")
+    ui.message("Checkout "..checkoutId.." is PAID. Transaction: "..tostring(status.transaction_id),true)
+    ui.pause()
+    return true
+  end
+  local options={"Check original checkout again","Acknowledge rejection and allow a new sale","Keep the register locked"}
+  local choice=ui.choose("CHECKOUT REVIEW REQUIRED",options,
+    "Previous checkout "..checkoutId.." • "..tostring(status and status.status or "status unavailable"))
+  if choice==1 then
+    local refreshed,refreshErr=ui.api("/merchant/checkouts/"..checkoutId,"GET",cfg.merchant_token)
+    if refreshed and refreshed.status=="PAID" then
+      clearReview()
+      ui.clear(); ui.header("PRIOR PAYMENT CONFIRMED")
+      ui.message("The original checkout is already paid. Transaction: "..tostring(refreshed.transaction_id),true)
+      ui.pause()
+      return true
+    end
+    ui.message("Original checkout still not confirmed as paid. No payment request was resent. "..tostring(refreshErr or (refreshed and refreshed.status) or statusErr or "Unknown status"),false)
+    ui.pause()
+    return false
+  elseif choice==2 then
+    if not status then
+      ui.clear(); ui.header("REGISTER REMAINS LOCKED","The original checkout cannot be verified")
+      ui.message("MineBank status check failed: "..tostring(statusErr or "unknown error")..". Do not open another sale until connectivity is restored and the original checkout is reconciled.",false)
+      ui.pause()
+      return false
+    end
+    clearReview()
+    ui.clear(); ui.header("CHECKOUT ABANDONED","No payment was automatically retried")
+    ui.message("The cashier explicitly released checkout "..checkoutId.." after reviewing status "..tostring(status.status)..".",true)
+    ui.pause()
+    return true
+  end
+  return false
+end
+
 local function runSale(cfg)
+  ui.useTarget("terminal")
   ui.API_BASE=cfg.api_base
-  ui.clear(); ui.header("MERCHANT CHECKOUT","Ready for the next customer")
+  if not resolvePriorCheckout(cfg) then return end
+  ui.clear(); ui.header("MERCHANT CHECKOUT","Cashier workspace • customer display is separate")
   local amountText=ui.prompt("Purchase amount in Emeralds")
   local amount=tonumber(amountText)
   if not amount or amount%1~=0 or amount<1 or amount>1000000 then
@@ -150,7 +282,19 @@ local function runSale(cfg)
     ui.message(tostring(err),false); ui.pause()
     return
   end
-  customerPayment(cfg,checkout)
+  ui.useTarget("terminal")
+  ui.clear(); ui.header("CUSTOMER CHECKOUT","Waiting for customer on the monitor")
+  ui.message("Checkout ID: "..tostring(checkout.checkout_id),true)
+  ui.message("Amount due: "..tostring(checkout.amount).." Emerald",true)
+  ui.message("Description: "..tostring(checkout.description or description),true)
+  ui.message("The customer is using the separate touchscreen display. Do not open another checkout until this one is resolved.",true)
+  local success,detail=customerPayment(cfg,checkout)
+  ui.useTarget("terminal")
+  ui.kioskIdle()
+  ui.useTarget("terminal")
+  ui.clear(); ui.header(success and "SALE COMPLETE" or "SALE CLOSED","Cashier summary")
+  ui.message(tostring(detail or (success and "Payment completed." or "Payment was not completed.")),success)
+  ui.pause()
 end
 
 if not http then
@@ -160,17 +304,21 @@ if not http then
   return
 end
 
+ui.useTarget("terminal")
 local cfg=loadConfig()
 if not cfg or not cfg.api_base or not cfg.merchant_token or not cfg.merchant_token:match("^mbmerchant_") then
   cfg=setupWizard()
 end
+if ui.hasMonitor() then ui.kioskIdle() end
 
 while true do
   local ok,err=pcall(runSale,cfg)
   if not ok then
+    ui.useTarget("terminal")
     ui.clear(); ui.header("CHECKOUT RECOVERED")
     ui.message("A screen error was caught; the program remains running. Check the original checkout status before retrying any payment.",false)
     ui.message(tostring(err),false)
     ui.pause()
+    if ui.hasMonitor() then ui.kioskIdle() end
   end
 end

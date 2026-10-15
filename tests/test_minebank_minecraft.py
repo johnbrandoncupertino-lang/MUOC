@@ -1,4 +1,5 @@
 import os
+from datetime import datetime, timezone
 
 from flask import Flask, session
 
@@ -6,6 +7,9 @@ from bank_lib.minebank_minecraft import (
     hash_card_token,
     minecraft_bp,
     minecraft_enabled,
+    _merchant_payment_status_code,
+    _merchant_payment_error_code,
+    _validate_outgoing_limits,
 )
 from bank_lib import minebank_minecraft as minecraft_api
 
@@ -257,3 +261,55 @@ def test_minecraft_deposit_requires_trusted_atm_credential(monkeypatch):
     )
     assert response.status_code == 401
     assert "trusted ATM credential" in response.get_json()["error"]
+
+def test_merchant_payment_rejections_are_not_misreported_as_conflicts():
+    assert _merchant_payment_status_code("Standard CashLine is not active for this account.") == 422
+    assert _merchant_payment_status_code("Insufficient Standard CashLine availability. Available: 0 Emerald.") == 422
+    assert _merchant_payment_error_code("Standard CashLine is not active for this account.") == "CASHLINE_NOT_AVAILABLE"
+    assert _merchant_payment_error_code("CrediCheck has not authorised this credit product. Check your Inbox for details.") == "CREDICHECK_REJECTED"
+
+
+def test_merchant_payment_only_uses_conflict_for_real_state_conflicts():
+    assert _merchant_payment_status_code("Checkout has expired or has already been paid.") == 409
+    assert _merchant_payment_status_code("This Idempotency-Key was already used for a different request.") == 409
+    assert _merchant_payment_status_code("Checkout not found.") == 404
+    assert _merchant_payment_error_code("This Idempotency-Key was already used for a different request.") == "IDEMPOTENCY_CONFLICT"
+
+def test_minecraft_payment_limits_use_account_id_not_card_id():
+    class Cursor:
+        def __init__(self):
+            self.query = ""
+            self.params = ()
+            self.calls = []
+
+        def execute(self, query, params=()):
+            self.query = query
+            self.params = params
+            self.calls.append((query, params))
+
+        def fetchone(self):
+            if "SELECT monthly_outgoing_limit" in self.query:
+                return (1000, 500, 100, None)
+            if "SELECT COALESCE(SUM(amount+fee)" in self.query:
+                return (0,)
+            raise AssertionError("Unexpected query: " + self.query)
+
+    cursor = Cursor()
+    current_period = datetime.now(timezone.utc).strftime("%Y-%m")
+    # The card row ID at index 0 intentionally differs from its bank account ID at index 2.
+    card_row = (9001, 72, 1234, "hash", "ACTIVE", "MB1234", "PERSONAL", 8,
+                250, "ACTIVE", 25, current_period, None, "ACTIVE")
+    monthly_used, period, limits = _validate_outgoing_limits(cursor, card_row, 10)
+
+    assert monthly_used == 25
+    assert period == current_period
+    assert limits == (1000, 500, 100, None)
+    daily_call = next(call for call in cursor.calls if "SELECT COALESCE(SUM(amount+fee)" in call[0])
+    assert daily_call[1] == (1234,)
+
+    reset_cursor = Cursor()
+    old_period_row = card_row[:11] + ("1900-01",) + card_row[12:]
+    _validate_outgoing_limits(reset_cursor, old_period_row, 10)
+    reset_call = next(call for call in reset_cursor.calls if "UPDATE bank_accounts SET monthly_outgoing_used=0" in call[0])
+    assert reset_call[1][1] == 1234
+

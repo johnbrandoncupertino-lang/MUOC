@@ -6,10 +6,10 @@ These programs connect CC:Tweaked computers/turtles to the feature-flagged MineB
 
 - `branch_terminal.lua`: authenticates a MineBank customer, lets them select an eligible account and issues a revocable card credential onto a floppy.
 - Balance checks are part of the ATM workflow; the redundant standalone `balance_reader.lua` program has been removed.
-- `merchant_checkout.lua`: trusted shop terminal that creates a fixed-amount checkout using a dedicated merchant credential, then lets a customer pay with their MineBank card.
+- `merchant_checkout.lua`: trusted cashier workspace plus a separate customer-facing monitor flow. Creates a fixed-amount checkout, asks the customer to review/confirm, enter a PIN, choose Balance or CashLine, and explicitly authorise.
 - `atm.lua`: inventory-based ATM with withdrawals, deposits, transfers up to 1,000 Emeralds, recent history, card revocation, and durable journals for physical inventory operations.
-- `vending_machine.lua`: local per-machine product catalogue, fixed-price MineBank checkout, stock/output inventory checks, and a fail-closed fulfilment journal.
-- `minebank_ui.lua`: shared MineBank terminal UI, HTTP client, floppy-card reader, inventory discovery and setup utilities.
+- `vending_machine.lua`: local per-machine product catalogue, touch-based stock/output setup, fixed-price checkout with Balance/CashLine selection, inventory checks, and a fail-closed fulfilment journal.
+- `minebank_ui.lua`: shared responsive Basalt2 UI, separate computer/monitor display roots, touch-card navigation, secure PIN keypad, guided inputs, HTTP client, floppy-card reader, inventory discovery and setup utilities. Basalt2 is required; programs fail closed if it is missing rather than dropping into numeric text menus.
 
 ## Server setup
 
@@ -48,7 +48,7 @@ Merchant checkout amounts are supplied by the trusted merchant terminal and stor
 - ATM withdrawals use ordinary balance only, not CashLine. The API debits first and returns a stable withdrawal ticket. The turtle writes a durable journal before making the request and marks dispensing as started before dropping items. If interrupted after dispensing begins, it refuses automatic replay and requires operator reconciliation. This prevents a retry from automatically dispensing a second withdrawal, but physical item delivery cannot be transactionally atomic with PostgreSQL; interruption may require manual reconciliation.
 - A successful database response is not proof that physical items reached the player. Check the ATM journal and ledger before resolving an interrupted dispense.
 - The merchant token is not a customer card token. Keep merchant terminals locked down; players with access to the Lua source or computer may be able to recover the merchant token.
-- Card payments, transfers and withdrawals require a fresh six-digit Wallet PIN; CashLine is not used by Minecraft money movement. Transfers are capped at 1,000 Emeralds and are limited to personal accounts so business permissions/approval rules cannot be bypassed.
+- Card payments require a fresh six-digit Wallet PIN. Merchant and vending checkout payments support either MineBank Balance or Standard CashLine; CashLine requires an active facility, CrediCheck authorisation and sufficient available credit, and it does not debit ordinary balance. ATM cash withdrawals remain balance-only. Transfers are capped at 1,000 Emeralds and are limited to personal accounts so business permissions/approval rules cannot be bypassed.
 - ATM deposits accept only Emeralds moved from the configured deposit inventory into secure stock/escrow before the API request. If the API cannot confirm the deposit, the journal and escrow must be preserved and retried with the same idempotency key; never move or spend those items manually until reconciled.
 - Vending machines store catalogue and pricing locally per machine. They only deliver after MineBank confirms payment. An interrupted dispense is locked for manual reconciliation rather than automatically replayed.
 - If a card is lost, revoke it from the MineBank portal. Revocation invalidates future API requests immediately.
