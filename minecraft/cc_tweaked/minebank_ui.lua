@@ -12,37 +12,54 @@ if monitor then pcall(function() monitor.setTextScale(0.5) end) end
 
 local basalt
 local basaltLoadError = nil
--- The installer keeps basalt.lua in the same directory as the MineBank programs.
--- Add that directory to CC:Tweaked's Lua search path before requiring Basalt: dofile()
--- can execute the bundle but is not the intended module-loading path on every build.
-local runningProgram = shell and shell.getRunningProgram and shell.getRunningProgram() or ""
-local programDir = fs and fs.getDir and fs.getDir(runningProgram) or ""
-local bundledBasalt = programDir ~= "" and fs.combine(programDir, "basalt.lua") or "basalt.lua"
-local originalPackagePath = package and package.path
-if package and programDir ~= "" then
-  package.path = fs.combine(programDir, "?.lua") .. ";" .. package.path
+
+-- This is a single-file Basalt2 release bundle. Load it directly from the
+-- installation directory first; changing package.path is unnecessary and can
+-- itself fail in restricted/custom CC:Tweaked environments.
+local runningProgram = ""
+pcall(function()
+  if shell and shell.getRunningProgram then runningProgram = shell.getRunningProgram() or "" end
+end)
+local programDir = ""
+pcall(function()
+  if fs and fs.getDir then programDir = fs.getDir(runningProgram) or "" end
+end)
+local bundledBasalt = "basalt.lua"
+if programDir ~= "" then
+  pcall(function() bundledBasalt = fs.combine(programDir, "basalt.lua") end)
 end
 
-local basaltOk, basaltModule = pcall(require, "basalt")
-if basaltOk and type(basaltModule) == "table" and type(basaltModule.getMainFrame) == "function" then
-  basalt = basaltModule
-else
-  basaltLoadError = basaltOk and "require('basalt') returned an invalid module" or tostring(basaltModule)
+local function isBasaltModule(value)
+  return type(value) == "table" and type(value.getMainFrame) == "function"
 end
 
--- Fallback for installations whose module loader cannot resolve the bundled file.
-if not basalt and fs and fs.exists and fs.exists(bundledBasalt) then
+local bundleExists = false
+pcall(function() bundleExists = fs and fs.exists and fs.exists(bundledBasalt) or false end)
+if bundleExists then
   local loaded, module = pcall(dofile, bundledBasalt)
-  if loaded and type(module) == "table" and type(module.getMainFrame) == "function" then
+  if loaded and isBasaltModule(module) then
+    basalt = module
+  elseif not loaded then
+    basaltLoadError = "dofile(" .. bundledBasalt .. ") failed: " .. tostring(module)
+  else
+    basaltLoadError = "The file " .. bundledBasalt .. " ran but returned no valid Basalt2 module."
+  end
+else
+  basaltLoadError = "Basalt bundle not found at " .. tostring(bundledBasalt)
+end
+
+-- Optional fallback for environments that provide Basalt as an installed module.
+if not basalt and type(require) == "function" then
+  local loaded, module = pcall(require, "basalt")
+  if loaded and isBasaltModule(module) then
     basalt = module
     basaltLoadError = nil
-  elseif not loaded then
-    basaltLoadError = tostring(module)
+  elseif loaded then
+    basaltLoadError = tostring(basaltLoadError or "") .. " | require('basalt') returned an invalid module."
   else
-    basaltLoadError = "Basalt bundle loaded but did not return a valid module"
+    basaltLoadError = tostring(basaltLoadError or "") .. " | require('basalt') failed: " .. tostring(module)
   end
 end
-if package and originalPackagePath then package.path = originalPackagePath end
 
 local roots = {}
 if basalt then
@@ -53,17 +70,27 @@ if basalt then
     if term.redirect then term.redirect(nativeTerm) end
     return basalt.getMainFrame()
   end)
-  if terminalOk and terminalFrame then roots.terminal = terminalFrame end
+  if terminalOk and terminalFrame then
+    roots.terminal = terminalFrame
+  else
+    basaltLoadError = "Basalt loaded, but terminal root creation failed: " .. tostring(terminalFrame)
+  end
   if monitor then
     local monitorOk, monitorFrame = pcall(function()
       if term.redirect then term.redirect(monitor) end
       return basalt.getMainFrame()
     end)
-    if monitorOk and monitorFrame then roots.monitor = monitorFrame end
+    if monitorOk and monitorFrame then
+      roots.monitor = monitorFrame
+    else
+      -- Monitor support is optional; terminal UI can still operate.
+      roots.monitor = nil
+    end
   end
   pcall(function()
     if term.redirect then term.redirect(previous or nativeTerm) end
   end)
+  if not roots.terminal then basalt = nil end
 end
 
 local target = monitor and roots.monitor and "monitor" or "terminal"
@@ -76,46 +103,62 @@ end
 function M.showMissingBasalt()
   if basalt then return false end
   local d = nativeTerm
+  local diagnostic = tostring(basaltLoadError or "Unknown Basalt2 loader error")
+  diagnostic = diagnostic:gsub("[\r\n]+", " ")
+
+  -- Save the untruncated message as a file so it can be inspected later.
   pcall(function()
-    d.setBackgroundColor(colors.black)
-    d.setTextColor(colors.lime)
-    d.clear()
-    d.setCursorPos(2,2)
-    d.write("MINEBANK  /  THE NEW BANK")
-    d.setTextColor(colors.red)
-    d.setCursorPos(2,4)
-    d.write("Basalt2 touchscreen UI could not be loaded.")
-    d.setTextColor(colors.white)
-    d.setCursorPos(2,6)
-    d.write("Check /minebank/basalt.lua and restart this program.")
+    local logPath = fs.combine(programDir ~= "" and programDir or ".", "basalt_loader_error.txt")
+    local h = fs.open(logPath, "w")
+    if h then h.write(diagnostic); h.close() end
+  end)
+
+  pcall(function()
     local width, height = d.getSize()
-    local diagnostic = "Loader: " .. tostring(basaltLoadError or "unknown error")
-    diagnostic = diagnostic:gsub("[\\r\\n]+", " ")
-    local maxWidth = math.max(1, width - 3)
+    width, height = math.max(12, width or 51), math.max(8, height or 19)
+    local textWidth = math.max(1, width - 4)
     local lines = {}
-    while #diagnostic > 0 do
-      local chunk = diagnostic:sub(1, maxWidth)
-      if #diagnostic > maxWidth then
-        local split = chunk:match("^.*()%s+")
-        if split and split > 1 then chunk = diagnostic:sub(1, split - 1) end
+    for paragraph in diagnostic:gmatch("[^\r\n]+") do
+      local rest = paragraph
+      if rest == "" then lines[#lines + 1] = "" end
+      while #rest > 0 do
+        local chunk = rest:sub(1, textWidth)
+        if #rest > textWidth then
+          local split = chunk:match("^.*()%s+")
+          if split and split > 1 then chunk = rest:sub(1, split - 1) end
+        end
+        lines[#lines + 1] = chunk
+        rest = rest:sub(#chunk + 1):gsub("^%s+", "")
       end
-      lines[#lines + 1] = chunk
-      diagnostic = diagnostic:sub(#chunk + 1):gsub("^%s+", "")
     end
-    local firstLine = 8
-    local lastLine = math.max(firstLine, height - 2)
-    for i = 1, math.min(#lines, lastLine - firstLine + 1) do
-      d.setCursorPos(2, firstLine + i - 1)
-      d.write(lines[i])
+    if #lines == 0 then lines[1] = "No diagnostic text was returned." end
+
+    local pageSize = math.max(1, height - 8)
+    local pages = math.max(1, math.ceil(#lines / pageSize))
+    for page = 1, pages do
+      d.setBackgroundColor(colors.black)
+      d.setTextColor(colors.lime)
+      d.clear()
+      d.setCursorPos(2, 2)
+      d.write("MINEBANK / BASALT2 LOADER DIAGNOSTICS")
+      d.setTextColor(colors.red)
+      d.setCursorPos(2, 4)
+      d.write("Touch UI unavailable. No banking operation started.")
+      d.setTextColor(colors.white)
+      local first = (page - 1) * pageSize + 1
+      local last = math.min(#lines, first + pageSize - 1)
+      for i = first, last do
+        d.setCursorPos(2, 6 + i - first)
+        d.write(lines[i]:sub(1, textWidth))
+      end
+      d.setTextColor(colors.lightGray)
+      d.setCursorPos(2, height - 1)
+      d.write(("Page %d/%d — press Enter for next page"):format(page, pages):sub(1, width - 3))
+      read()
     end
-    if #lines > lastLine - firstLine + 1 then
-      d.setCursorPos(2, lastLine)
-      d.write(("More error text omitted (%d lines)."):format(#lines - (lastLine - firstLine + 1)):sub(1, maxWidth))
-    end
-    if height >= 2 then
-      d.setCursorPos(2, height)
-      d.write("No banking operation was started.")
-    end
+    d.setTextColor(colors.white)
+    d.setCursorPos(1, height)
+    d.write("Full error saved to basalt_loader_error.txt")
   end)
   return true
 end
