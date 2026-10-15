@@ -6,6 +6,23 @@ local runningProgram = shell.getRunningProgram()
 local programDir = fs.getDir(runningProgram)
 local uiPath = fs.combine(programDir, "minebank_ui.lua")
 local ui = dofile(uiPath)
+ui.useTarget("terminal")
+local function print(...)
+  local values = {}
+  for i = 1, select("#", ...) do
+    local value = select(i, ...)
+    if value ~= nil then values[#values + 1] = tostring(value) end
+  end
+  local message = table.concat(values, " ")
+  if message == "" then return end
+  local lower = message:lower()
+  local good = not (lower:find("error",1,true) or lower:find("failed",1,true)
+    or lower:find("failure",1,true) or lower:find("invalid",1,true)
+    or lower:find("cannot",1,true) or lower:find("could not",1,true)
+    or lower:find("not found",1,true) or lower:find("required",1,true)
+    or lower:find("unavailable",1,true) or lower:find("rejected",1,true))
+  ui.message(message, good)
+end
 local CONFIG = "minebank_vending.json"
 local JOURNAL = "minebank_vending_journal.json"
 local function save(path,value)
@@ -89,17 +106,17 @@ if not cfg then
   print("Use a dedicated merchant credential on this locked-down machine.")
   cfg={}
   cfg.api_base=ui.prompt("HTTPS API base",ui.API_BASE)
-  if not cfg.api_base:match("^https://") then ui.message("HTTPS is required.",false); ui.pause(); return end
+  if not cfg.api_base or not cfg.api_base:match("^https://") then ui.message("HTTPS is required. Setup was not saved.",false); ui.pause(); return end
   ui.API_BASE=cfg.api_base:gsub("/+$","")
   cfg.merchant_token=ui.secret("Merchant token (mbmerchant_...): ")
-  if not cfg.merchant_token:match("^mbmerchant_") then ui.message("Invalid merchant token format.",false); ui.pause(); return end
+  if not cfg.merchant_token or not cfg.merchant_token:match("^mbmerchant_") or #cfg.merchant_token<40 then ui.message("Invalid merchant token format.",false); ui.pause(); return end
   local inventories=ui.findInventory()
   if #inventories<2 then ui.message("Connect separate stock and output inventories.",false); ui.pause(); return end
-  print("Inventories:")
-  for i,name in ipairs(inventories) do print(i..") "..name) end
-  local a=tonumber(ui.prompt("Stock inventory number"))
-  local b=tonumber(ui.prompt("Output inventory number"))
-  if not a or not b or a==b or not inventories[a] or not inventories[b] then ui.message("Invalid inventory selection.",false); ui.pause(); return end
+  ui.message("Discovered "..#inventories.." usable inventories. Assign the stock and output roles.",true)
+  local a=ui.choose("STOCK INVENTORY",inventories,"Which inventory stores merchandise for sale?")
+  if not a or not inventories[a] then ui.message("Stock inventory selection cancelled.",false); ui.pause(); return end
+  local b=ui.choose("CUSTOMER OUTPUT INVENTORY",inventories,"Choose a different inventory that delivers purchased items.")
+  if not b or not inventories[b] or a==b then ui.message("Choose two different inventory peripherals.",false); ui.pause(); return end
   cfg.stock_inventory=inventories[a]; cfg.output_inventory=inventories[b]
   cfg.catalog={}
   print("Add up to 12 products. Use exact Minecraft item IDs, e.g. minecraft:apple.")
@@ -130,8 +147,8 @@ elseif old and old.state=="PAID" then
   ui.clear(); ui.header("RECOVER PAID ORDER")
   print("Order "..tostring(old.checkout_id).." is paid and not yet marked as dispensed.")
   print("Product: "..old.item.." x"..old.count)
-  write("Type DISPENSE to continue once: ")
-  if read()~="DISPENSE" then return end
+  local phrase=ui.prompt("Type DISPENSE once to continue")
+  if phrase~="DISPENSE" then return end
   local ok,err=dispense(cfg,old)
   ui.message(ok and "Order fulfilled." or err,ok)
   ui.pause(); return
