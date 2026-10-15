@@ -6,6 +6,23 @@ local runningProgram = shell.getRunningProgram()
 local programDir = fs.getDir(runningProgram)
 local uiPath = fs.combine(programDir, "minebank_ui.lua")
 local ui = dofile(uiPath)
+ui.useTarget("terminal")
+local function print(...)
+  local values = {}
+  for i = 1, select("#", ...) do
+    local value = select(i, ...)
+    if value ~= nil then values[#values + 1] = tostring(value) end
+  end
+  local message = table.concat(values, " ")
+  if message == "" then return end
+  local lower = message:lower()
+  local good = not (lower:find("error",1,true) or lower:find("failed",1,true)
+    or lower:find("failure",1,true) or lower:find("invalid",1,true)
+    or lower:find("cannot",1,true) or lower:find("could not",1,true)
+    or lower:find("not found",1,true) or lower:find("required",1,true)
+    or lower:find("unavailable",1,true) or lower:find("rejected",1,true))
+  ui.message(message, good)
+end
 local CONFIG="minebank_atm.json"
 local JOURNAL="minebank_atm_journal.json"
 local MAX_WITHDRAWAL=4096
@@ -128,8 +145,8 @@ local function ensureConfig()
   if not base:match("^https://") then return nil,"API base must use HTTPS." end
   ui.API_BASE=base:gsub("/+$","")
   ui.clear(); ui.header("PROTECTED ATM SETUP","Operator-only • customers must not configure this machine")
-  write("Type OPERATOR SETUP to continue: ")
-  if read()~="OPERATOR SETUP" then return nil,"Setup cancelled." end
+  local operatorPhrase=ui.prompt("Type OPERATOR SETUP to continue")
+  if operatorPhrase~="OPERATOR SETUP" then return nil,"Setup cancelled." end
   local atmToken=ui.secret("Trusted ATM token from MineBank operator configuration: ")
   if not atmToken or #atmToken<32 then return nil,"A trusted ATM token of at least 32 characters is required." end
   local tokenCheck=ui.secret("Re-enter trusted ATM token to confirm: ")
@@ -147,12 +164,13 @@ local function ensureConfig()
     print("If a chest is not listed above, CC:Tweaked cannot see it.")
     return nil,"Only "..#names.." usable inventory peripheral(s) detected; see the storage diagnostics above."
   end
-  print("Detected inventories:")
-  for i,n in ipairs(names) do print(i..") "..n) end
-  local d=tonumber(ui.prompt("Deposit inventory number"))
-  local s=tonumber(ui.prompt("Secure stock/escrow inventory number"))
-  local o=tonumber(ui.prompt("Output inventory number"))
-  if not names[d] or not names[s] or not names[o] or d==s or d==o or s==o then return nil,"Select three different inventory numbers." end
+  local d=ui.choose("DEPOSIT INVENTORY",names,"Select the physical inventory that receives deposited Emeralds.")
+  if not d or not names[d] then return nil,"Deposit inventory selection cancelled." end
+  local s=ui.choose("SECURE STOCK / ESCROW",names,"Select the secure inventory used for withdrawals and deposit escrow.")
+  if not s or not names[s] then return nil,"Secure stock inventory selection cancelled." end
+  local o=ui.choose("WITHDRAWAL OUTPUT",names,"Select the inventory that delivers withdrawn Emeralds to the customer.")
+  if not o or not names[o] then return nil,"Output inventory selection cancelled." end
+  if d==s or d==o or s==o then return nil,"Select three different inventory peripherals." end
   local cfg={api_base=ui.API_BASE,atm_token=atmToken,deposit_inventory=names[d],stock_inventory=names[s],output_inventory=names[o]}
   if not save(CONFIG,cfg) then return nil,"Could not save ATM configuration." end
   return cfg
