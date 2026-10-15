@@ -183,6 +183,7 @@ local depositInv=ui.inventory(cfg.deposit_inventory)
 local stockInv=ui.inventory(cfg.stock_inventory)
 local outputInv=ui.inventory(cfg.output_inventory)
 if not depositInv or not stockInv or not outputInv then ui.message("Configured inventory missing. Run setup again.",false); ui.pause(); return end
+ui.useTarget(ui.hasMonitor() and "monitor" or "terminal")
 
 local function runWithdrawal()
   local card=getCard(); if not card then return end
