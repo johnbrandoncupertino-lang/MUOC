@@ -6,6 +6,8 @@ from bank_lib.minebank_minecraft import (
     hash_card_token,
     minecraft_bp,
     minecraft_enabled,
+    _merchant_payment_status_code,
+    _merchant_payment_error_code,
 )
 from bank_lib import minebank_minecraft as minecraft_api
 
@@ -257,3 +259,17 @@ def test_minecraft_deposit_requires_trusted_atm_credential(monkeypatch):
     )
     assert response.status_code == 401
     assert "trusted ATM credential" in response.get_json()["error"]
+
+def test_merchant_payment_rejections_are_not_misreported_as_conflicts():
+    assert _merchant_payment_status_code("Standard CashLine is not active for this account.") == 422
+    assert _merchant_payment_status_code("Insufficient Standard CashLine availability. Available: 0 Emerald.") == 422
+    assert _merchant_payment_error_code("Standard CashLine is not active for this account.") == "CASHLINE_NOT_AVAILABLE"
+    assert _merchant_payment_error_code("CrediCheck has not authorised this credit product. Check your Inbox for details.") == "CREDICHECK_REJECTED"
+
+
+def test_merchant_payment_only_uses_conflict_for_real_state_conflicts():
+    assert _merchant_payment_status_code("Checkout has expired or has already been paid.") == 409
+    assert _merchant_payment_status_code("This Idempotency-Key was already used for a different request.") == 409
+    assert _merchant_payment_status_code("Checkout not found.") == 404
+    assert _merchant_payment_error_code("This Idempotency-Key was already used for a different request.") == "IDEMPOTENCY_CONFLICT"
+
