@@ -11,8 +11,20 @@ local monitor = peripheral and peripheral.find and peripheral.find("monitor") or
 if monitor then pcall(function() monitor.setTextScale(0.5) end) end
 
 local basalt
-local basaltOk, basaltModule = pcall(require, "basalt")
-if basaltOk then basalt = basaltModule end
+-- The installer places basalt.lua beside the MineBank programs (usually /minebank).
+-- CC:Tweaked's require() search path does not reliably include that directory, so
+-- load the bundled sibling file explicitly before trying the global module path.
+local runningProgram = shell and shell.getRunningProgram and shell.getRunningProgram() or ""
+local programDir = fs and fs.getDir and fs.getDir(runningProgram) or ""
+local bundledBasalt = programDir ~= "" and fs.combine(programDir, "basalt.lua") or "basalt.lua"
+if fs and fs.exists and fs.exists(bundledBasalt) then
+  local loaded, module = pcall(dofile, bundledBasalt)
+  if loaded and type(module) == "table" then basalt = module end
+end
+if not basalt then
+  local basaltOk, basaltModule = pcall(require, "basalt")
+  if basaltOk and type(basaltModule) == "table" then basalt = basaltModule end
+end
 
 local roots = {}
 if basalt then
