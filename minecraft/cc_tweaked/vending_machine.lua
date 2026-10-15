@@ -280,4 +280,4 @@ while true do
         end
       end
     end
-  end
+ui.clear(); ui.header("VENDING MACHINE","Thank you for using MineBank.")
