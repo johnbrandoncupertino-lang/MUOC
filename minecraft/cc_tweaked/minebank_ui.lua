@@ -11,20 +11,38 @@ local monitor = peripheral and peripheral.find and peripheral.find("monitor") or
 if monitor then pcall(function() monitor.setTextScale(0.5) end) end
 
 local basalt
--- The installer places basalt.lua beside the MineBank programs (usually /minebank).
--- CC:Tweaked's require() search path does not reliably include that directory, so
--- load the bundled sibling file explicitly before trying the global module path.
+local basaltLoadError = nil
+-- The installer keeps basalt.lua in the same directory as the MineBank programs.
+-- Add that directory to CC:Tweaked's Lua search path before requiring Basalt: dofile()
+-- can execute the bundle but is not the intended module-loading path on every build.
 local runningProgram = shell and shell.getRunningProgram and shell.getRunningProgram() or ""
 local programDir = fs and fs.getDir and fs.getDir(runningProgram) or ""
 local bundledBasalt = programDir ~= "" and fs.combine(programDir, "basalt.lua") or "basalt.lua"
-if fs and fs.exists and fs.exists(bundledBasalt) then
+local originalPackagePath = package and package.path
+if package and programDir ~= "" then
+  package.path = fs.combine(programDir, "?.lua") .. ";" .. package.path
+end
+
+local basaltOk, basaltModule = pcall(require, "basalt")
+if basaltOk and type(basaltModule) == "table" and type(basaltModule.getMainFrame) == "function" then
+  basalt = basaltModule
+else
+  basaltLoadError = basaltOk and "require('basalt') returned an invalid module" or tostring(basaltModule)
+end
+
+-- Fallback for installations whose module loader cannot resolve the bundled file.
+if not basalt and fs and fs.exists and fs.exists(bundledBasalt) then
   local loaded, module = pcall(dofile, bundledBasalt)
-  if loaded and type(module) == "table" then basalt = module end
+  if loaded and type(module) == "table" and type(module.getMainFrame) == "function" then
+    basalt = module
+    basaltLoadError = nil
+  elseif not loaded then
+    basaltLoadError = tostring(module)
+  else
+    basaltLoadError = "Basalt bundle loaded but did not return a valid module"
+  end
 end
-if not basalt then
-  local basaltOk, basaltModule = pcall(require, "basalt")
-  if basaltOk and type(basaltModule) == "table" then basalt = basaltModule end
-end
+if package and originalPackagePath then package.path = originalPackagePath end
 
 local roots = {}
 if basalt then
@@ -66,11 +84,13 @@ function M.showMissingBasalt()
     d.write("MINEBANK  /  THE NEW BANK")
     d.setTextColor(colors.red)
     d.setCursorPos(2,4)
-    d.write("Basalt2 touchscreen UI is required.")
+    d.write("Basalt2 touchscreen UI could not be loaded.")
     d.setTextColor(colors.white)
     d.setCursorPos(2,6)
-    d.write("Run the MineBank installer again to restore basalt.lua.")
+    d.write("Check /minebank/basalt.lua and restart this program.")
     d.setCursorPos(2,8)
+    d.write(("Loader: " .. tostring(basaltLoadError or "unknown error")):sub(1, math.max(1, select(1, d.getSize()) - 3)))
+    d.setCursorPos(2,10)
     d.write("No banking operation was started.")
   end)
   return true
