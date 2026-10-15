@@ -137,14 +137,17 @@ if not cfg then
 end
 ui.API_BASE=(cfg.api_base or ui.API_BASE):gsub("/+$","")
 if not cfg.merchant_token or not cfg.merchant_token:match("^mbmerchant_") then ui.message("Merchant token is not configured.",false); ui.pause(); return end
+ui.useTarget(ui.hasMonitor() and "monitor" or "terminal")
 local old=load(JOURNAL)
 if old and old.state=="DISPENSE_STARTED" then
+  ui.useTarget("terminal")
   ui.clear(); ui.header("RECONCILIATION REQUIRED")
   print("Order "..tostring(old.checkout_id).." may have been partly dispensed.")
   print("The machine will not dispense it again automatically.")
   print("Inspect stock/output and ledger, then resolve manually.")
   ui.pause(); return
 elseif old and old.state=="PAID" then
+  ui.useTarget("terminal")
   ui.clear(); ui.header("RECOVER PAID ORDER")
   print("Order "..tostring(old.checkout_id).." is paid and not yet marked as dispensed.")
   print("Product: "..old.item.." x"..old.count)
@@ -154,6 +157,7 @@ elseif old and old.state=="PAID" then
   ui.message(ok and "Order fulfilled." or err,ok)
   ui.pause(); return
 elseif old and old.state~="COMPLETE" and old.state~="CANCELLED" then
+  ui.useTarget("terminal")
   ui.clear(); ui.header("ORDER RECOVERY REQUIRED")
   print("An unfinished order exists: "..tostring(old.checkout_id or old.key))
   print("State: "..tostring(old.state))
