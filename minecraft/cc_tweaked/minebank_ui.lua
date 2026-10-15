@@ -16,12 +16,24 @@ if basaltOk then basalt = basaltModule end
 
 local roots = {}
 if basalt then
-  local ok, frame = pcall(basalt.createFrame, nativeTerm)
-  if ok and frame then roots.terminal = frame else roots.terminal = basalt.getMainFrame() end
+  -- Basalt2 keys its main frame by term.current(); create one frame under each
+  -- redirected terminal rather than passing a peripheral as an ignored argument.
+  local previous = term.current and term.current() or nativeTerm
+  local terminalOk, terminalFrame = pcall(function()
+    if term.redirect then term.redirect(nativeTerm) end
+    return basalt.getMainFrame()
+  end)
+  if terminalOk and terminalFrame then roots.terminal = terminalFrame end
   if monitor then
-    local monitorOk, monitorFrame = pcall(basalt.createFrame, monitor)
+    local monitorOk, monitorFrame = pcall(function()
+      if term.redirect then term.redirect(monitor) end
+      return basalt.getMainFrame()
+    end)
     if monitorOk and monitorFrame then roots.monitor = monitorFrame end
   end
+  pcall(function()
+    if term.redirect then term.redirect(previous or nativeTerm) end
+  end)
 end
 
 local target = monitor and roots.monitor and "monitor" or "terminal"
