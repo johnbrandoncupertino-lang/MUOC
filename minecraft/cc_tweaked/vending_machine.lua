@@ -152,7 +152,7 @@ elseif old and old.state=="PAID" then
   local ok,err=dispense(cfg,old)
   ui.message(ok and "Order fulfilled." or err,ok)
   ui.pause(); return
-elseif old and old.state~="COMPLETE" then
+elseif old and old.state~="COMPLETE" and old.state~="CANCELLED" then
   ui.clear(); ui.header("ORDER RECOVERY REQUIRED")
   print("An unfinished order exists: "..tostring(old.checkout_id or old.key))
   print("State: "..tostring(old.state))
@@ -186,35 +186,81 @@ while true do
           order.checkout_id=tostring(checkout.checkout_id); order.state="AWAITING_PAYMENT"
           if not save(JOURNAL,order) then ui.message("Checkout exists but journal failed. Do not create another checkout; operator reconciliation required.",false); ui.pause()
           else
-            print("Insert the customer's MineBank floppy card.")
-            local card,cardErr=ui.card()
-            if not card then ui.message(cardErr,false); ui.pause()
-            else
-              local pin=ui.secret("Customer Wallet PIN: ")
-              print("Confirming "..product.price.." Emeralds to "..tostring(checkout.merchant or "merchant").."...")
-              local paid,payErr=ui.api("/payments","POST",card.credential,
-                {checkout_id=order.checkout_id,wallet_pin=pin},"checkout-"..order.checkout_id)
-              if not paid then
-                ui.message("Payment not confirmed: "..tostring(payErr),false)
-                local status,statusErr=ui.api("/merchant/checkouts/"..order.checkout_id,"GET",cfg.merchant_token)
-                if status and status.status=="PAID" then
-                  order.state="PAID"; order.transaction_id=status.transaction_id
-                  if save(JOURNAL,order) then ui.message("MineBank confirms payment. Re-run and reconcile/fulfil the paid order.",true)
-                  else ui.message("Payment is confirmed but local journal failed. Lock machine and reconcile.",false) end
-                else
-                  ui.message("Do not create another order. Check the original checkout status before retrying.",false)
-                end
-                ui.pause()
-              elseif paid.status~="COMPLETED" then
-                ui.message("Payment response was not COMPLETED. No items dispensed.",false); ui.pause()
-              else
-                order.state="PAID"; order.transaction_id=paid.transaction_id
-                if not save(JOURNAL,order) then ui.message("Payment completed but journal failed. Do not dispense; operator reconciliation required.",false); ui.pause()
-                else
-                  local ok,dispErr=dispense(cfg,order)
-                  ui.message(ok and ("PURCHASE COMPLETE — "..product.item.." x"..product.count) or dispErr,ok)
-                  ui.pause()
-                end
+             local card
+             while not card do
+               local ready=ui.choose("CUSTOMER CARD",{"I have inserted my MineBank card","Cancel purchase"},
+                 "Insert the MineBank floppy card into the drive. It is only read for this purchase.")
+               if ready~=1 then break end
+               local cardErr
+               card,cardErr=ui.card()
+               if not card then ui.message(cardErr or "Card not found in the drive.",false); ui.pause() end
+             end
+             if not card then
+               order.state="CANCELLED"; save(JOURNAL,order)
+               ui.message("Purchase cancelled before authorisation. No payment was sent.",true)
+               ui.pause()
+             else
+               local pin=ui.secret("Customer Wallet PIN: ")
+               if not pin or not pin:match("^%d%d%d%d%d%d$") then
+                 order.state="CANCELLED"; save(JOURNAL,order)
+                 ui.message("A valid six-digit Wallet PIN is required. No payment was sent.",false)
+                 ui.pause()
+               else
+                 local source=ui.choose("PAYMENT SOURCE",{"MineBank Balance","Standard CashLine","Cancel"},
+                   "Purchase: "..product.price.." Emeralds • "..product.item.." × "..product.count)
+                 local funding=source==1 and "BALANCE" or (source==2 and "CASHLINE" or nil)
+                 if funding then
+                   ui.clear(); ui.header("AUTHORISE PURCHASE","Payment source: "..(funding=="BALANCE" and "MineBank Balance" or "Standard CashLine"))
+                   local final=ui.choose("FINAL AUTHORISATION",{"Authorise "..product.price.." Emeralds","Cancel"},
+                     "Merchant purchase: "..product.item.." × "..product.count)
+                   if final==1 then
+                     local payKey="checkout-"..order.checkout_id.."-"..funding
+                     local paid,payErr,payStatus=ui.api("/payments","POST",card.credential,
+                       {checkout_id=order.checkout_id,wallet_pin=pin,funding_source=funding},payKey)
+                     if not paid then
+                       ui.message("Payment not confirmed (HTTP "..tostring(payStatus or "unknown").."): "..tostring(payErr),false)
+                       local status,statusErr=ui.api("/merchant/checkouts/"..order.checkout_id,"GET",cfg.merchant_token)
+                       if status and status.status=="PAID" then
+                         order.state="PAID"; order.transaction_id=status.transaction_id
+                         if save(JOURNAL,order) then ui.message("MineBank confirms the original checkout is paid. The item can be reconciled; no payment was resent.",true)
+                         else ui.message("Payment is confirmed but local journal failed. Lock machine and reconcile.",false) end
+                       else
+                         order.state="PAYMENT_REVIEW"
+                         order.payment_http_status=payStatus
+                         order.payment_error=tostring(payErr or "Unknown payment error")
+                         order.checkout_status=status and status.status or "UNKNOWN"
+                         order.status_error=statusErr and tostring(statusErr) or nil
+                         save(JOURNAL,order)
+                         ui.message("No payment retry was sent. Order is locked for reconciliation before a new sale.",false)
+                       end
+                       ui.pause()
+                     elseif paid.status~="COMPLETED" then
+                       order.state="PAYMENT_REVIEW"
+                       order.payment_error="Unexpected payment status: "..tostring(paid.status)
+                       save(JOURNAL,order)
+                       ui.message("Payment status was not COMPLETED. No items dispensed; operator reconciliation is required.",false)
+                       ui.pause()
+                     else
+                       order.state="PAID"; order.transaction_id=paid.transaction_id
+                       if not save(JOURNAL,order) then ui.message("Payment completed but journal failed. Do not dispense; operator reconciliation required.",false); ui.pause()
+                       else
+                         local ok,dispErr=dispense(cfg,order)
+                         ui.message(ok and ("PURCHASE COMPLETE — "..product.item.." x"..product.count) or dispErr,ok)
+                         ui.pause()
+                       end
+                     end
+                     if order.state=="PAYMENT_REVIEW" then return end
+                   else
+                     order.state="CANCELLED"; save(JOURNAL,order)
+                     ui.message("Purchase cancelled. No payment was sent.",true); ui.pause()
+                   end
+                 else
+                   order.state="CANCELLED"; save(JOURNAL,order)
+                   ui.message("Purchase cancelled. No payment was sent.",true); ui.pause()
+                 end
+                 pin=nil
+               end
+             end
               end
             end
           end
