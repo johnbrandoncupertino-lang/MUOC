@@ -359,7 +359,7 @@ function M.secret(label)
   if basalt and (lower:find("pin",1,true) or lower:find("passcode",1,true)) then
     local meta,err=makeScreen("SECURE INPUT",label or "Enter your six-digit Wallet PIN")
     if not meta then M.message(err,false); return nil end
-    local value,result,done=""; nil; false
+    local value,result,done = "", nil, false
     local masked=meta.body:addLabel({
       x=2,y=2,width=math.max(1,meta.bodyW-4),height=1,
       foreground=colors.lime,background=colors.black,
