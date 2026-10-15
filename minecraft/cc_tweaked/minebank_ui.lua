@@ -26,6 +26,31 @@ end
 
 local target = monitor and roots.monitor and "monitor" or "terminal"
 local screens = {}
+
+function M.hasBasalt()
+  return basalt ~= nil
+end
+
+function M.showMissingBasalt()
+  if basalt then return false end
+  local d = nativeTerm
+  pcall(function()
+    d.setBackgroundColor(colors.black)
+    d.setTextColor(colors.lime)
+    d.clear()
+    d.setCursorPos(2,2)
+    d.write("MINEBANK  /  THE NEW BANK")
+    d.setTextColor(colors.red)
+    d.setCursorPos(2,4)
+    d.write("Basalt2 touchscreen UI is required.")
+    d.setTextColor(colors.white)
+    d.setCursorPos(2,6)
+    d.write("Run the MineBank installer again to restore basalt.lua.")
+    d.setCursorPos(2,8)
+    d.write("No banking operation was started.")
+  end)
+  return true
+end
 local metaByFrame = {}
 local terminalRedirect = nativeTerm
 
