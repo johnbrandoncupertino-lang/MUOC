@@ -292,7 +292,7 @@ local cfg=loadConfig()
 if not cfg or not cfg.api_base or not cfg.merchant_token or not cfg.merchant_token:match("^mbmerchant_") then
   cfg=setupWizard()
 end
-if monitor then ui.kioskIdle() end
+if ui.hasMonitor() then ui.kioskIdle() end
 
 while true do
   local ok,err=pcall(runSale,cfg)
@@ -302,6 +302,6 @@ while true do
     ui.message("A screen error was caught; the program remains running. Check the original checkout status before retrying any payment.",false)
     ui.message(tostring(err),false)
     ui.pause()
-    if monitor then ui.kioskIdle() end
+    if ui.hasMonitor() then ui.kioskIdle() end
   end
 end
