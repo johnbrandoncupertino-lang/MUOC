@@ -88,10 +88,34 @@ function M.showMissingBasalt()
     d.setTextColor(colors.white)
     d.setCursorPos(2,6)
     d.write("Check /minebank/basalt.lua and restart this program.")
-    d.setCursorPos(2,8)
-    d.write(("Loader: " .. tostring(basaltLoadError or "unknown error")):sub(1, math.max(1, select(1, d.getSize()) - 3)))
-    d.setCursorPos(2,10)
-    d.write("No banking operation was started.")
+    local width, height = d.getSize()
+    local diagnostic = "Loader: " .. tostring(basaltLoadError or "unknown error")
+    diagnostic = diagnostic:gsub("[\\r\\n]+", " ")
+    local maxWidth = math.max(1, width - 3)
+    local lines = {}
+    while #diagnostic > 0 do
+      local chunk = diagnostic:sub(1, maxWidth)
+      if #diagnostic > maxWidth then
+        local split = chunk:match("^.*()%s+")
+        if split and split > 1 then chunk = diagnostic:sub(1, split - 1) end
+      end
+      lines[#lines + 1] = chunk
+      diagnostic = diagnostic:sub(#chunk + 1):gsub("^%s+", "")
+    end
+    local firstLine = 8
+    local lastLine = math.max(firstLine, height - 2)
+    for i = 1, math.min(#lines, lastLine - firstLine + 1) do
+      d.setCursorPos(2, firstLine + i - 1)
+      d.write(lines[i])
+    end
+    if #lines > lastLine - firstLine + 1 then
+      d.setCursorPos(2, lastLine)
+      d.write(("More error text omitted (%d lines)."):format(#lines - (lastLine - firstLine + 1)):sub(1, maxWidth))
+    end
+    if height >= 2 then
+      d.setCursorPos(2, height)
+      d.write("No banking operation was started.")
+    end
   end)
   return true
 end
