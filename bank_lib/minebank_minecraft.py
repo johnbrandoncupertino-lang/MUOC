@@ -515,7 +515,7 @@ def _validate_outgoing_limits(cur, account, amount):
     if account[11] != period:
         cur.execute(
             "UPDATE bank_accounts SET monthly_outgoing_used=0,monthly_outgoing_period=%s WHERE id=%s",
-            (period, account[0]),
+            (period, account[2]),
         )
         monthly_used = 0
     else:
@@ -529,7 +529,7 @@ def _validate_outgoing_limits(cur, account, amount):
            WHERE sender_account_id=%s AND status IN
              ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL')
              AND created_at>=CURRENT_TIMESTAMP-INTERVAL '1 day'""",
-        (account[0],),
+        (account[2],),
     )
     daily_used = int(cur.fetchone()[0] or 0)
     if daily_limit is not None and daily_used + amount > int(daily_limit):
