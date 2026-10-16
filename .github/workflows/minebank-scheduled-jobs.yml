@@ -7,15 +7,28 @@ jobs:
   process-schedules:
     runs-on: ubuntu-latest
     steps:
-      - name: Process recurring MineBank payments
+      - name: Validate MineBank cron configuration
         env:
-          MUOC_CRON_URL: \${{ secrets.MUOC_CRON_URL }}
-          MUOC_CRON_TOKEN: \${{ secrets.MUOC_CRON_TOKEN }}
+          MUOC_CRON_URL: ${{ secrets.MUOC_CRON_URL }}
+          MUOC_CRON_TOKEN: ${{ secrets.MUOC_CRON_TOKEN }}
         run: |
           if [ -z "$MUOC_CRON_URL" ] || [ -z "$MUOC_CRON_TOKEN" ]; then
-            echo "MineBank cron secrets are not configured; skipping scheduled job."
-            exit 0
+            echo "::error::Required MineBank cron secrets MUOC_CRON_URL and/or MUOC_CRON_TOKEN are not configured."
+            exit 1
           fi
+          case "$MUOC_CRON_URL" in
+            https://*) ;;
+            *)
+              echo "::error::MUOC_CRON_URL must be an HTTPS URL."
+              exit 1
+              ;;
+          esac
+      - name: Process recurring MineBank payments
+        env:
+          MUOC_CRON_URL: ${{ secrets.MUOC_CRON_URL }}
+          MUOC_CRON_TOKEN: ${{ secrets.MUOC_CRON_TOKEN }}
+        run: |
           curl --fail --silent --show-error \
+            --connect-timeout 10 --max-time 60 \
             -X POST "$MUOC_CRON_URL" \
             -H "Authorization: Bearer $MUOC_CRON_TOKEN"
