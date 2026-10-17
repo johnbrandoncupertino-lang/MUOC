@@ -2097,6 +2097,25 @@ def minebank_minecraft_cards_page():
                ORDER BY c.issued_at DESC,c.id DESC""",
             (client_id,),
         )
+        # Activity is card-scoped, not just account-scoped: this avoids showing
+        # transactions made from another card linked to the same bank account.
+        # The operations table is additive and optional on older installations.
+        for card in cards:
+            card["activities"] = []
+            try:
+                card["activities"] = execute_query_dict(
+                    """SELECT operation_type,status,amount,transaction_id,
+                              created_at,updated_at
+                       FROM minebank_minecraft_operations
+                       WHERE card_id=%s AND client_id=%s
+                       ORDER BY updated_at DESC,id DESC LIMIT 5""",
+                    (card["id"], client_id),
+                )
+            except Exception as activity_exc:
+                app.logger.warning(
+                    "Minecraft card activity unavailable for card %s: %s",
+                    card.get("id"), type(activity_exc).__name__,
+                )
     except Exception as exc:
         app.logger.error("Minecraft card list failed: %s", type(exc).__name__)
         cards = []
