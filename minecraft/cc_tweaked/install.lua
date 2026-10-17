@@ -67,10 +67,6 @@ for i, file in ipairs(files) do
     return
   end
 
-  -- Basalt2's full bundle may be run in an environment without native
-  -- require(), and some releases pass module paths with a trailing .lua.
-  -- Normalize those paths before consulting the embedded module registry.
-
   local path = fs.combine(tempDir, file.name)
   local handle = fs.open(path, "w")
   if not handle then
