@@ -732,8 +732,14 @@ function M.api(path, method, token, body, key, extraHeaders)
       return nil, tostring(positionalErr or requestErr or "MineBank request was rejected before sending."), 0
     end
   end
-  if not ok then return nil, "Network request could not start: " .. tostring(accepted) end
-  if not accepted then return nil, tostring(requestErr or "MineBank request was rejected before sending."), 0 end
+  if not ok then
+    if path == "/payments" then M.phase("CHECK CONNECTION", "declined") end
+    return nil, "Network request could not start: " .. tostring(accepted)
+  end
+  if not accepted then
+    if path == "/payments" then M.phase("PAYMENT NOT SENT", "declined") end
+    return nil, tostring(requestErr or "MineBank request was rejected before sending."), 0
+  end
   local timer = os.startTimer(10)
   local animationTimer = os.startTimer(0.35)
   local frame = 0
@@ -752,7 +758,14 @@ function M.api(path, method, token, body, key, extraHeaders)
         if path == "/payments" then M.phase("DECLINED", "declined") end
         return nil, tostring(data.error or ("HTTP " .. status)) .. (data.error_code and (" [" .. tostring(data.error_code) .. "]") or ""), status
       end
-      if path == "/payments" then M.phase("APPROVED", "approved") end
+      if path == "/payments" then
+        M.phase("APPROVED", "approved")
+      elseif target == "monitor" and path:match("^/merchant/checkouts/%d+$") then
+        local state = tostring(data.status or ""):upper()
+        if state == "PAID" then M.phase("APPROVED", "approved")
+        elseif state == "OPEN" then M.phase("NOT PAID", "declined")
+        else M.phase("DECLINED", "declined") end
+      end
       return data, nil, status
     elseif event == "timer" and a == animationTimer then
       frame = frame + 1
@@ -781,12 +794,14 @@ function M.api(path, method, token, body, key, extraHeaders)
         end
         return nil, tostring(message or ("HTTP " .. tostring(status))) .. (code and (" [" .. tostring(code) .. "]") or ""), status
       end
-      if path == "/payments" then M.phase("CHECK CONNECTION", "declined") end
+      if path == "/payments" then M.phase("CHECK CONNECTION", "declined")
+      elseif target == "monitor" and path:match("^/merchant/checkouts/%d+$") then M.phase("STATUS UNKNOWN", "declined") end
       pcall(os.cancelTimer, animationTimer)
       return nil, "Network request failed: " .. tostring(b or "unknown error")
     elseif event == "timer" and a == timer then
       pcall(os.cancelTimer, animationTimer)
-      if path == "/payments" then M.phase("CHECKING BANK STATUS", "working") end
+      if path == "/payments" then M.phase("CHECKING BANK STATUS", "working")
+      elseif target == "monitor" and path:match("^/merchant/checkouts/%d+$") then M.phase("STATUS UNKNOWN", "declined") end
       return nil, "MineBank request timed out after 10 seconds. Its outcome is unknown; retry only with the saved idempotency key."
     elseif event == "terminate" then
       pcall(os.cancelTimer, timer)
