@@ -230,10 +230,15 @@ while true do
   local opts={}
   for _,p in ipairs(cfg.catalog or {}) do opts[#opts+1]=p.item.." x"..p.count.." - "..p.price.." Emeralds" end
   -- The customer touchscreen never offers Exit. F12 on the physical computer opens settings.
-  if not ui.hasMonitor() then opts[#opts+1]="Exit" end
+  if not ui.hasMonitor() then
+    opts[#opts+1]="Operator settings"
+    opts[#opts+1]="Exit"
+  end
   local choice=ui.choose(cfg.display_name or "VENDING MACHINE",opts,
-    ui.hasMonitor() and "Touch a product to begin checkout." or "Choose a product or Exit.")
+    ui.hasMonitor() and "Touch a product to begin checkout." or "Choose a product, settings, or Exit.")
   if ui.consumeAdminRequest and ui.consumeAdminRequest() then
+    cfg=configureMachine(cfg)
+  elseif not ui.hasMonitor() and choice == #(cfg.catalog or {}) + 1 then
     cfg=configureMachine(cfg)
   elseif not choice then
     if not ui.hasMonitor() then break end
