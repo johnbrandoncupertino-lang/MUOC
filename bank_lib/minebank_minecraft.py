@@ -451,10 +451,95 @@ def _verify_card_pin(token, pin):
 
 
 def _atm_authorized():
-    """Only a configured trusted ATM may create physical deposits or withdrawals."""
-    expected = os.environ.get("MINEBANK_MINECRAFT_ATM_TOKEN", "").strip()
+    """Validate a per-machine ATM credential created by card/PIN pairing."""
     supplied = request.headers.get("X-MineBank-ATM-Token", "").strip()
-    return bool(len(expected) >= 32 and supplied and hmac.compare_digest(expected, supplied))
+    if not supplied.startswith("mbatm_") or len(supplied) < 40 or len(supplied) > 180:
+        return False
+    conn = get_db_connection()
+    if conn is None:
+        return False
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT id FROM minebank_minecraft_atms
+                       WHERE token_prefix=%s AND token_hash=%s AND status='ACTIVE'
+                       LIMIT 1""",
+                    (supplied[:16], hash_card_token(supplied)),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return False
+                cur.execute(
+                    "UPDATE minebank_minecraft_atms SET last_used_at=CURRENT_TIMESTAMP WHERE id=%s",
+                    (row[0],),
+                )
+        return True
+    except Exception:
+        current_app.logger.exception("Minecraft ATM pairing-token validation failed")
+        return False
+    finally:
+        release_db_connection(conn)
+
+
+@minecraft_bp.post("/atms/enroll")
+def enroll_minecraft_atm():
+    """Create a per-machine credential after validating a MineBank card and Wallet PIN."""
+    unavailable = _transactions_unavailable()
+    if unavailable:
+        return unavailable
+    insecure = _transport_unavailable()
+    if insecure:
+        return insecure
+    card_token = _authorized_card_token()
+    data = request.get_json(silent=True)
+    if not card_token or not isinstance(data, dict):
+        return jsonify(error="An active MineBank card and JSON body are required."), 400
+    pin_ok, pin_message = _verify_card_pin(card_token, data.get("wallet_pin"))
+    if not pin_ok:
+        return jsonify(error=pin_message or "Wallet PIN verification failed."), 401
+    label = str(data.get("label") or "Minecraft ATM").strip()[:80] or "Minecraft ATM"
+    # The raw credential is returned once and is not stored in the database.
+    atm_token = "mbatm_" + secrets.token_urlsafe(48)
+    prefix = atm_token[:16]
+    digest = hash_card_token(atm_token)
+    conn = get_db_connection()
+    if conn is None:
+        return jsonify(error="MineBank is temporarily unavailable."), 503
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                card = _card_row_for_update(cur, card_token)
+                cur.execute(
+                    "SELECT COUNT(*) FROM minebank_minecraft_atms WHERE client_id=%s AND status='ACTIVE'",
+                    (card[1],),
+                )
+                active_count = int(cur.fetchone()[0] or 0)
+                if active_count >= 5:
+                    return jsonify(error="This customer already has five active ATM pairings. Revoke an unused pairing before registering another."), 409
+                cur.execute(
+                    """INSERT INTO minebank_minecraft_atms
+                       (client_id, enrolled_by_card_id, token_prefix, token_hash, label)
+                       VALUES(%s,%s,%s,%s,%s)
+                       RETURNING id,created_at""",
+                    (card[1], card[0], prefix, digest, label),
+                )
+                atm_id, created_at = cur.fetchone()
+                from bank_lib.minebank_core import audit_event
+                audit_event(cur, actor_client_id=card[1], action="MINECRAFT_ATM_PAIRED",
+                            target_type="MINECRAFT_ATM", target_id=str(atm_id),
+                            account_id=card[2], ip_address=request.remote_addr,
+                            context={"label": label})
+        return jsonify(
+            atm_id=atm_id, label=label, atm_token=atm_token,
+            created_at=created_at.isoformat(),
+            warning="This machine credential is shown once and stored only on this ATM computer. Do not copy it to another device.",
+        ), 201
+    except Exception:
+        current_app.logger.exception("Minecraft ATM enrollment failed")
+        return jsonify(error="ATM pairing is unavailable. Apply the current Minecraft schema migration and try again."), 503
+    finally:
+        release_db_connection(conn)
 
 
 def _request_idempotency_key():
@@ -495,6 +580,7 @@ def _card_row_for_update(cur, token):
         if hmac.compare_digest(str(row[3]), token_hash):
             if row[4] != "ACTIVE" or row[9] != "ACTIVE" or row[13] != "ACTIVE":
                 raise ValueError("The card, account, or MineBank profile is not active.")
+            cur.execute("UPDATE minebank_minecraft_cards SET last_used_at=CURRENT_TIMESTAMP WHERE id=%s", (row[0],))
             return row
     raise PermissionError("Card credential is invalid or revoked.")
 
@@ -695,6 +781,8 @@ def _merchant_payment_error_code(message):
         return "CHECKOUT_CONFLICT"
     if "CrediCheck" in message or "credit product" in message:
         return "CREDICHECK_REJECTED"
+    if "Dynamic CashLine" in message:
+        return "DYNAMIC_CASHLINE_NOT_AVAILABLE"
     if "CashLine" in message:
         return "CASHLINE_NOT_AVAILABLE"
     if "Insufficient MineBank Balance" in message:
@@ -702,6 +790,61 @@ def _merchant_payment_error_code(message):
     if "locked" in message.lower() or "suspended" in message.lower():
         return "BANKING_UNAVAILABLE"
     return "PAYMENT_REJECTED"
+
+
+@minecraft_bp.get("/payment-options")
+def minecraft_payment_options():
+    """Return active funding products for this specific card/account without exposing CrediCheck scores."""
+    unavailable = _transactions_unavailable()
+    if unavailable:
+        return unavailable
+    insecure = _transport_unavailable()
+    if insecure:
+        return insecure
+    token = _authorized_card_token()
+    if not token:
+        return jsonify(error="A valid card credential is required."), 401
+    try:
+        from .credicheck import ensure_credicheck_schema
+        if not ensure_credicheck_schema():
+            return jsonify(error="Credit-product checks are temporarily unavailable.",
+                           error_code="CREDIT_SCHEMA_UNAVAILABLE"), 503
+    except Exception:
+        current_app.logger.exception("Minecraft funding-options schema initialization failed")
+        return jsonify(error="Credit-product checks are temporarily unavailable.",
+                       error_code="CREDIT_SCHEMA_UNAVAILABLE"), 503
+    conn = get_db_connection()
+    if conn is None:
+        return jsonify(error="MineBank is temporarily unavailable."), 503
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                card = _card_row_for_update(cur, token)
+                sources = [{"code": "BALANCE", "label": "MineBank Balance"}]
+                cur.execute(
+                    "SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s",
+                    (card[2],),
+                )
+                facility = cur.fetchone()
+                if facility and str(facility[1] or "").upper() == "ACTIVE":
+                    sources.append({"code": "CASHLINE", "label": "Standard CashLine"})
+                cur.execute(
+                    "SELECT status FROM dynamic_cashlines WHERE account_id=%s",
+                    (card[2],),
+                )
+                dynamic = cur.fetchone()
+                if dynamic and str(dynamic[0] or "").upper() == "ACTIVE":
+                    sources.append({"code": "DYNAMIC_CASHLINE", "label": "Dynamic CashLine"})
+        return jsonify(funding_sources=sources), 200
+    except PermissionError as exc:
+        return jsonify(error=str(exc)), 401
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 403
+    except Exception:
+        current_app.logger.exception("Minecraft funding-options lookup failed")
+        return jsonify(error="Payment methods could not be loaded. Try MineBank Balance or contact support."), 503
+    finally:
+        release_db_connection(conn)
 
 
 @minecraft_bp.post("/payments")
@@ -722,13 +865,11 @@ def pay_merchant_checkout():
     if not checkout_id.isascii() or not checkout_id.isdigit() or len(checkout_id) > 20:
         return jsonify(error="A valid checkout_id is required."), 400
     funding_source = str(data.get("funding_source", "BALANCE") or "BALANCE").upper()
-    if funding_source not in ("BALANCE", "CASHLINE"):
-        return jsonify(error="Choose MineBank Balance or Standard CashLine."), 400
-    # The web CashLine page initializes CrediCheck/ledger extension tables before
-    # querying them. Minecraft payments must do the same: otherwise a customer
-    # who only uses the in-game terminal can hit a missing-table exception which
-    # was previously hidden as a generic payment failure.
-    if funding_source == "CASHLINE":
+    if funding_source not in ("BALANCE", "CASHLINE", "DYNAMIC_CASHLINE"):
+        return jsonify(error="Choose MineBank Balance, Standard CashLine or Dynamic CashLine."), 400
+    # The portal initializes CrediCheck/ledger extension tables before querying
+    # them; in-game terminals must initialize the same product schema themselves.
+    if funding_source in ("CASHLINE", "DYNAMIC_CASHLINE"):
         try:
             from .credicheck import ensure_credicheck_schema
             if not ensure_credicheck_schema():
@@ -797,17 +938,24 @@ def pay_merchant_checkout():
                 if funding_source == "BALANCE":
                     if int(card[8]) < amount:
                         raise ValueError("Insufficient MineBank Balance.")
-                else:
+                elif funding_source == "CASHLINE":
                     from .minebank_core import cashline_outstanding, _assert_credicheck_product_access
                     _assert_credicheck_product_access(cur, card[1], "CASHLINE")
                     cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE", (card[2],))
                     facility = cur.fetchone()
-                    if not facility or facility[1] != "ACTIVE":
+                    if not facility or str(facility[1]).upper() != "ACTIVE":
                         raise ValueError("Standard CashLine is not active for this account.")
                     outstanding = cashline_outstanding(cur, card[2])
                     available_credit = max(0, int(facility[0]) - outstanding)
                     if amount > available_credit:
                         raise ValueError("Insufficient Standard CashLine availability. Available: " + str(available_credit) + " Emerald.")
+                else:
+                    from .minebank_core import _dynamic_cashline_capacity
+                    available_credit = _dynamic_cashline_capacity(cur, card[2], amount)
+                    if available_credit is None:
+                        raise ValueError("Dynamic CashLine is not active for this account.")
+                    if amount > available_credit:
+                        raise ValueError("Dynamic CashLine does not have enough available capacity. Available: " + str(available_credit) + " Emerald.")
                 cur.execute("SELECT COALESCE(system_suspended,FALSE) FROM settings ORDER BY id LIMIT 1")
                 system_row = cur.fetchone()
                 if system_row and system_row[0]:
@@ -839,6 +987,9 @@ def pay_merchant_checkout():
                     )
                     transaction_type = "TRANSFER"
                     transfer_kind = "CASHLINE"
+                if funding_source == "DYNAMIC_CASHLINE":
+                    transaction_type = "TRANSFER"
+                    transfer_kind = "DYNAMIC_CASHLINE"
                 cur.execute("UPDATE bank_accounts SET balance=balance+%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
                             (amount, checkout[7]))
                 from bank_lib.minebank_core import create_ledger_transaction, audit_event
@@ -891,7 +1042,7 @@ def withdraw_emerald_items():
     if insecure:
         return insecure
     if not _atm_authorized():
-        return jsonify(error="A trusted ATM credential is required."), 401
+        return jsonify(error="This ATM is not paired with MineBank. Run the ATM setup again to pair it using an active card and Wallet PIN."), 401
     token = _authorized_card_token()
     data = request.get_json(silent=True)
     key = _request_idempotency_key()
