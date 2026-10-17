@@ -3,7 +3,6 @@
 -- Downloads only public program code. It never asks for or stores banking credentials.
 
 local BASE = "https://raw.githubusercontent.com/johnbrandoncupertino-lang/MUOC/main/minecraft/cc_tweaked/"
-local BASALT = "https://raw.githubusercontent.com/Pyroxenium/Basalt2/ba6c6911d2a317b452629faf77e55c7929857c73/release/basalt-full.lua"
 local TARGET = "minebank"
 local files = {
   {name="minebank_ui.lua", url=BASE.."minebank_ui.lua", label="Shared MineBank utilities"},
@@ -12,8 +11,6 @@ local files = {
   {name="merchant_checkout.lua", url=BASE.."merchant_checkout.lua", label="Merchant Checkout"},
   {name="vending_machine.lua", url=BASE.."vending_machine.lua", label="Automated Vending"},
   {name="README.md", url=BASE.."README.md", label="Setup guide"},
-  {name="BASALT-LICENSE.txt", url="https://raw.githubusercontent.com/Pyroxenium/Basalt2/ba6c6911d2a317b452629faf77e55c7929857c73/LICENSE", label="Basalt2 MIT license"},
-  {name="basalt.lua", url=BASALT, label="Basalt2 UI framework"}
 }
 
 local function say(text, color)
