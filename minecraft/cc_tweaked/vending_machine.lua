@@ -124,6 +124,7 @@ local function configureMachine(cfg)
   cfg.display_name = cfg.display_name or "MINEBANK VENDING"
   if cfg.accept_balance == nil then cfg.accept_balance = true end
   if cfg.accept_cashline == nil then cfg.accept_cashline = true end
+  if cfg.accept_dynamic_cashline == nil then cfg.accept_dynamic_cashline = true end
   while true do
     ui.clear(); ui.header("VENDING SETTINGS","Operator controls - physical computer only")
     local options = {"Change machine display name","Edit product catalogue","Reassign stock/output inventories","Change HTTPS API address","Rotate merchant token","Toggle accepted payment methods","Return to customer kiosk"}
@@ -166,12 +167,23 @@ local function configureMachine(cfg)
       local token=ui.secret("New merchant token (mbmerchant_...): ")
       if token and token:match("^mbmerchant_") and #token>=40 then cfg.merchant_token=token else ui.message("Token format is invalid. Existing token unchanged.",false) end
     elseif choice == 6 then
-      local methods={(cfg.accept_balance and "[ON] " or "[OFF] ").."MineBank Balance",(cfg.accept_cashline and "[ON] " or "[OFF] ").."Standard CashLine","Back"}
+      local methods={
+        (cfg.accept_balance and "[ON] " or "[OFF] ").."MineBank Balance",
+        (cfg.accept_cashline and "[ON] " or "[OFF] ").."Standard CashLine",
+        (cfg.accept_dynamic_cashline and "[ON] " or "[OFF] ").."Dynamic CashLine",
+        "Back"
+      }
       local method=ui.choose("PAYMENT METHODS",methods,"At least one method must remain enabled.")
+      local activeCount=(cfg.accept_balance and 1 or 0)+(cfg.accept_cashline and 1 or 0)+(cfg.accept_dynamic_cashline and 1 or 0)
       if method==1 then
-        if cfg.accept_balance and not cfg.accept_cashline then ui.message("At least one payment method must remain enabled.",false) else cfg.accept_balance=not cfg.accept_balance end
+        if cfg.accept_balance and activeCount==1 then ui.message("At least one payment method must remain enabled.",false)
+        else cfg.accept_balance=not cfg.accept_balance end
       elseif method==2 then
-        if cfg.accept_cashline and not cfg.accept_balance then ui.message("At least one payment method must remain enabled.",false) else cfg.accept_cashline=not cfg.accept_cashline end
+        if cfg.accept_cashline and activeCount==1 then ui.message("At least one payment method must remain enabled.",false)
+        else cfg.accept_cashline=not cfg.accept_cashline end
+      elseif method==3 then
+        if cfg.accept_dynamic_cashline and activeCount==1 then ui.message("At least one payment method must remain enabled.",false)
+        else cfg.accept_dynamic_cashline=not cfg.accept_dynamic_cashline end
       end
     end
     if not save(CONFIG,cfg) then ui.message("Settings could not be saved. Do not restart until the configuration is checked.",false); ui.pause() end
@@ -196,7 +208,7 @@ if not cfg then
   local b=ui.choose("CUSTOMER OUTPUT INVENTORY",inventories,"Choose a different inventory that delivers purchased items.")
   if not b or not inventories[b] or a==b then ui.message("Choose two different inventory peripherals.",false); ui.pause(); return end
   cfg.stock_inventory=inventories[a]; cfg.output_inventory=inventories[b]
-  cfg.display_name="MINEBANK VENDING"; cfg.accept_balance=true; cfg.accept_cashline=true
+  cfg.display_name="MINEBANK VENDING"; cfg.accept_balance=true; cfg.accept_cashline=true; cfg.accept_dynamic_cashline=true
   cfg.catalog={}
   print("Add up to 12 products. Use exact Minecraft item IDs, e.g. minecraft:apple.")
   for i=1,12 do
@@ -269,8 +281,8 @@ while true do
   local stock=ui.inventory(cfg.stock_inventory)
   local output=ui.inventory(cfg.output_inventory)
   if not stock or not output then ui.message("Stock/output inventory unavailable.",false); ui.pause()
-  elseif stockCount(stock,product.item)<product.count then ui.message("OUT OF STOCK: "..product.item,false); ui.pause()
-  elseif not canFit(output,product.item,product.count) then ui.message("Output inventory is full. No payment taken.",false); ui.pause()
+  elseif stockCount(stock,product.item)<product.count then ui.phase("OUT OF STOCK","declined"); ui.waitSeconds(2,"OUT OF STOCK","declined"); ui.kioskIdle()
+  elseif not canFit(output,product.item,product.count) then ui.phase("OUTPUT FULL","declined"); ui.waitSeconds(2,"OUTPUT FULL","declined"); ui.kioskIdle()
   else
     local confirm=ui.choose("CONFIRM PURCHASE",{"Buy for "..product.price.." Emeralds","Cancel"},product.item.." × "..product.count)
     if confirm==1 then
@@ -315,15 +327,29 @@ while true do
                  ui.message(cancelled and "A valid six-digit Wallet PIN is required. No payment was sent." or "Cancellation is unconfirmed. Reconcile the open checkout before another sale.",false)
                  ui.pause()
                else
+                 local fundingOptions=ui.api("/payment-options","GET",card.credential)
                  local sourceOptions,sourceKinds={},{}
-                 if cfg.accept_balance ~= false then sourceOptions[#sourceOptions+1]="MineBank Balance"; sourceKinds[#sourceKinds+1]="BALANCE" end
-                 if cfg.accept_cashline ~= false then sourceOptions[#sourceOptions+1]="Standard CashLine"; sourceKinds[#sourceKinds+1]="CASHLINE" end
+                 if fundingOptions and type(fundingOptions.funding_sources)=="table" then
+                   for _,item in ipairs(fundingOptions.funding_sources) do
+                     if item.code=="BALANCE" and cfg.accept_balance ~= false then
+                       sourceOptions[#sourceOptions+1]=tostring(item.label or "MineBank Balance"); sourceKinds[#sourceKinds+1]="BALANCE"
+                     elseif item.code=="CASHLINE" and cfg.accept_cashline ~= false then
+                       sourceOptions[#sourceOptions+1]=tostring(item.label or "Standard CashLine"); sourceKinds[#sourceKinds+1]="CASHLINE"
+                     elseif item.code=="DYNAMIC_CASHLINE" and cfg.accept_dynamic_cashline ~= false then
+                       sourceOptions[#sourceOptions+1]=tostring(item.label or "Dynamic CashLine"); sourceKinds[#sourceKinds+1]="DYNAMIC_CASHLINE"
+                     end
+                   end
+                 elseif cfg.accept_balance ~= false then
+                   sourceOptions[#sourceOptions+1]="MineBank Balance"; sourceKinds[#sourceKinds+1]="BALANCE"
+                 end
                  sourceOptions[#sourceOptions+1]="Cancel"
                  local source=ui.choose("PAYMENT SOURCE",sourceOptions,
-                   "Purchase: "..product.price.." Emeralds - "..product.item.." x"..product.count)
+                   "Purchase: "..product.price.." Emeralds - "..product.item.." x"..product.count..
+                   (fundingOptions and "" or " | Credit products unavailable; Balance only"))
                  local funding=(source and sourceKinds[source]) or nil
                  if funding then
-                   ui.clear(); ui.header("AUTHORISE PURCHASE","Payment source: "..(funding=="BALANCE" and "MineBank Balance" or "Standard CashLine"))
+                   local fundingLabels={BALANCE="MineBank Balance",CASHLINE="Standard CashLine",DYNAMIC_CASHLINE="Dynamic CashLine"}
+                   ui.clear(); ui.header("AUTHORISE PURCHASE","Payment source: "..tostring(fundingLabels[funding] or funding))
                    local final=ui.choose("FINAL AUTHORISATION",{"Authorise "..product.price.." Emeralds","Cancel"},
                      "Merchant purchase: "..product.item.." × "..product.count)
                    if final==1 then
@@ -369,8 +395,16 @@ while true do
                        if not save(JOURNAL,order) then ui.message("Payment completed but journal failed. Do not dispense; operator reconciliation required.",false); ui.pause()
                        else
                          local ok,dispErr=dispense(cfg,order)
-                         ui.message(ok and ("PURCHASE COMPLETE — "..product.item.." x"..product.count) or dispErr,ok)
-                         ui.pause()
+                         if ok then
+                           ui.phase("APPROVED","approved")
+                           ui.message("PURCHASE COMPLETE - "..product.item.." x"..product.count,true)
+                           ui.waitSeconds(5,"APPROVED","approved")
+                           ui.kioskIdle()
+                         else
+                           ui.phase("CONTACT OPERATOR","declined")
+                           ui.message(dispErr or "Paid order requires operator reconciliation.",false)
+                           return
+                         end
                        end
                      end
                      if order.state~="COMPLETE" and order.state~="CANCELLED" then return end
