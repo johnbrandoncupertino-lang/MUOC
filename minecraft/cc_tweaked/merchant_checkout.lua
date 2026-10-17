@@ -6,6 +6,7 @@ local ui = dofile(fs.combine(programDir, "minebank_ui.lua"))
 ui.useTarget("terminal")
 local CONFIG = fs.combine(programDir, "minebank_merchant.json")
 local REVIEW = fs.combine(programDir, "minebank_merchant_review.json")
+local SALES = fs.combine(programDir, "minebank_merchant_sales.json")
 local DEFAULT_API = "https://minebanksecurearea.vercel.app/api/v1/minecraft"
 
 local function loadConfig()
@@ -85,6 +86,27 @@ local function saveReview(value)
   return saveJSON(REVIEW,value)
 end
 
+local function recordSale(checkout, payment)
+  local sales = readJSON(SALES) or {}
+  if type(sales) ~= "table" then sales = {} end
+  local id = tostring(checkout.checkout_id or "")
+  for _, existing in ipairs(sales) do
+    if tostring(existing.checkout_id or "") == id then return true end
+  end
+  table.insert(sales, 1, {
+    checkout_id = id,
+    amount = tonumber(checkout.amount) or 0,
+    description = tostring(checkout.description or "Purchase"),
+    merchant = tostring(checkout.merchant or ""),
+    funding_source = tostring(payment.funding_source or "UNKNOWN"),
+    transaction_id = tostring(payment.transaction_id or ""),
+    status = "PAID",
+    recorded_at = os.epoch("utc"),
+  })
+  while #sales > 100 do table.remove(sales) end
+  return saveJSON(SALES, sales)
+end
+
 local function waitForCard()
   while true do
     local card=readCard()
@@ -162,6 +184,7 @@ local function customerPayment(cfg,checkout)
     ui.pause()
     local status,statusErr,statusCode=ui.api("/merchant/checkouts/"..tostring(checkout.checkout_id),"GET",cfg.merchant_token)
     if status and status.status=="PAID" then
+      recordSale(checkout,{transaction_id=status.transaction_id,funding_source=funding})
       clearReview()
       ui.clear(); ui.header("PAYMENT COMPLETED","Confirmed by the original checkout")
       ui.message("MineBank confirms the existing checkout is paid.",true)
@@ -207,6 +230,7 @@ local function customerPayment(cfg,checkout)
     ui.pause()
     return false,"Unexpected payment status; reconciliation required."
   end
+  recordSale(checkout,paid)
   clearReview()
   ui.clear(); ui.header("PAYMENT APPROVED","Thank you for banking with MineBank")
   ui.message(tostring(paid.amount).." Emerald paid successfully.",true)
@@ -260,19 +284,22 @@ local function resolvePriorCheckout(cfg)
   return false
 end
 
-local function runSale(cfg)
+local function runSale(cfg,preset)
   ui.useTarget("terminal")
   ui.API_BASE=cfg.api_base
   if not resolvePriorCheckout(cfg) then return end
-  ui.clear(); ui.header("MERCHANT CHECKOUT","Cashier workspace • customer display is separate")
-  local amountText=ui.prompt("Purchase amount in Emeralds")
-  local amount=tonumber(amountText)
+  ui.clear(); ui.header("MERCHANT CHECKOUT","Cashier workspace - customer display is separate")
+  local amount
+  if preset then amount=tonumber(preset.amount)
+  else amount=tonumber(ui.prompt("Purchase amount in Emeralds")) end
   if not amount or amount%1~=0 or amount<1 or amount>1000000 then
     ui.message("Enter a whole Emerald amount from 1 to 1,000,000.",false); ui.pause()
     return
   end
   amount=math.floor(amount)
-  local description=ui.prompt("Purchase description","Shop purchase")
+  local description
+  if preset then description=tostring(preset.description or preset.name or "Quick checkout")
+  else description=ui.prompt("Purchase description",cfg.default_description or "Shop purchase") end
   if description==nil then return end
   description=tostring(description):sub(1,200)
   local checkout,err=createCheckout(cfg,amount,description)
@@ -288,6 +315,16 @@ local function runSale(cfg)
   ui.message("Description: "..tostring(checkout.description or description),true)
   ui.message("The customer is using the separate touchscreen display. Do not open another checkout until this one is resolved.",true)
   local success,detail=customerPayment(cfg,checkout)
+  if not success and not readJSON(REVIEW) then
+    -- A user cancellation or definitive rejection leaves no ambiguous charge;
+    -- close the open checkout so it cannot be accidentally paid later.
+    local cancelled,cancelErr=ui.api("/merchant/checkouts/"..tostring(checkout.checkout_id).."/cancel",
+      "POST",cfg.merchant_token,{})
+    if not cancelled then
+      ui.useTarget("terminal")
+      ui.message("The checkout could not be closed automatically: "..tostring(cancelErr or "unknown error")..". Verify its status before reuse.",false)
+    end
+  end
   ui.useTarget("terminal")
   ui.kioskIdle()
   ui.useTarget("terminal")
@@ -310,14 +347,123 @@ if not cfg or not cfg.api_base or not cfg.merchant_token or not cfg.merchant_tok
 end
 if ui.hasMonitor() then ui.kioskIdle() end
 
-while true do
-  local ok,err=pcall(runSale,cfg)
-  if not ok then
-    ui.useTarget("terminal")
-    ui.clear(); ui.header("CHECKOUT RECOVERED")
-    ui.message("A screen error was caught; the program remains running. Check the original checkout status before retrying any payment.",false)
-    ui.message(tostring(err),false)
+local function showRecentSales()
+  ui.useTarget("terminal")
+  local sales=readJSON(SALES) or {}
+  if #sales==0 then
+    ui.clear(); ui.header("SALES HISTORY","No locally recorded completed sales")
+    ui.message("Completed sales will appear here after MineBank confirms payment.",true)
     ui.pause()
-    if ui.hasMonitor() then ui.kioskIdle() end
+    return
   end
+  local opts={}
+  for _,sale in ipairs(sales) do
+    opts[#opts+1]="#"..tostring(sale.checkout_id).." - "..tostring(sale.amount).." Emerald - "..tostring(sale.status or "PAID")
+  end
+  local index=ui.choose("RECENT SALES",opts,"Local history - up to 100 confirmed sales.")
+  if index and sales[index] then
+    local sale=sales[index]
+    ui.clear(); ui.header("SALE RECEIPT","MineBank confirmed payment")
+    ui.message("Checkout: "..tostring(sale.checkout_id),true)
+    ui.message("Amount: "..tostring(sale.amount).." Emerald",true)
+    ui.message("Description: "..tostring(sale.description),true)
+    ui.message("Funding: "..tostring(sale.funding_source),true)
+    ui.message("Transaction: "..tostring(sale.transaction_id),true)
+    ui.message("Recorded: "..tostring(sale.recorded_at),true)
+    ui.pause()
+  end
+end
+
+local function reviewCheckout(cfg)
+  ui.useTarget("terminal")
+  local id=ui.prompt("Checkout ID to inspect")
+  if not id or not id:match("^%d+$") then ui.message("Enter a numeric checkout ID.",false); ui.pause(); return end
+  local status,err=ui.api("/merchant/checkouts/"..id,"GET",cfg.merchant_token)
+  if not status then ui.message("Status check failed: "..tostring(err),false); ui.pause(); return end
+  ui.clear(); ui.header("CHECKOUT STATUS","Authoritative status from MineBank")
+  ui.message("Checkout: "..tostring(status.checkout_id),true)
+  ui.message("Status: "..tostring(status.status),status.status=="PAID")
+  ui.message("Amount: "..tostring(status.amount).." Emerald",true)
+  ui.message("Description: "..tostring(status.description),true)
+  ui.message("Transaction: "..tostring(status.transaction_id or "none"),true)
+  if status.status=="OPEN" then
+    local confirm=ui.choose("CANCEL OPEN CHECKOUT",{"Cancel this unpaid checkout","Keep it open"})
+    if confirm==1 then
+      local result,cancelErr=ui.api("/merchant/checkouts/"..id.."/cancel","POST",cfg.merchant_token,{})
+      ui.message(result and "Checkout cancelled. It can no longer be paid." or ("Cancellation failed: "..tostring(cancelErr)),not not result)
+    end
+  end
+  ui.pause()
+end
+
+local function cashierSettings(cfg)
+  while true do
+    ui.useTarget("terminal")
+    local choice=ui.choose("CASHIER SETTINGS",{
+      "Change API address","Rotate merchant token","Set default description","Manage quick charges","Return to register"
+    },"These settings affect only this cashier computer.")
+    if not choice or choice==5 then
+      if not saveConfig(cfg) then ui.message("Configuration could not be saved.",false); ui.pause() end
+      return
+    elseif choice==1 then
+      local api=ui.prompt("MineBank HTTPS API base",cfg.api_base)
+      if api and api:match("^https://") then cfg.api_base=api:gsub("/+$",""); ui.API_BASE=cfg.api_base
+      else ui.message("API address must use HTTPS.",false) end
+    elseif choice==2 then
+      local token=ui.secret("New merchant token (mbmerchant_...): ")
+      if token and token:match("^mbmerchant_") and #token>=40 then cfg.merchant_token=token
+      else ui.message("Token format is invalid. Existing token unchanged.",false) end
+    elseif choice==3 then
+      local desc=ui.prompt("Default purchase description",cfg.default_description or "Shop purchase")
+      if desc and desc:match("%S") then cfg.default_description=desc:sub(1,200) end
+    elseif choice==4 then
+      local presets={}
+      for i=1,12 do
+        local old=(cfg.presets or {})[i]
+        local name=ui.prompt("Quick charge "..i.." name (blank to finish)",old and old.name or "")
+        if not name or name=="" then break end
+        local amount=tonumber(ui.prompt("Amount in Emeralds",tostring(old and old.amount or 1)))
+        local description=ui.prompt("Receipt description",old and old.description or name)
+        if not amount or amount%1~=0 or amount<1 or amount>1000000 then
+          ui.message("Invalid amount. Quick charge skipped.",false)
+        else presets[#presets+1]={name=name:sub(1,80),amount=amount,description=tostring(description or name):sub(1,200)} end
+      end
+      if #presets>0 then cfg.presets=presets end
+    end
+    if not saveConfig(cfg) then ui.message("Could not save cashier settings.",false); ui.pause() end
+  end
+end
+
+while true do
+  ui.useTarget("terminal")
+  local options={"New checkout","Recent sales","Inspect/cancel checkout","Cashier settings"}
+  local quickStart=5
+  for _,preset in ipairs(cfg.presets or {}) do options[#options+1]="Quick: "..tostring(preset.name).." - "..tostring(preset.amount).." Emerald" end
+  options[#options+1]="Exit register"
+  local choice=ui.choose("MERCHANT REGISTER",options,"Customer checkout is shown only on the separate monitor.")
+  if not choice then
+    -- A physical keyboard interrupt may stop the process; touchscreen customers
+    -- never see this register menu.
+  elseif choice==1 then
+    local ok,err=pcall(runSale,cfg,nil)
+    if not ok then
+      ui.useTarget("terminal"); ui.clear(); ui.header("CHECKOUT RECOVERED")
+      ui.message("A screen error was caught. Check the original checkout status before retrying any payment.",false)
+      ui.message(tostring(err),false); ui.pause()
+    end
+  elseif choice==2 then showRecentSales()
+  elseif choice==3 then reviewCheckout(cfg)
+  elseif choice==4 then cashierSettings(cfg)
+  elseif choice>=quickStart and choice<quickStart+#(cfg.presets or {}) then
+    local preset=(cfg.presets or {})[choice-quickStart+1]
+    local ok,err=pcall(runSale,cfg,preset)
+    if not ok then
+      ui.useTarget("terminal"); ui.clear(); ui.header("CHECKOUT RECOVERED")
+      ui.message("A screen error was caught. Check the original checkout status before retrying any payment.",false)
+      ui.message(tostring(err),false); ui.pause()
+    end
+  else
+    break
+  end
+  if ui.hasMonitor() then ui.kioskIdle() end
 end
