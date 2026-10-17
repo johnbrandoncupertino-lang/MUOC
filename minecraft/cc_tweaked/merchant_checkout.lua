@@ -193,7 +193,7 @@ local function customerPayment(cfg,checkout)
       ui.phase("DECLINED","declined")
       ui.message("MineBank rejected the payment (HTTP "..tostring(httpStatus).."): "..tostring(err),false)
       ui.waitSeconds(5,"DECLINED","declined")
-      return false,"Payment rejected by MineBank (HTTP "..tostring(httpStatus).."). No money was moved; use another available payment method or resolve the account restriction."
+      return false,"Payment rejected by MineBank (HTTP "..tostring(httpStatus).."): "..tostring(err or "No reason was returned")..". No money was moved."
     end
     -- A real 409, a timeout, or a server/network failure can leave the caller
     -- uncertain about the original operation. Never send another POST: only
