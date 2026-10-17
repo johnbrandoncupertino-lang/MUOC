@@ -814,6 +814,13 @@ def minecraft_payment_options():
         current_app.logger.exception("Minecraft funding-options schema initialization failed")
         return jsonify(error="Credit-product checks are temporarily unavailable.",
                        error_code="CREDIT_SCHEMA_UNAVAILABLE"), 503
+    raw_amount = request.args.get("amount", "0").strip()
+    try:
+        amount = int(raw_amount or "0")
+    except (TypeError, ValueError, OverflowError):
+        return jsonify(error="Payment-options amount must be a whole Emerald integer."), 400
+    if amount < 0 or amount > MAX_MINECRAFT_CHECKOUT:
+        return jsonify(error="Payment-options amount is outside the permitted range."), 400
     conn = get_db_connection()
     if conn is None:
         return jsonify(error="MineBank is temporarily unavailable."), 503
@@ -821,22 +828,45 @@ def minecraft_payment_options():
         with conn:
             with conn.cursor() as cur:
                 card = _card_row_for_update(cur, token)
-                sources = [{"code": "BALANCE", "label": "MineBank Balance"}]
+                sources = []
+                reasons = []
+                if amount == 0 or int(card[8]) >= amount:
+                    sources.append({"code": "BALANCE", "label": "MineBank Balance"})
+                from .minebank_core import cashline_outstanding, _assert_credicheck_product_access, _dynamic_cashline_capacity
                 cur.execute(
-                    "SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s",
+                    "SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE",
                     (card[2],),
                 )
                 facility = cur.fetchone()
                 if facility and str(facility[1] or "").upper() == "ACTIVE":
-                    sources.append({"code": "CASHLINE", "label": "Standard CashLine"})
+                    try:
+                        _assert_credicheck_product_access(cur, card[1], "CASHLINE")
+                        outstanding = cashline_outstanding(cur, card[2])
+                        available = max(0, int(facility[0]) - outstanding)
+                        if amount == 0 or available >= amount:
+                            sources.append({"code": "CASHLINE", "label": "Standard CashLine", "available": available})
+                        else:
+                            reasons.append("Insufficient Standard CashLine availability.")
+                    except ValueError as exc:
+                        reasons.append(str(exc))
                 cur.execute(
                     "SELECT status FROM dynamic_cashlines WHERE account_id=%s",
                     (card[2],),
                 )
                 dynamic = cur.fetchone()
                 if dynamic and str(dynamic[0] or "").upper() == "ACTIVE":
-                    sources.append({"code": "DYNAMIC_CASHLINE", "label": "Dynamic CashLine"})
-        return jsonify(funding_sources=sources), 200
+                    try:
+                        available = _dynamic_cashline_capacity(cur, card[2], amount)
+                        if available is not None and (amount == 0 or available >= amount):
+                            sources.append({"code": "DYNAMIC_CASHLINE", "label": "Dynamic CashLine", "available": available})
+                        elif available is not None:
+                            reasons.append("Dynamic CashLine does not have enough available capacity.")
+                    except ValueError as exc:
+                        reasons.append(str(exc))
+        message = None
+        if not sources:
+            message = reasons[0] if reasons else "No active payment method can cover this purchase."
+        return jsonify(funding_sources=sources, amount=amount, message=message), 200
     except PermissionError as exc:
         return jsonify(error=str(exc)), 401
     except ValueError as exc:
