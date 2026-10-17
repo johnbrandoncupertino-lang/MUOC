@@ -603,49 +603,104 @@ local function touchInput(label, default, secret, numericOnly, isPin)
     w, h = displaySize(d)
     local compact = w < 32 or h < 14
     if compact then
-      -- Compact keypad occupies the whole one-block monitor. Six digits are
-      -- submitted automatically, so no off-screen Confirm button is required.
-      local digits = {"1","2","3","4","5","6","7","8","9","CLEAR","0","DEL"}
+      -- Ultra-small monitors use a two-page keypad: page selection is itself a
+      -- touch target, so zero/Clear/Delete remain reachable on a 1x1 monitor.
+      if w < 12 or h < 7 then
+        local page = 1
+        local cellW = math.max(1, math.floor(w / 3))
+        local keyPages = {
+          {"1","2","3","4","5","6"},
+          {"7","8","9","CLEAR","0",isPin and "DEL" or "OK"}
+        }
+        local function paintTinyKeypad()
+          withDisplay(function(display)
+            local dw, dh = displaySize(display)
+            pcall(function() display.setBackgroundColor(colors.black); display.setTextColor(colors.white); display.clear() end)
+            local masked = (isPin or secret) and string.rep("*", #value) or tostring(value)
+            if #masked > dw - 1 then masked = masked:sub(-math.max(1, dw - 1)) end
+            writeAt(display, 1, 1, masked .. (page == 1 and ">" or "<"), colors.lime, colors.black, dw)
+            local labels = keyPages[page]
+            for idx, key in ipairs(labels) do
+              local row = math.floor((idx - 1) / 3)
+              local col = (idx - 1) % 3
+              local x = col * cellW + 1
+              local actualW = col == 2 and (dw - x + 1) or cellW
+              local shown = key == "CLEAR" and "C" or (key == "DEL" and "<" or key)
+              local action = key == "CLEAR" or key == "DEL" or key == "OK"
+              drawButton(display, x, row + 2, actualW, 1, shown,
+                action and colors.gray or colors.green, colors.white)
+            end
+          end, "monitor")
+        end
+        paintTinyKeypad()
+        while true do
+          local x, y = waitTouch()
+          if not x then return nil end
+          local dw, dh = displaySize(displayFor("monitor"))
+          if y == 1 and x >= dw then
+            page = page == 1 and 2 or 1
+            paintTinyKeypad()
+          elseif y == 2 or y == 3 then
+            local col = math.min(2, math.max(0, math.floor((x - 1) / cellW)))
+            local index = (y - 2) * 3 + col + 1
+            local key = keyPages[page][index]
+            if key then
+              if key == "CLEAR" then value = ""
+              elseif key == "DEL" then value = value:sub(1, -2)
+              elseif key == "OK" then return value
+              elseif #value < 64 and (not isPin or #value < 6) then value = value .. key end
+              if isPin and #value == 6 then return value end
+              paintTinyKeypad()
+            end
+          end
+        end
+      end
+
+      local keys = {"1","2","3","4","5","6","7","8","9","CLEAR","0","DEL"}
       local cw = math.max(1, math.floor(w / 3))
-      local startY = math.max(1, h - 3)
-      local function paint()
+      local gridY = math.max(2, h - 5)
+      local actionY = h
+      local function paintCompact()
         withDisplay(function(display)
           local dw, dh = displaySize(display)
           pcall(function() display.setBackgroundColor(colors.black); display.setTextColor(colors.white); display.clear() end)
           local shown = (isPin or secret) and string.rep("*", #value) or value
-          if dw >= 6 and dh >= 2 then
-            writeAt(display, 1, 1, fit("PIN " .. shown, dw), colors.lime, colors.black, dw)
-            if dh >= 3 then writeAt(display, 1, 2, "1-9 / CLR / 0 / DEL", colors.gray, colors.black, dw) end
-          else
-            writeAt(display, 1, 1, fit("PIN" .. string.rep("*", #value), dw), colors.lime, colors.black, dw)
-          end
-          local gridY = math.max(1, dh - 3)
-          local keyNames = {"1","2","3","4","5","6","7","8","9","C","0","<"}
-          for idx, key in ipairs(keyNames) do
+          writeAt(display, 1, 1, fit(shown, dw), colors.lime, colors.black, dw)
+          for idx, key in ipairs(keys) do
             local row = math.floor((idx - 1) / 3)
             local col = (idx - 1) % 3
             local x = col * cw + 1
-            local actualCW = col == 2 and (dw - x + 1) or cw
-            drawButton(display, x, gridY + row, actualCW, 1, key, colors.gray, colors.white)
+            local actualW = col == 2 and (dw - x + 1) or cw
+            drawButton(display, x, gridY + row, actualW, 1,
+              key == "CLEAR" and "C" or (key == "DEL" and "<" or key),
+              (key == "CLEAR" or key == "DEL") and colors.gray or colors.green, colors.white)
           end
+          local half = math.max(1, math.floor(dw / 2))
+          drawButton(display, 1, actionY, half, 1, "CANCEL", colors.red, colors.white)
+          drawButton(display, half + 1, actionY, dw - half, 1, "OK", colors.green, colors.black)
         end, "monitor")
-        startY = math.max(1, h - 3)
       end
-      paint()
+      paintCompact()
       while true do
         local x, y = waitTouch()
         if not x then return nil end
-        local row = y - startY
-        if row >= 0 and row <= 3 and y >= startY then
+        local dw, dh = displaySize(displayFor("monitor"))
+        if y == actionY then
+          if x <= math.floor(dw / 2) then return nil end
+          if isPin and #value ~= 6 then
+            M.message("Enter exactly six digits.", false)
+            paintCompact()
+          else return value end
+        elseif y >= gridY and y < gridY + 4 then
           local col = math.min(2, math.max(0, math.floor((x - 1) / cw)))
-          local index = row * 3 + col + 1
-          local key = digits[index]
+          local row = y - gridY
+          local key = keys[row * 3 + col + 1]
           if key then
             if key == "CLEAR" then value = ""
             elseif key == "DEL" then value = value:sub(1, -2)
             elseif #value < 64 and (not isPin or #value < 6) then value = value .. key end
             if isPin and #value == 6 then return value end
-            paint()
+            paintCompact()
           end
         end
       end
