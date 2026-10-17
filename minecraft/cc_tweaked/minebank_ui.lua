@@ -194,11 +194,18 @@ local function monitorName()
   return nil
 end
 
+local adminRequested = false
 local function waitTouch()
   local wanted = monitorName()
   while true do
     local event, side, x, y = os.pullEventRaw()
     if event == "terminate" then return nil end
+    -- F12 on the computer keyboard opens operator settings in supported kiosks.
+    -- No monitor touch can synthesize this path, so customers cannot reach it.
+    if event == "key" and side == (keys and keys.f12) then
+      adminRequested = true
+      return nil
+    end
     if event == "monitor_touch" and type(x) == "number" and type(y) == "number" then
       if not wanted or side == wanted then return x, y end
     end
@@ -226,6 +233,16 @@ end
 
 function M.hasMonitor()
   return getMonitor() ~= nil
+end
+
+function M.isTouchTarget()
+  return isTouchTarget()
+end
+
+function M.consumeAdminRequest()
+  local requested = adminRequested
+  adminRequested = false
+  return requested
 end
 
 function M.clear()
