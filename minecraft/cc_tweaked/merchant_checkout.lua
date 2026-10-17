@@ -143,7 +143,7 @@ local function customerPayment(cfg,checkout)
   if not pin then return false,"Payment cancelled." end
   if not pin:match("^%d%d%d%d%d%d$") then return false,"Wallet PIN must contain six digits." end
 
-  local available, optionsErr, optionsStatus = ui.api("/payment-options","GET",card.credential)
+  local available, optionsErr, optionsStatus = ui.api("/payment-options?amount="..tostring(checkout.amount),"GET",card.credential)
   local sourceOptions, sourceCodes = {}, {}
   if available and type(available.funding_sources)=="table" then
     for _, item in ipairs(available.funding_sources) do
@@ -158,10 +158,17 @@ local function customerPayment(cfg,checkout)
     sourceOptions[#sourceOptions+1]="MineBank Balance"
     sourceCodes[#sourceCodes+1]="BALANCE"
   end
+  if #sourceCodes == 0 then
+    local reason=available and tostring(available.message or "No available payment source can cover this purchase.") or "MineBank could not verify credit products. Try again or choose another cashier."
+    ui.phase("NO PAYMENT METHOD","declined")
+    ui.message(reason,false)
+    ui.waitSeconds(5,"NO PAYMENT METHOD","declined")
+    return false,reason
+  end
   sourceOptions[#sourceOptions+1]="Cancel"
   local sourceHint = "Amount: "..tostring(checkout.amount).." Emerald"
-  if not available then sourceHint = sourceHint.." | Credit products unavailable; Balance only"
-  elseif #sourceCodes > 1 then sourceHint = sourceHint.." | Choose an active product"
+  if not available then sourceHint = sourceHint.." | Credit products unavailable"
+  elseif #sourceCodes > 1 then sourceHint = sourceHint.." | Choose an eligible method"
   end
   local source=ui.choose("CHOOSE PAYMENT METHOD",sourceOptions,sourceHint)
   if not source or source>#sourceCodes then return false,"Payment cancelled." end
