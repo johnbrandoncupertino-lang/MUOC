@@ -12,6 +12,18 @@
 .minecraft-card-detail span{display:block;font-size:11px;color:var(--muted,#6b7b8a);margin-bottom:4px}
 .minecraft-card-detail strong{overflow-wrap:anywhere;font-size:13px}
 .minecraft-card-actions{border-top:1px solid var(--border-color,rgba(120,140,160,.22));padding-top:14px;margin-top:14px}
+.minecraft-card-activity{margin:14px 0 8px;padding-top:12px;border-top:1px solid var(--border-color,rgba(120,140,160,.22))}
+.minecraft-card-activity h3{font-size:13px;margin:0 0 9px;font-weight:700}
+.minecraft-card-activity-list{display:grid;gap:7px}
+.minecraft-card-activity-row{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;padding:9px 10px;border-radius:6px;background:var(--panel-2,var(--card-bg,#f5f6f8));min-width:0}
+.minecraft-card-activity-main{min-width:0;overflow-wrap:anywhere}
+.minecraft-card-activity-main strong{display:block;font-size:12px}
+.minecraft-card-activity-main small{display:block;color:var(--muted,#6b7b8a);font-size:10px;margin-top:3px;overflow-wrap:anywhere}
+.minecraft-card-activity-meta{text-align:right;flex:0 0 auto;font-size:11px;color:var(--muted,#6b7b8a)}
+.minecraft-card-activity-meta strong{display:block;color:var(--text,#202833);font-size:11px}
+.minecraft-activity-status{display:inline-block;text-transform:uppercase;font-size:9px;font-weight:800;letter-spacing:.04em;padding:3px 6px;border-radius:4px;background:rgba(38,150,100,.12);color:#26825c}
+.minecraft-activity-status.failed,.minecraft-activity-status.rejected,.minecraft-activity-status.review{background:rgba(180,80,60,.12);color:#b34c4c}
+
 .minecraft-card-actions form{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:end}
 .minecraft-card-actions label{font-size:11px;font-weight:700;display:block;margin-bottom:5px}
 .minecraft-card-actions input{width:100%;box-sizing:border-box}
@@ -48,6 +60,29 @@
       <div class="minecraft-card-detail"><span>Last activity</span><strong>{{ card.last_used_at.strftime('%d %b %Y, %H:%M') if card.last_used_at else 'Not used yet' }}</strong></div>
       {% if card.status=='REVOKED' %}<div class="minecraft-card-detail"><span>Revoked</span><strong>{{ card.revoked_at.strftime('%d %b %Y, %H:%M') if card.revoked_at else '—' }}</strong></div>{% endif %}
     </div>
+    <section class="minecraft-card-activity" aria-label="Recent activity for card {{ card.id }}">
+      <h3>Recent card activity</h3>
+      {% if card.activities %}
+      <div class="minecraft-card-activity-list">
+        {% for activity in card.activities[:3] %}
+        {% set activity_status = (activity.status or 'UNKNOWN')|lower %}
+        <div class="minecraft-card-activity-row">
+          <div class="minecraft-card-activity-main">
+            <strong>{{ (activity.operation_type or 'Operation')|replace('_',' ')|title }}</strong>
+            <small>Transaction {{ activity.transaction_id or 'Pending' }}</small>
+          </div>
+          <div class="minecraft-card-activity-meta">
+            <strong>{{ activity.amount }} Emerald</strong>
+            <span class="minecraft-activity-status{% if activity_status in ['rejected','review','failed'] %} failed{% endif %}">{{ activity.status or 'Unknown' }}</span>
+            <small>{{ activity.updated_at.strftime('%d %b, %H:%M') if activity.updated_at else (activity.created_at.strftime('%d %b, %H:%M') if activity.created_at else 'Time unavailable') }}</small>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="muted">No card transactions recorded yet. New payments, ATM operations and transfers will appear here after MineBank records them.</p>
+      {% endif %}
+    </section>
     {% if card.status=='ACTIVE' %}
     <div class="minecraft-card-actions">
       <p class="muted">Permanent revocation blocks this credential from future MineBank API requests. This cannot be undone.</p>
@@ -67,7 +102,7 @@
 <section class="panel"><div class="panel-title">No Minecraft cards yet</div><p class="muted">Issue a card from a MineBank CC:Tweaked branch terminal. Once issued, it will appear here and can be permanently revoked if lost or no longer needed.</p></section>
 {% endif %}
 <section class="panel">
-  <div class="panel-title">Minecraft payments and withdrawals</div>
-  <p class="muted">The current integration supports card authentication and balance checks. Payment and withdrawal execution is not enabled yet; it needs an atomic, idempotent ledger flow so retries cannot debit an account twice. This page does not expose or change card credentials.</p>
+  <div class="panel-title">Card activity and security</div>
+  <p class="muted">Recent card activity refreshes whenever this page is opened or reloaded. The list is scoped to each physical card, and only confirmed or recorded MineBank operations are shown. Card credentials and Wallet PINs are never displayed.</p>
 </section>
 {% endblock %}
