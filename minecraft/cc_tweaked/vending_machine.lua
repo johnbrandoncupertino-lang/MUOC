@@ -100,6 +100,65 @@ local function dispense(cfg, order)
   return true
 end
 
+local function configureMachine(cfg)
+  ui.useTarget("terminal")
+  cfg.display_name = cfg.display_name or "MINEBANK VENDING"
+  if cfg.accept_balance == nil then cfg.accept_balance = true end
+  if cfg.accept_cashline == nil then cfg.accept_cashline = true end
+  while true do
+    ui.clear(); ui.header("VENDING SETTINGS","Operator controls - physical computer only")
+    local options = {"Change machine display name","Edit product catalogue","Reassign stock/output inventories","Change HTTPS API address","Rotate merchant token","Toggle accepted payment methods","Return to customer kiosk"}
+    local choice = ui.choose("VENDING SETTINGS", options,"Settings are local to this machine. Paid orders remain protected by the recovery journal.")
+    if not choice or choice == 7 then
+      if not save(CONFIG,cfg) then ui.message("Could not save settings. Check local storage.",false); ui.pause() end
+      return cfg
+    elseif choice == 1 then
+      local name=ui.prompt("Machine display name",cfg.display_name)
+      if name and name:match("%S") then cfg.display_name=name:sub(1,80) end
+    elseif choice == 2 then
+      local catalog={}
+      for i=1,12 do
+        local previous=(cfg.catalog or {})[i]
+        local item=ui.prompt("Product "..i.." item ID (blank to finish)",previous and previous.item or "")
+        if not item or item=="" then break end
+        local price=tonumber(ui.prompt("Price in Emeralds",tostring(previous and previous.price or 1)))
+        local count=tonumber(ui.prompt("Quantity dispensed",tostring(previous and previous.count or 1)))
+        if not item:match("^[%w_%-]+:[%w_/%-]+$") or not price or price%1~=0 or price<1 or price>1000000 or not count or count%1~=0 or count<1 or count>64 then
+          ui.message("Invalid item, price or quantity. That product was skipped.",false)
+        else catalog[#catalog+1]={item=item,price=price,count=count} end
+      end
+      if #catalog>0 then cfg.catalog=catalog else ui.message("Catalogue unchanged because no valid products were entered.",false) end
+    elseif choice == 3 then
+      local inventories=ui.findInventory()
+      if #inventories<2 then ui.message("At least two usable inventories are required.",false)
+      else
+        local s=ui.choose("STOCK INVENTORY",inventories,"Choose where products are stored.")
+        if s and inventories[s] then
+          local outputs={}
+          for i,name in ipairs(inventories) do if i~=s then outputs[#outputs+1]=name end end
+          local o=ui.choose("OUTPUT INVENTORY",outputs,"Choose a different inventory for deliveries.")
+          if o and outputs[o] then cfg.stock_inventory=inventories[s]; cfg.output_inventory=outputs[o] end
+        end
+      end
+    elseif choice == 4 then
+      local api=ui.prompt("HTTPS API base",cfg.api_base or ui.API_BASE)
+      if api and api:match("^https://") then cfg.api_base=api:gsub("/+$","") else ui.message("API address must start with https://. Address unchanged.",false) end
+    elseif choice == 5 then
+      local token=ui.secret("New merchant token (mbmerchant_...): ")
+      if token and token:match("^mbmerchant_") and #token>=40 then cfg.merchant_token=token else ui.message("Token format is invalid. Existing token unchanged.",false) end
+    elseif choice == 6 then
+      local methods={(cfg.accept_balance and "[ON] " or "[OFF] ").."MineBank Balance",(cfg.accept_cashline and "[ON] " or "[OFF] ").."Standard CashLine","Back"}
+      local method=ui.choose("PAYMENT METHODS",methods,"At least one method must remain enabled.")
+      if method==1 then
+        if cfg.accept_balance and not cfg.accept_cashline then ui.message("At least one payment method must remain enabled.",false) else cfg.accept_balance=not cfg.accept_balance end
+      elseif method==2 then
+        if cfg.accept_cashline and not cfg.accept_balance then ui.message("At least one payment method must remain enabled.",false) else cfg.accept_cashline=not cfg.accept_cashline end
+      end
+    end
+    if not save(CONFIG,cfg) then ui.message("Settings could not be saved. Do not restart until the configuration is checked.",false); ui.pause() end
+  end
+end
+
 local cfg=load(CONFIG)
 if not cfg then
   ui.clear(); ui.header("VENDING SETUP","Local configuration wizard")
@@ -118,10 +177,11 @@ if not cfg then
   local b=ui.choose("CUSTOMER OUTPUT INVENTORY",inventories,"Choose a different inventory that delivers purchased items.")
   if not b or not inventories[b] or a==b then ui.message("Choose two different inventory peripherals.",false); ui.pause(); return end
   cfg.stock_inventory=inventories[a]; cfg.output_inventory=inventories[b]
+  cfg.display_name="MINEBANK VENDING"; cfg.accept_balance=true; cfg.accept_cashline=true
   cfg.catalog={}
   print("Add up to 12 products. Use exact Minecraft item IDs, e.g. minecraft:apple.")
   for i=1,12 do
-    local item=ui.prompt("Item ID "..i.." (blank to finish")
+    local item=ui.prompt("Item ID "..i.." (blank to finish)")
     if not item or item=="" then break end
     local price=tonumber(ui.prompt("Price in Emeralds for "..item))
     local count=tonumber(ui.prompt("Items dispensed per purchase", "1"))
@@ -166,11 +226,20 @@ elseif old and old.state~="COMPLETE" and old.state~="CANCELLED" then
 end
 
 while true do
+  ui.useTarget(ui.hasMonitor() and "monitor" or "terminal")
   local opts={}
-  for _,p in ipairs(cfg.catalog or {}) do opts[#opts+1]=p.item.." x"..p.count.." — "..p.price.." Emeralds" end
-  opts[#opts+1]="Exit"
-  local choice=ui.choose("VENDING MACHINE",opts)
-  if not choice or choice>#(cfg.catalog or {}) then break end
+  for _,p in ipairs(cfg.catalog or {}) do opts[#opts+1]=p.item.." x"..p.count.." - "..p.price.." Emeralds" end
+  -- The customer touchscreen never offers Exit. F12 on the physical computer opens settings.
+  if not ui.hasMonitor() then opts[#opts+1]="Exit" end
+  local choice=ui.choose(cfg.display_name or "VENDING MACHINE",opts,
+    ui.hasMonitor() and "Touch a product to begin checkout." or "Choose a product or Exit.")
+  if ui.consumeAdminRequest and ui.consumeAdminRequest() then
+    cfg=configureMachine(cfg)
+  elseif not choice then
+    if not ui.hasMonitor() then break end
+  elseif choice>#(cfg.catalog or {}) then
+    if not ui.hasMonitor() then break end
+  else
   local product=cfg.catalog[choice]
   local stock=ui.inventory(cfg.stock_inventory)
   local output=ui.inventory(cfg.output_inventory)
@@ -221,9 +290,13 @@ while true do
                  ui.message("A valid six-digit Wallet PIN is required. No payment was sent.",false)
                  ui.pause()
                else
-                 local source=ui.choose("PAYMENT SOURCE",{"MineBank Balance","Standard CashLine","Cancel"},
-                   "Purchase: "..product.price.." Emeralds • "..product.item.." × "..product.count)
-                 local funding=source==1 and "BALANCE" or (source==2 and "CASHLINE" or nil)
+                 local sourceOptions,sourceKinds={},{}
+                 if cfg.accept_balance ~= false then sourceOptions[#sourceOptions+1]="MineBank Balance"; sourceKinds[#sourceKinds+1]="BALANCE" end
+                 if cfg.accept_cashline ~= false then sourceOptions[#sourceOptions+1]="Standard CashLine"; sourceKinds[#sourceKinds+1]="CASHLINE" end
+                 sourceOptions[#sourceOptions+1]="Cancel"
+                 local source=ui.choose("PAYMENT SOURCE",sourceOptions,
+                   "Purchase: "..product.price.." Emeralds - "..product.item.." x"..product.count)
+                 local funding=(source and sourceKinds[source]) or nil
                  if funding then
                    ui.clear(); ui.header("AUTHORISE PURCHASE","Payment source: "..(funding=="BALANCE" and "MineBank Balance" or "Standard CashLine"))
                    local final=ui.choose("FINAL AUTHORISATION",{"Authorise "..product.price.." Emeralds","Cancel"},
@@ -294,4 +367,5 @@ while true do
         end
       end
     end
-ui.clear(); ui.header("VENDING MACHINE","Thank you for using MineBank.")
+  end
+  ui.clear(); ui.header("VENDING MACHINE","Thank you for using MineBank.")
