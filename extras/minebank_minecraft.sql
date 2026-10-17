@@ -33,6 +33,35 @@ CREATE INDEX IF NOT EXISTS minebank_minecraft_cards_client_idx
 CREATE INDEX IF NOT EXISTS minebank_minecraft_cards_account_idx
     ON minebank_minecraft_cards(account_id, status);
 
+-- Per-machine ATM pairings replace the old deployment-wide shared environment token.
+-- The ATM secret is shown once by the pairing endpoint; only its SHA-256 hash is stored.
+CREATE TABLE IF NOT EXISTS minebank_minecraft_atms (
+    id BIGSERIAL PRIMARY KEY,
+    client_id BIGINT NOT NULL REFERENCES bank_clients(id) ON DELETE CASCADE,
+    enrolled_by_card_id BIGINT NOT NULL,
+    token_prefix VARCHAR(16) NOT NULL UNIQUE,
+    token_hash CHAR(64) NOT NULL UNIQUE,
+    label VARCHAR(80) NOT NULL DEFAULT 'Minecraft ATM',
+    status VARCHAR(16) NOT NULL DEFAULT 'ACTIVE'
+        CHECK (status IN ('ACTIVE','REVOKED')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_used_at TIMESTAMPTZ,
+    revoked_at TIMESTAMPTZ,
+    CONSTRAINT minebank_minecraft_atm_card_owner_fk
+        FOREIGN KEY (enrolled_by_card_id, client_id)
+        REFERENCES minebank_minecraft_cards(id, client_id),
+    CONSTRAINT minebank_minecraft_atm_revocation_check
+        CHECK (
+            (status='ACTIVE' AND revoked_at IS NULL)
+            OR (status='REVOKED' AND revoked_at IS NOT NULL)
+        )
+);
+CREATE INDEX IF NOT EXISTS minebank_minecraft_atms_client_idx
+    ON minebank_minecraft_atms(client_id, created_at DESC);
+
+COMMENT ON TABLE minebank_minecraft_atms IS
+    'Per-device ATM credentials created after MineBank card and Wallet PIN pairing. Only SHA-256 token hashes are stored.';
+
 COMMENT ON TABLE minebank_minecraft_cards IS
     'Revocable card credentials for MineBank Minecraft integration. Store only SHA-256 token hashes; never store raw card tokens, passwords, or Wallet PINs.';
 
