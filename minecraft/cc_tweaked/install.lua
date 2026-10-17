@@ -46,7 +46,8 @@ say("MINEBANK  /  THE NEW BANK", colors.lime)
 say("All-in-one installer", colors.white)
 say("")
 say("This installs the ATM, Bank Assistant, Merchant Checkout,")
-say("Vending Machine, shared utilities and Basalt2 touch UI.")
+say("Vending Machine and shared utilities with native UI.")
+say("No third-party UI framework is required.")
 say("No passwords, Wallet PINs or machine tokens are requested.")
 say("")
 write("Install/update into /" .. TARGET .. "? Type INSTALL to continue: ")
@@ -72,25 +73,6 @@ for i, file in ipairs(files) do
   -- Basalt2's full bundle may be run in an environment without native
   -- require(), and some releases pass module paths with a trailing .lua.
   -- Normalize those paths before consulting the embedded module registry.
-  if file.name == "basalt.lua" then
-    -- Patch Basalt's bundled loader for CC:Tweaked, where package may be nil
-    -- and the native require function may not exist.
-    local patchedCount = 0
-    body, patchedCount = body:gsub("local baseRequire = require", "package = package or { path = '' }\\nlocal baseRequire = require", 1)
-    if patchedCount == 0 then
-      say("WARNING: Could not locate Basalt2 loader header; bundle left unchanged.", colors.yellow)
-    else
-      local wrapper = 'require = function(path) if(project[path..".lua"])then if(loadedProject[path]==nil)then loadedProject[path] = project[path..".lua"]() end return loadedProject[path] end return baseRequire(path) end'
-      local safeWrapper = 'require = function(path) local key = path .. ".lua"; if project[key] == nil and type(path) == "string" and path:sub(-4) == ".lua" then key = path end; if project[key] then if loadedProject[key] == nil then loadedProject[key] = project[key]() end return loadedProject[key] end; if baseRequire then return baseRequire(path) end; error("Basalt2 bundled module not found: " .. tostring(path)) end'
-      local wrapperCount
-      body, wrapperCount = body:gsub(wrapper, function() return safeWrapper end, 1)
-      if wrapperCount > 0 then
-        say("Applied Basalt2 compatibility patch.", colors.lime)
-      else
-        say("WARNING: Basalt2 require wrapper did not match; package compatibility only was added.", colors.yellow)
-      end
-    end
-  end
 
   local path = fs.combine(tempDir, file.name)
   local handle = fs.open(path, "w")
@@ -150,4 +132,4 @@ say("3. Run: branch_terminal.lua to issue a floppy card.", colors.white)
 say("4. Configure merchant credentials only on locked-down shop computers.", colors.white)
 say("5. Keep transaction features disabled on the server until staging tests pass.", colors.yellow)
 say("")
-say("Basalt2 is distributed under the MIT license; see BASALT-LICENSE.txt.", colors.gray)
+say("Native CC:Tweaked UI installed; Basalt is not required.", colors.gray)
