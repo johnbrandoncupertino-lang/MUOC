@@ -294,23 +294,41 @@ end
 
 function M.pause()
   if isTouchTarget() then
-    withDisplay(function(d)
-      local w, h = displaySize(d)
-      drawHeader(d, title, subtitle)
-      local wrapped = {}
-      for _, item in ipairs(messages) do
-        for _, line in ipairs(wrapText(item.text, w - 4)) do wrapped[#wrapped + 1] = {text=line, good=item.good} end
+    local d = displayFor("monitor")
+    local w, h = displaySize(d)
+    local wrapped = {}
+    for _, item in ipairs(messages) do
+      for _, line in ipairs(wrapText(item.text, math.max(1, w - (w >= 14 and 4 or 1)))) do
+        wrapped[#wrapped + 1] = {text=line, good=item.good}
       end
-      local y = 7
-      for i = math.max(1, #wrapped - (h - 10)), #wrapped do
-        if y >= h - 3 then break end
-        writeAt(d, 2, y, wrapped[i].text, wrapped[i].good and colors.white or colors.red, colors.black, w - 3)
-        y = y + 1
-      end
-      drawButton(d, 2, h - 2, w - 3, 1, "TOUCH TO CONTINUE", colors.green, colors.black)
-    end)
-    local _, y = waitTouch()
-    return y ~= nil
+    end
+    if #wrapped == 0 then wrapped[1] = {text="Ready.",good=true} end
+    local bodyRows = (w < 14 or h < 8) and 1 or math.max(1, h - 7)
+    local pages = math.max(1, math.ceil(#wrapped / bodyRows))
+    local page = 1
+    while true do
+      withDisplay(function(display)
+        local dw, dh = displaySize(display)
+        pcall(function() display.setBackgroundColor(colors.black); display.setTextColor(colors.white); display.clear() end)
+        if dw >= 14 and dh >= 7 then drawHeader(display, title, subtitle) end
+        local first = (page - 1) * bodyRows + 1
+        local last = math.min(#wrapped, first + bodyRows - 1)
+        local startY = (dw < 14 or dh < 8) and math.max(1, math.floor((dh + 1) / 2)) or 6
+        for i = first, last do
+          writeAt(display, dw >= 14 and 2 or 1, startY + i - first,
+            wrapped[i].text, wrapped[i].good and colors.white or colors.red,
+            colors.black, dw - (dw >= 14 and 3 or 0))
+        end
+        if pages > 1 and dw >= 14 and dh >= 8 then
+          writeAt(display, 2, dh - 1, "TAP FOR NEXT PAGE " .. page .. "/" .. pages, colors.gray, colors.black, dw - 3)
+        elseif dw >= 14 and dh >= 8 then
+          writeAt(display, 2, dh - 1, "TAP TO CONTINUE", colors.lime, colors.black, dw - 3)
+        end
+      end, "monitor")
+      local x = waitTouch()
+      if not x then return false end
+      if page < pages then page = page + 1 else return true end
+    end
   end
   return readTerminal("Press Enter to continue", nil, false) ~= nil
 end
@@ -322,6 +340,36 @@ function M.choose(menuTitle, options, menuSubtitle)
   menuSubtitle = safeText(menuSubtitle or "Select an option to continue.")
 
   if isTouchTarget() then
+    local monitorW, monitorH
+    withDisplay(function(d) monitorW, monitorH = displaySize(d) end)
+    if monitorW < 22 or monitorH < 12 then
+      -- Compact one-monitor-block mode: show one option at a time so labels
+      -- remain legible. Tap the left half to cycle; tap the right half to choose.
+      local selected = 1
+      while true do
+        withDisplay(function(d)
+          local w, h = displaySize(d)
+          pcall(function() d.setBackgroundColor(colors.black); d.setTextColor(colors.white); d.clear() end)
+          local label = safeText(options[selected])
+          if w >= 8 and h >= 4 then
+            writeAt(d, 1, 1, fit(menuTitle:upper(), w), colors.lime, colors.black, w)
+            local wrapped = wrapText(label, w)
+            local y = math.max(2, math.floor((h - #wrapped) / 2))
+            for i, line in ipairs(wrapped) do writeAt(d, 1, y + i - 1, line, colors.white, colors.black, w) end
+            writeAt(d, 1, h, tostring(selected) .. "/" .. tostring(#options) .. " L=NEXT R=OK", colors.gray, colors.black, w)
+          else
+            writeAt(d, 1, 1, fit(label:upper(), w), colors.lime, colors.black, w)
+          end
+        end)
+        local x = waitTouch()
+        if not x then return nil end
+        if monitorW >= 2 and x <= math.floor(monitorW / 2) then
+          selected = selected % #options + 1
+        else
+          return selected
+        end
+      end
+    end
     local page = 1
     while true do
       local _, w, h
@@ -417,6 +465,63 @@ end
 local function touchInput(label, default, secret, numericOnly, isPin)
   local value = tostring(default or "")
   local w, h
+  if isTouchTarget() and (numericOnly or isPin) then
+    withDisplay(function(d)
+      w, h = displaySize(d)
+      pcall(function() d.setBackgroundColor(colors.black); d.setTextColor(colors.white); d.clear() end)
+    end)
+    local d = displayFor("monitor")
+    w, h = displaySize(d)
+    local compact = w < 22 or h < 12
+    if compact then
+      -- Compact keypad occupies the whole one-block monitor. Six digits are
+      -- submitted automatically, so no off-screen Confirm button is required.
+      local digits = {"1","2","3","4","5","6","7","8","9","CLEAR","0","DEL"}
+      local cw = math.max(1, math.floor(w / 3))
+      local startY = math.max(1, h - 3)
+      local function paint()
+        withDisplay(function(display)
+          local dw, dh = displaySize(display)
+          pcall(function() display.setBackgroundColor(colors.black); display.setTextColor(colors.white); display.clear() end)
+          local shown = (isPin or secret) and string.rep("*", #value) or value
+          if dw >= 6 and dh >= 2 then
+            writeAt(display, 1, 1, fit("PIN " .. shown, dw), colors.lime, colors.black, dw)
+            if dh >= 3 then writeAt(display, 1, 2, "1-9 / CLR / 0 / DEL", colors.gray, colors.black, dw) end
+          else
+            writeAt(display, 1, 1, fit("PIN" .. string.rep("*", #value), dw), colors.lime, colors.black, dw)
+          end
+          local gridY = math.max(1, dh - 3)
+          local keyNames = {"1","2","3","4","5","6","7","8","9","C","0","<"}
+          for idx, key in ipairs(keyNames) do
+            local row = math.floor((idx - 1) / 3)
+            local col = (idx - 1) % 3
+            local x = col * cw + 1
+            local actualCW = col == 2 and (dw - x + 1) or cw
+            drawButton(display, x, gridY + row, actualCW, 1, key, colors.gray, colors.white)
+          end
+        end, "monitor")
+        startY = math.max(1, h - 3)
+      end
+      paint()
+      while true do
+        local x, y = waitTouch()
+        if not x then return nil end
+        local row = y - startY
+        if row >= 0 and row <= 3 and y >= startY then
+          local col = math.min(2, math.max(0, math.floor((x - 1) / cw)))
+          local index = row * 3 + col + 1
+          local key = digits[index]
+          if key then
+            if key == "CLEAR" then value = ""
+            elseif key == "DEL" then value = value:sub(1, -2)
+            elseif #value < 64 and (not isPin or #value < 6) then value = value .. key end
+            if isPin and #value == 6 then return value end
+            paint()
+          end
+        end
+      end
+    end
+  end
   withDisplay(function(d)
     w, h = displaySize(d)
     drawHeader(d, secret and "SECURE INPUT" or "WORKSPACE INPUT", label)
@@ -539,10 +644,15 @@ function M.kioskIdle()
   if not d then return false end
   withDisplay(function(display)
     local w, h = displaySize(display)
-    drawHeader(display, "PAYMENT POINT", "MINEBANK SECURE CHECKOUT")
-    drawButton(display, 2, 7, w - 3, math.max(2, math.min(4, h - 10)), "READY - WAITING FOR CASHIER", colors.green, colors.black)
-    writeAt(display, 2, math.min(h - 3, 13), "Your cashier will send a purchase here.", colors.white, colors.black, w - 3)
-    writeAt(display, 2, math.min(h - 2, 14), "No payment is requested while idle.", colors.lightGray, colors.black, w - 3)
+    pcall(function() display.setBackgroundColor(colors.black); display.setTextColor(colors.white); display.clear() end)
+    if w < 14 or h < 7 then
+      writeAt(display, 1, math.max(1, math.floor((h + 1) / 2)), "AWAITING CARD", colors.lime, colors.black, w)
+    else
+      drawHeader(display, "PAYMENT POINT", "MINEBANK SECURE CHECKOUT")
+      drawButton(display, 2, 7, w - 3, math.max(2, math.min(4, h - 10)), "READY - WAITING FOR CASHIER", colors.green, colors.black)
+      writeAt(display, 2, math.min(h - 3, 13), "Your cashier will send a purchase here.", colors.white, colors.black, w - 3)
+      writeAt(display, 2, math.min(h - 2, 14), "No payment is requested while idle.", colors.lightGray, colors.black, w - 3)
+    end
   end, "monitor")
   return true
 end
