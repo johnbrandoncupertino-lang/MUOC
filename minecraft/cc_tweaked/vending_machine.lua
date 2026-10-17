@@ -77,6 +77,25 @@ local function canFit(inv,item,count)
   end
   return false
 end
+local function cancelOpenCheckout(cfg,order)
+  if not order.checkout_id then
+    order.state="CANCELLED"
+    return save(JOURNAL,order)
+  end
+  local result,err=ui.api("/merchant/checkouts/"..tostring(order.checkout_id).."/cancel",
+    "POST",cfg.merchant_token,{})
+  if result and result.status=="CANCELLED" then
+    order.state="CANCELLED"
+    order.cancelled_at=os.epoch("utc")
+    return save(JOURNAL,order)
+  end
+  order.state="CANCEL_REVIEW"
+  order.cancel_error=tostring(err or (result and result.status) or "Cancellation not confirmed")
+  save(JOURNAL,order)
+  ui.message("MineBank did not confirm checkout cancellation. This machine is locked until the original checkout is reconciled.",false)
+  return false
+end
+
 local function dispense(cfg, order)
   local stock=ui.inventory(cfg.stock_inventory)
   local output=ui.inventory(cfg.output_inventory)
@@ -226,6 +245,7 @@ elseif old and old.state~="COMPLETE" and old.state~="CANCELLED" then
 end
 
 while true do
+  ui.API_BASE=(cfg.api_base or ui.API_BASE):gsub("/+$","")
   ui.useTarget(ui.hasMonitor() and "monitor" or "terminal")
   local opts={}
   for _,p in ipairs(cfg.catalog or {}) do opts[#opts+1]=p.item.." x"..p.count.." - "..p.price.." Emeralds" end
@@ -285,14 +305,14 @@ while true do
                if not card then ui.message(cardErr or "Card not found in the drive.",false); ui.pause() end
              end
              if not card then
-               order.state="CANCELLED"; save(JOURNAL,order)
-               ui.message("Purchase cancelled before authorisation. No payment was sent.",true)
+               local cancelled=cancelOpenCheckout(cfg,order)
+               ui.message(cancelled and "Purchase cancelled before authorisation. No payment was sent." or "Cancellation is unconfirmed. Keep the machine locked and reconcile the checkout.",cancelled)
                ui.pause()
              else
                local pin=ui.secret("Customer Wallet PIN: ")
                if not pin or not pin:match("^%d%d%d%d%d%d$") then
-                 order.state="CANCELLED"; save(JOURNAL,order)
-                 ui.message("A valid six-digit Wallet PIN is required. No payment was sent.",false)
+                 local cancelled=cancelOpenCheckout(cfg,order)
+                 ui.message(cancelled and "A valid six-digit Wallet PIN is required. No payment was sent." or "Cancellation is unconfirmed. Reconcile the open checkout before another sale.",false)
                  ui.pause()
                else
                  local sourceOptions,sourceKinds={},{}
@@ -315,11 +335,10 @@ while true do
                        if payStatus and (payStatus==400 or payStatus==401 or payStatus==403 or payStatus==404 or payStatus==422) then
                          -- A definite endpoint rejection is not an ambiguous transaction.
                          -- Never resend the POST; the rejected transaction was not committed.
-                         order.state="CANCELLED"
                          order.payment_http_status=payStatus
                          order.payment_error=tostring(payErr or "Payment was rejected")
-                         save(JOURNAL,order)
-                         ui.message("MineBank rejected this payment. No balance debit or merchant credit was committed. Start a new purchase with another valid payment source.",false)
+                         local cancelled=cancelOpenCheckout(cfg,order)
+                         ui.message(cancelled and "MineBank rejected this payment. No debit was committed; the unpaid checkout was cancelled." or "MineBank rejected the payment, but checkout cancellation was not confirmed. Reconcile before opening another sale.",false)
                        else
                          -- For 409/network/5xx/timeout, query the existing checkout only.
                          -- Never retry the payment POST automatically.
@@ -356,12 +375,12 @@ while true do
                      end
                      if order.state~="COMPLETE" and order.state~="CANCELLED" then return end
                    else
-                     order.state="CANCELLED"; save(JOURNAL,order)
-                     ui.message("Purchase cancelled. No payment was sent.",true); ui.pause()
+                     local cancelled=cancelOpenCheckout(cfg,order)
+                      ui.message(cancelled and "Purchase cancelled. No payment was sent." or "Cancellation unconfirmed. Reconcile before another sale.",cancelled); ui.pause()
                    end
                  else
-                   order.state="CANCELLED"; save(JOURNAL,order)
-                   ui.message("Purchase cancelled. No payment was sent.",true); ui.pause()
+                   local cancelled=cancelOpenCheckout(cfg,order)
+                      ui.message(cancelled and "Purchase cancelled. No payment was sent." or "Cancellation unconfirmed. Reconcile before another sale.",cancelled); ui.pause()
                  end
                  pin=nil
                end
