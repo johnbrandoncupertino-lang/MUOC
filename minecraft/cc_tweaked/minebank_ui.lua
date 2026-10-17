@@ -123,6 +123,16 @@ end
 local function renderLog()
   withDisplay(function(d)
     local w, h = displaySize(d)
+    if w < 14 or h < 7 then
+      pcall(function() d.setBackgroundColor(colors.black); d.setTextColor(colors.white); d.clear() end)
+      local item = messages[#messages]
+      local content = item and item.text or (title ~= "" and title or subtitle)
+      local lines = wrapText(content, w)
+      local line = lines[1] or title
+      local fg = item and (item.good and colors.white or colors.red) or colors.lime
+      writeAt(d, 1, math.max(1, math.floor((h + 1) / 2)), line, fg, colors.black, w)
+      return
+    end
     drawHeader(d, title, subtitle)
     local rows = {}
     for _, item in ipairs(messages) do
@@ -139,9 +149,7 @@ local function renderLog()
       writeAt(d, 2, y, item.text, item.good and colors.white or colors.red, colors.black, w - 3)
       y = y + 1
     end
-    if #rows == 0 then
-      writeAt(d, 2, 7, "Ready. Choose an operation to continue.", colors.lightGray, colors.black, w - 3)
-    end
+    if #rows == 0 then writeAt(d, 2, 7, "Ready. Choose an operation to continue.", colors.lightGray, colors.black, w - 3) end
     writeAt(d, 2, h, "MINEBANK SECURE TERMINAL", colors.gray, colors.black, w - 3)
   end)
 end
@@ -693,8 +701,15 @@ function M.api(path, method, token, body, key, extraHeaders)
   -- Modern CC:Tweaked accepts an options table. Retain a positional fallback
   -- for older runtimes instead of failing before the request is sent.
   local ok, accepted, requestErr = pcall(http.request, options)
-  if not ok then
-    ok, accepted, requestErr = pcall(http.request, url, requestBody, headers)
+  if not ok or not accepted then
+    local positionalOk, positionalAccepted, positionalErr = pcall(http.request, url, requestBody, headers)
+    if positionalOk and positionalAccepted then
+      ok, accepted, requestErr = positionalOk, positionalAccepted, positionalErr
+    elseif not ok then
+      return nil, "Network request could not start: " .. tostring(positionalErr or accepted)
+    else
+      return nil, tostring(positionalErr or requestErr or "MineBank request was rejected before sending."), 0
+    end
   end
   if not ok then return nil, "Network request could not start: " .. tostring(accepted) end
   if not accepted then return nil, tostring(requestErr or "MineBank request was rejected before sending."), 0 end
@@ -740,7 +755,8 @@ function M.api(path, method, token, body, key, extraHeaders)
         local message = parsed and type(data) == "table" and (data.error or data.message) or nil
         local code = parsed and type(data) == "table" and data.error_code or nil
         if path == "/payments" then
-          M.phase(status == 409 and "CHECKOUT CONFLICT" or "DECLINED", "declined")
+          if status == 409 then M.phase("CHECK STATUS", "working")
+          else M.phase("DECLINED", "declined") end
         end
         return nil, tostring(message or ("HTTP " .. tostring(status))) .. (code and (" [" .. tostring(code) .. "]") or ""), status
       end
