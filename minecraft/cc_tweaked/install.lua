@@ -73,6 +73,10 @@ for i, file in ipairs(files) do
   -- require(), and some releases pass module paths with a trailing .lua.
   -- Normalize those paths before consulting the embedded module registry.
   if file.name == "basalt.lua" then
+    -- CC:Tweaked may not expose Lua's package library or native require().
+    -- Basalt's bundled module loader still reads package.path, so provide a
+    -- minimal compatibility table before any embedded module is evaluated.
+    body = "package = package or { path = '' }\\n" .. body
     local original = 'local baseRequire = require\nrequire = function(path) if(project[path..".lua"])then if(loadedProject[path]==nil)then loadedProject[path] = project[path..".lua"]() end return loadedProject[path] end return baseRequire(path) end'
     local patched = 'local baseRequire = require\nrequire = function(path) local key = path .. ".lua"; if project[key] == nil and type(path) == "string" and path:sub(-4) == ".lua" then key = path end; if project[key] then if loadedProject[key] == nil then loadedProject[key] = project[key]() end return loadedProject[key] end; if baseRequire then return baseRequire(path) end; error("Basalt2 bundled module not found: " .. tostring(path)) end'
     if body:find(original, 1, true) then
