@@ -355,7 +355,7 @@ while true do
 
                  end
                else
-                 local fundingOptions=ui.api("/payment-options","GET",card.credential)
+                 local fundingOptions=ui.api("/payment-options?amount="..tostring(product.price),"GET",card.credential)
                  local sourceOptions,sourceKinds={},{}
                  if fundingOptions and type(fundingOptions.funding_sources)=="table" then
                    for _,item in ipairs(fundingOptions.funding_sources) do
@@ -370,6 +370,16 @@ while true do
                  elseif cfg.accept_balance ~= false then
                    sourceOptions[#sourceOptions+1]="MineBank Balance"; sourceKinds[#sourceKinds+1]="BALANCE"
                  end
+                 if #sourceKinds==0 then
+                   local reason=fundingOptions and tostring(fundingOptions.message or "No available payment method can cover this purchase.")
+                     or "MineBank could not verify credit products. Try again or contact the operator."
+                   ui.phase("NO PAYMENT METHOD","declined")
+                   ui.message(reason,false)
+                   ui.waitSeconds(5,"NO PAYMENT METHOD","declined")
+                   local cancelled=cancelOpenCheckout(cfg,order)
+                   if cancelled then ui.kioskIdle()
+                   else ui.phase("CONTACT OPERATOR","declined"); return end
+                 else
                  sourceOptions[#sourceOptions+1]="Cancel"
                  local source=ui.choose("PAYMENT SOURCE",sourceOptions,
                    "Purchase: "..product.price.." Emeralds - "..product.item.." x"..product.count..
@@ -459,6 +469,7 @@ while true do
                    if cancelled then ui.phase("CANCELLED","declined"); ui.waitSeconds(2,"CANCELLED","declined"); ui.kioskIdle()
 
                    else ui.phase("CONTACT OPERATOR","declined"); return end
+                 end
                  end
                  pin=nil
                end
