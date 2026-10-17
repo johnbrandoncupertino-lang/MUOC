@@ -152,14 +152,9 @@ local function customerPayment(cfg,checkout)
         sourceCodes[#sourceCodes+1]=item.code
       end
     end
-  else
-    -- Balance is independent of CrediCheck. If credit options cannot be loaded,
-    -- do not offer a CashLine product that MineBank has not confirmed active.
-    sourceOptions[#sourceOptions+1]="MineBank Balance"
-    sourceCodes[#sourceCodes+1]="BALANCE"
   end
   if #sourceCodes == 0 then
-    local reason=available and tostring(available.message or "No available payment source can cover this purchase.") or "MineBank could not verify credit products. Try again or choose another cashier."
+    local reason=(available and tostring(available.message or "No available payment source can cover this purchase.")) or tostring(optionsErr or "MineBank could not verify payment methods. Try again or choose another cashier.")
     ui.phase("NO PAYMENT METHOD","declined")
     ui.message(reason,false)
     ui.waitSeconds(5,"NO PAYMENT METHOD","declined")
