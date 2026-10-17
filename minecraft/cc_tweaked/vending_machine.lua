@@ -355,7 +355,7 @@ while true do
 
                  end
                else
-                 local fundingOptions=ui.api("/payment-options?amount="..tostring(product.price),"GET",card.credential)
+                 local fundingOptions,optionsErr=ui.api("/payment-options?amount="..tostring(product.price),"GET",card.credential)
                  local sourceOptions,sourceKinds={},{}
                  if fundingOptions and type(fundingOptions.funding_sources)=="table" then
                    for _,item in ipairs(fundingOptions.funding_sources) do
@@ -367,12 +367,10 @@ while true do
                        sourceOptions[#sourceOptions+1]=tostring(item.label or "Dynamic CashLine"); sourceKinds[#sourceKinds+1]="DYNAMIC_CASHLINE"
                      end
                    end
-                 elseif cfg.accept_balance ~= false then
-                   sourceOptions[#sourceOptions+1]="MineBank Balance"; sourceKinds[#sourceKinds+1]="BALANCE"
                  end
                  if #sourceKinds==0 then
-                   local reason=fundingOptions and tostring(fundingOptions.message or "No available payment method can cover this purchase.")
-                     or "MineBank could not verify credit products. Try again or contact the operator."
+                   local reason=(fundingOptions and tostring(fundingOptions.message or "No available payment method can cover this purchase."))
+                     or tostring(optionsErr or "MineBank could not verify payment methods. Try again or contact the operator.")
                    ui.phase("NO PAYMENT METHOD","declined")
                    ui.message(reason,false)
                    ui.waitSeconds(5,"NO PAYMENT METHOD","declined")
