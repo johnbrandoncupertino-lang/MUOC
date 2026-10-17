@@ -806,7 +806,8 @@ def minecraft_payment_options():
         return jsonify(error="A valid card credential is required."), 401
     try:
         from .credicheck import ensure_credicheck_schema
-        if not ensure_credicheck_schema():
+        from .database import ensure_loan_schema
+        if not ensure_credicheck_schema() or not ensure_loan_schema():
             return jsonify(error="Credit-product checks are temporarily unavailable.",
                            error_code="CREDIT_SCHEMA_UNAVAILABLE"), 503
     except Exception:
@@ -872,7 +873,8 @@ def pay_merchant_checkout():
     if funding_source in ("CASHLINE", "DYNAMIC_CASHLINE"):
         try:
             from .credicheck import ensure_credicheck_schema
-            if not ensure_credicheck_schema():
+            from .database import ensure_loan_schema
+            if not ensure_credicheck_schema() or not ensure_loan_schema():
                 return jsonify(error="CashLine checks are temporarily unavailable. Try MineBank Balance or contact support.",
                                error_code="CASHLINE_SCHEMA_UNAVAILABLE"), 503
         except Exception:
