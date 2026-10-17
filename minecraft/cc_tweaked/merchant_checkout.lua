@@ -396,6 +396,45 @@ local function reviewCheckout(cfg)
   ui.pause()
 end
 
+local function showRecentCheckouts(cfg)
+  ui.useTarget("terminal")
+  local result,err=ui.api("/merchant/checkouts","GET",cfg.merchant_token)
+  if not result then
+    ui.clear(); ui.header("CHECKOUT HISTORY","MineBank could not load recent checkouts")
+    ui.message(tostring(err),false); ui.pause()
+    return
+  end
+  local rows=result.checkouts or {}
+  if #rows==0 then
+    ui.clear(); ui.header("CHECKOUT HISTORY","No recent checkouts")
+    ui.message("New checkouts will appear here after the cashier creates them.",true); ui.pause()
+    return
+  end
+  local options={}
+  for _,row in ipairs(rows) do
+    options[#options+1]="#"..tostring(row.checkout_id).." | "..tostring(row.amount).." E | "..tostring(row.status)
+  end
+  local index=ui.choose("MINEBANK CHECKOUT HISTORY",options,"Recent server-side checkout records. Paid status comes from MineBank.")
+  if not index or not rows[index] then return end
+  local row=rows[index]
+  ui.clear(); ui.header("CHECKOUT RECORD","Authoritative MineBank record")
+  ui.message("Checkout: "..tostring(row.checkout_id),true)
+  ui.message("Status: "..tostring(row.status),row.status=="PAID")
+  ui.message("Amount: "..tostring(row.amount).." Emerald",true)
+  ui.message("Description: "..tostring(row.description),true)
+  ui.message("Transaction: "..tostring(row.transaction_id or "none"),true)
+  ui.message("Created: "..tostring(row.created_at or "unknown"),true)
+  ui.message("Paid: "..tostring(row.paid_at or "not paid"),true)
+  if row.status=="OPEN" then
+    local choice=ui.choose("UNPAID CHECKOUT",{"Cancel this checkout","Keep checkout open"})
+    if choice==1 then
+      local cancelled,cancelErr=ui.api("/merchant/checkouts/"..tostring(row.checkout_id).."/cancel","POST",cfg.merchant_token,{})
+      ui.message(cancelled and "Checkout cancelled; it cannot be paid now." or ("Cancellation failed: "..tostring(cancelErr)),not not cancelled)
+    end
+  end
+  ui.pause()
+end
+
 local function cashierSettings(cfg)
   while true do
     ui.useTarget("terminal")
@@ -436,8 +475,8 @@ end
 
 while true do
   ui.useTarget("terminal")
-  local options={"New checkout","Recent sales","Inspect/cancel checkout","Cashier settings"}
-  local quickStart=5
+  local options={"New checkout","Recent sales","Recent MineBank checkouts","Inspect/cancel checkout","Cashier settings"}
+  local quickStart=6
   for _,preset in ipairs(cfg.presets or {}) do options[#options+1]="Quick: "..tostring(preset.name).." - "..tostring(preset.amount).." Emerald" end
   options[#options+1]="Exit register"
   local choice=ui.choose("MERCHANT REGISTER",options,"Customer checkout is shown only on the separate monitor.")
@@ -452,8 +491,9 @@ while true do
       ui.message(tostring(err),false); ui.pause()
     end
   elseif choice==2 then showRecentSales()
-  elseif choice==3 then reviewCheckout(cfg)
-  elseif choice==4 then cashierSettings(cfg)
+  elseif choice==3 then showRecentCheckouts(cfg)
+  elseif choice==4 then reviewCheckout(cfg)
+  elseif choice==5 then cashierSettings(cfg)
   elseif choice>=quickStart and choice<quickStart+#(cfg.presets or {}) then
     local preset=(cfg.presets or {})[choice-quickStart+1]
     local ok,err=pcall(runSale,cfg,preset)
