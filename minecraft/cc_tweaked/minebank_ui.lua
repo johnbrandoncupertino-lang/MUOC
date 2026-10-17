@@ -124,7 +124,7 @@ end
 local function renderLog()
   withDisplay(function(d)
     local w, h = displaySize(d)
-    if w < 14 or h < 7 then
+    if w < 32 or h < 14 then
       pcall(function() d.setBackgroundColor(colors.black); d.setTextColor(colors.white); d.clear() end)
       local item = messages[#messages]
       local content = phaseOverlay or (item and item.text) or (title ~= "" and title or subtitle)
@@ -295,7 +295,7 @@ function M.phase(label, state, frame)
       display.setTextColor(fg)
       display.clear()
     end)
-    if w >= 14 and h >= 6 then
+    if w >= 32 and h >= 14 then
       writeAt(display, 2, 1, "MINEBANK", colors.lime, bg, w - 3)
       writeAt(display, 2, 2, string.rep("-", math.max(1, w - 3)), colors.green, bg, w - 3)
       local rows = wrapText(label, w - 3)
@@ -346,17 +346,17 @@ function M.pause()
       end
     end
     if #wrapped == 0 then wrapped[1] = {text="Ready.",good=true} end
-    local bodyRows = (w < 14 or h < 8) and 1 or math.max(1, h - 7)
+    local bodyRows = (w < 32 or h < 14) and 1 or math.max(1, h - 7)
     local pages = math.max(1, math.ceil(#wrapped / bodyRows))
     local page = 1
     while true do
       withDisplay(function(display)
         local dw, dh = displaySize(display)
         pcall(function() display.setBackgroundColor(colors.black); display.setTextColor(colors.white); display.clear() end)
-        if dw >= 14 and dh >= 7 then drawHeader(display, title, subtitle) end
+        if dw >= 32 and dh >= 14 then drawHeader(display, title, subtitle) end
         local first = (page - 1) * bodyRows + 1
         local last = math.min(#wrapped, first + bodyRows - 1)
-        local startY = (dw < 14 or dh < 8) and math.max(1, math.floor((dh + 1) / 2)) or 6
+        local startY = (dw < 32 or dh < 14) and math.max(1, math.floor((dh + 1) / 2)) or 6
         for i = first, last do
           local item = wrapped[i]
           local fg = item.phase and (phaseOverlayState == "approved" and colors.lime
@@ -365,9 +365,9 @@ function M.pause()
           writeAt(display, dw >= 14 and 2 or 1, startY + i - first,
             item.text, fg, colors.black, dw - (dw >= 14 and 3 or 0))
         end
-        if pages > 1 and dw >= 14 and dh >= 8 then
+        if pages > 1 and dw >= 32 and dh >= 14 then
           writeAt(display, 2, dh - 1, "TAP FOR NEXT PAGE " .. page .. "/" .. pages, colors.gray, colors.black, dw - 3)
-        elseif dw >= 14 and dh >= 8 then
+        elseif dw >= 32 and dh >= 14 then
           writeAt(display, 2, dh - 1, "TAP TO CONTINUE", colors.lime, colors.black, dw - 3)
         end
       end, "monitor")
@@ -388,7 +388,7 @@ function M.choose(menuTitle, options, menuSubtitle)
   if isTouchTarget() then
     local monitorW, monitorH
     withDisplay(function(d) monitorW, monitorH = displaySize(d) end)
-    if monitorW < 22 or monitorH < 12 then
+    if monitorW < 32 or monitorH < 14 then
       -- Compact one-monitor-block mode: show one option at a time so labels
       -- remain legible. Tap the left half to cycle; tap the right half to choose.
       local selected = 1
@@ -518,7 +518,7 @@ local function touchInput(label, default, secret, numericOnly, isPin)
     end)
     local d = displayFor("monitor")
     w, h = displaySize(d)
-    local compact = w < 22 or h < 12
+    local compact = w < 32 or h < 14
     if compact then
       -- Compact keypad occupies the whole one-block monitor. Six digits are
       -- submitted automatically, so no off-screen Confirm button is required.
@@ -691,7 +691,7 @@ function M.kioskIdle()
   withDisplay(function(display)
     local w, h = displaySize(display)
     pcall(function() display.setBackgroundColor(colors.black); display.setTextColor(colors.white); display.clear() end)
-    if w < 14 or h < 7 then
+    if w < 32 or h < 14 then
       writeAt(display, 1, math.max(1, math.floor((h + 1) / 2)), "AWAITING CARD", colors.lime, colors.black, w)
     else
       drawHeader(display, "PAYMENT POINT", "MINEBANK SECURE CHECKOUT")
