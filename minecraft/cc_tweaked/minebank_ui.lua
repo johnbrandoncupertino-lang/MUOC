@@ -336,6 +336,10 @@ function M.pause()
     local d = displayFor("monitor")
     local w, h = displaySize(d)
     local wrapped = {}
+    if phaseOverlay then
+      wrapped[#wrapped + 1] = {text=phaseOverlay, good=phaseOverlayState ~= "declined", phase=true}
+      wrapped[#wrapped + 1] = {text="",good=true}
+    end
     for _, item in ipairs(messages) do
       for _, line in ipairs(wrapText(item.text, math.max(1, w - (w >= 14 and 4 or 1)))) do
         wrapped[#wrapped + 1] = {text=line, good=item.good}
@@ -354,9 +358,12 @@ function M.pause()
         local last = math.min(#wrapped, first + bodyRows - 1)
         local startY = (dw < 14 or dh < 8) and math.max(1, math.floor((dh + 1) / 2)) or 6
         for i = first, last do
+          local item = wrapped[i]
+          local fg = item.phase and (phaseOverlayState == "approved" and colors.lime
+            or (phaseOverlayState == "declined" and colors.red or colors.white))
+            or (item.good and colors.white or colors.red)
           writeAt(display, dw >= 14 and 2 or 1, startY + i - first,
-            wrapped[i].text, wrapped[i].good and colors.white or colors.red,
-            colors.black, dw - (dw >= 14 and 3 or 0))
+            item.text, fg, colors.black, dw - (dw >= 14 and 3 or 0))
         end
         if pages > 1 and dw >= 14 and dh >= 8 then
           writeAt(display, 2, dh - 1, "TAP FOR NEXT PAGE " .. page .. "/" .. pages, colors.gray, colors.black, dw - 3)
