@@ -724,6 +724,20 @@ def pay_merchant_checkout():
     funding_source = str(data.get("funding_source", "BALANCE") or "BALANCE").upper()
     if funding_source not in ("BALANCE", "CASHLINE"):
         return jsonify(error="Choose MineBank Balance or Standard CashLine."), 400
+    # The web CashLine page initializes CrediCheck/ledger extension tables before
+    # querying them. Minecraft payments must do the same: otherwise a customer
+    # who only uses the in-game terminal can hit a missing-table exception which
+    # was previously hidden as a generic payment failure.
+    if funding_source == "CASHLINE":
+        try:
+            from .credicheck import ensure_credicheck_schema
+            if not ensure_credicheck_schema():
+                return jsonify(error="CashLine checks are temporarily unavailable. Try MineBank Balance or contact support.",
+                               error_code="CASHLINE_SCHEMA_UNAVAILABLE"), 503
+        except Exception:
+            current_app.logger.exception("Minecraft CashLine schema initialization failed")
+            return jsonify(error="CashLine checks are temporarily unavailable. Try MineBank Balance or contact support.",
+                           error_code="CASHLINE_SCHEMA_UNAVAILABLE"), 503
     request_hash = hashlib.sha256(("PAYMENT:" + checkout_id + ":" + funding_source).encode("utf-8")).hexdigest()
     pin_ok, pin_message = _verify_card_pin(token, data.get("wallet_pin"))
     if not pin_ok:
@@ -861,7 +875,7 @@ def pay_merchant_checkout():
         status_code = _merchant_payment_status_code(message)
         return jsonify(error=message, error_code=_merchant_payment_error_code(message)), status_code
     except Exception as exc:
-        current_app.logger.error("Minecraft payment failed: %s", type(exc).__name__)
+        current_app.logger.exception("Minecraft payment failed")
         return jsonify(error="Payment could not be completed. Check transaction history before retrying."), 503
     finally:
         release_db_connection(conn)
