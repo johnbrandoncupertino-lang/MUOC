@@ -530,9 +530,6 @@ def minebank_register():
         ):
             error = "The security check was not correct. Please solve the new challenge."
             registration_step = 4
-        elif not first_name or not last_name or not date_of_birth or not phone or not address or not city or not postal_code or not country:
-            error = "Complete all required personal details before continuing."
-            registration_step = 1
         elif not email or "@" not in email or len(email) > 320 or email.startswith("@") or email.endswith("@"):
             error = "Enter a valid email address."
             registration_step = 2
@@ -542,7 +539,7 @@ def minebank_register():
         elif len(password) < 8 or len(password) > 128:
             error = "Password must contain between 8 and 128 characters."
             registration_step = 3
-        elif password != confirm:
+        elif confirm and password != confirm:
             error = "Passwords do not match."
             registration_step = 3
         elif not pin.isdigit() or len(pin) != 6:
