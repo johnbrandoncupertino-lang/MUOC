@@ -106,6 +106,14 @@ local function writeAt(d, x, y, text, fg, bg, width)
   end)
 end
 
+local function writeCentered(d, y, text, fg, bg)
+  local w, h = displaySize(d)
+  if y < 1 or y > h then return end
+  local line = fit(safeText(text or ""), w)
+  local x = math.max(1, math.floor((w - #line) / 2) + 1)
+  writeAt(d, x, y, line, fg, bg, #line)
+end
+
 local function drawHeader(d, pageTitle, pageSubtitle)
   local w, h = displaySize(d)
   pcall(function()
@@ -113,14 +121,13 @@ local function drawHeader(d, pageTitle, pageSubtitle)
     d.setTextColor(colors.white)
     d.clear()
   end)
-  writeAt(d, 2, 1, "MINEBANK  /  THE NEW BANK", colors.lime, colors.black, w - 3)
-  writeAt(d, 2, 2, string.rep("=", math.max(1, w - 3)), colors.green, colors.black, w - 3)
-  writeAt(d, 2, 3, string.upper(safeText(pageTitle or title)), colors.white, colors.black, w - 3)
-  writeAt(d, 2, 4, safeText(pageSubtitle or subtitle), colors.lightGray, colors.black, w - 3)
-  writeAt(d, 2, 5, string.rep("-", math.max(1, w - 3)), colors.green, colors.black, w - 3)
-  writeAt(d, 2, h, "MINEBANK SECURE TERMINAL", colors.gray, colors.black, w - 3)
+  writeCentered(d, 1, "MINEBANK / THE NEW BANK", colors.lime, colors.black)
+  writeAt(d, 1, 2, string.rep("=", math.max(1, w)), colors.green, colors.black, w)
+  writeCentered(d, 3, string.upper(safeText(pageTitle or title)), colors.white, colors.black)
+  writeCentered(d, 4, safeText(pageSubtitle or subtitle), colors.lightGray, colors.black)
+  writeAt(d, 1, 5, string.rep("-", math.max(1, w)), colors.green, colors.black, w)
+  writeCentered(d, h, "MINEBANK SECURE TERMINAL", colors.gray, colors.black)
 end
-
 local function renderLog()
   withDisplay(function(d)
     local w, h = displaySize(d)
