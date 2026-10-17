@@ -9,7 +9,7 @@ These programs connect CC:Tweaked computers/turtles to the feature-flagged MineB
 - `merchant_checkout.lua`: trusted cashier workspace plus a separate customer-facing monitor flow. Creates a fixed-amount checkout, asks the customer to review/confirm, enter a PIN, choose Balance or CashLine, and explicitly authorise.
 - `atm.lua`: inventory-based ATM with withdrawals, deposits, transfers up to 1,000 Emeralds, recent history, card revocation, and durable journals for physical inventory operations.
 - `vending_machine.lua`: local per-machine product catalogue, touch-based stock/output setup, fixed-price checkout with Balance/CashLine selection, inventory checks, and a fail-closed fulfilment journal.
-- `minebank_ui.lua`: shared responsive Basalt2 UI, separate computer/monitor display roots, touch-card navigation, secure PIN keypad, guided inputs, HTTP client, floppy-card reader, inventory discovery and setup utilities. Basalt2 is required; programs fail closed if it is missing rather than dropping into numeric text menus.
+- `minebank_ui.lua`: shared native CC:Tweaked interface with terminal menus, touchscreen monitor buttons and keypad, HTTP client, floppy-card reader, inventory discovery and setup utilities. It has no Basalt or third-party UI dependency.
 
 ## Server setup
 
@@ -73,9 +73,9 @@ The code change does not itself apply the database migration, set deployment env
 
 ## All-in-one installer
 
-On a CC:Tweaked computer with HTTP enabled, run `wget run https://raw.githubusercontent.com/johnbrandoncupertino-lang/MUOC/main/minecraft/cc_tweaked/install.lua`. Alternatively, download `install.lua` from this directory and run it locally. The installer downloads Basalt2 and the supported MineBank programs into `/minebank`, stages all downloads before replacing existing files, and keeps the previous installation if a download fails. It does not request or embed customer credentials.
+On a CC:Tweaked computer with HTTP enabled, run `wget run https://raw.githubusercontent.com/johnbrandoncupertino-lang/MUOC/main/minecraft/cc_tweaked/install.lua`. Alternatively, download `install.lua` from this directory and run it locally. The installer downloads the supported MineBank programs into `/minebank`, stages all downloads before replacing existing files, and keeps the previous installation if a download fails. It does not request or embed customer credentials.
 
-The installer includes a pinned Basalt2 full release and its MIT license. Basalt2 project: https://github.com/Pyroxenium/Basalt2
+The interface uses the standard CC:Tweaked terminal and monitor APIs; no third-party UI framework is downloaded or required.
 
 ## Interface redesign notes
 
