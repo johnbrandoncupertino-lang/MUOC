@@ -143,18 +143,39 @@ local function customerPayment(cfg,checkout)
   if not pin then return false,"Payment cancelled." end
   if not pin:match("^%d%d%d%d%d%d$") then return false,"Wallet PIN must contain six digits." end
 
-  local source=ui.choose("CHOOSE PAYMENT METHOD",{
-    "MineBank Balance",
-    "CashLine credit",
-    "Cancel"
-  },"Amount: "..tostring(checkout.amount).." Emerald")
-  if source==3 or not source then return false,"Payment cancelled." end
-  local funding=source==1 and "BALANCE" or "CASHLINE"
+  local available, optionsErr, optionsStatus = ui.api("/payment-options","GET",card.credential)
+  local sourceOptions, sourceCodes = {}, {}
+  if available and type(available.funding_sources)=="table" then
+    for _, item in ipairs(available.funding_sources) do
+      if item.code=="BALANCE" or item.code=="CASHLINE" or item.code=="DYNAMIC_CASHLINE" then
+        sourceOptions[#sourceOptions+1]=tostring(item.label or item.code)
+        sourceCodes[#sourceCodes+1]=item.code
+      end
+    end
+  else
+    -- Balance is independent of CrediCheck. If credit options cannot be loaded,
+    -- do not offer a CashLine product that MineBank has not confirmed active.
+    sourceOptions[#sourceOptions+1]="MineBank Balance"
+    sourceCodes[#sourceCodes+1]="BALANCE"
+  end
+  sourceOptions[#sourceOptions+1]="Cancel"
+  local sourceHint = "Amount: "..tostring(checkout.amount).." Emerald"
+  if not available then sourceHint = sourceHint.." | Credit products unavailable; Balance only"
+  elseif #sourceCodes > 1 then sourceHint = sourceHint.." | Choose an active product"
+  end
+  local source=ui.choose("CHOOSE PAYMENT METHOD",sourceOptions,sourceHint)
+  if not source or source>#sourceCodes then return false,"Payment cancelled." end
+  local funding=sourceCodes[source]
+  local fundingLabels={
+    BALANCE="MineBank Balance",
+    CASHLINE="Standard CashLine",
+    DYNAMIC_CASHLINE="Dynamic CashLine",
+  }
 
   local final=ui.choose("AUTHORISE PAYMENT",{
     "Authorise "..tostring(checkout.amount).." Emerald",
     "Cancel"
-  },"Pay with "..(funding=="BALANCE" and "MineBank Balance" or "CashLine").."?")
+  },"Pay with "..tostring(fundingLabels[funding] or funding).."?")
   if final~=1 then return false,"Payment cancelled. No payment was sent." end
 
   ui.clear(); ui.header("MINEBANK PAYMENT","Checking with MineBank")
@@ -169,28 +190,22 @@ local function customerPayment(cfg,checkout)
     -- cannot be mistaken for a transient transport failure, and no payment POST
     -- is resent. CashLine eligibility/limit rejections arrive as HTTP 422.
     if httpStatus and (httpStatus==400 or httpStatus==401 or httpStatus==403 or httpStatus==404 or httpStatus==422) then
-      ui.clear(); ui.header("PAYMENT REJECTED","MineBank did not authorise this payment")
-      ui.message("MineBank response (HTTP "..tostring(httpStatus).."): "..tostring(err),false)
-      ui.message("The payment was rejected; no debit or merchant credit was committed. Return to the cashier and choose another available payment method.",true)
-      ui.pause()
-      return false,"Payment rejected by MineBank (HTTP "..tostring(httpStatus).."). No money was moved; use another payment method or resolve the account restriction."
+      ui.phase("DECLINED","declined")
+      ui.message("MineBank rejected the payment (HTTP "..tostring(httpStatus).."): "..tostring(err),false)
+      ui.waitSeconds(5,"DECLINED","declined")
+      return false,"Payment rejected by MineBank (HTTP "..tostring(httpStatus).."). No money was moved; use another available payment method or resolve the account restriction."
     end
     -- A real 409, a timeout, or a server/network failure can leave the caller
     -- uncertain about the original operation. Never send another POST: only
     -- GET the same checkout to reconcile its authoritative state.
-    ui.clear(); ui.header("PAYMENT REQUIRES REVIEW","No automatic payment retry will be sent")
-    ui.message("MineBank response"..(httpStatus and (" (HTTP "..tostring(httpStatus)..")") or "")..": "..tostring(err),false)
-    ui.message("Checking the original checkout status. Keep this checkout ID and do not repeat the payment.",true)
-    ui.pause()
+    ui.phase("CHECK STATUS","working")
     local status,statusErr,statusCode=ui.api("/merchant/checkouts/"..tostring(checkout.checkout_id),"GET",cfg.merchant_token)
     if status and status.status=="PAID" then
       recordSale(checkout,{transaction_id=status.transaction_id,funding_source=funding})
       clearReview()
-      ui.clear(); ui.header("PAYMENT COMPLETED","Confirmed by the original checkout")
-      ui.message("MineBank confirms the existing checkout is paid.",true)
-      ui.message("Transaction: "..tostring(status.transaction_id),true)
-      ui.pause()
-      return true,"Payment confirmed by checkout status."
+      ui.phase("APPROVED","approved")
+      ui.waitSeconds(5,"APPROVED","approved")
+      return true,"Payment confirmed by the original checkout status."
     end
     local review={
       checkout_id=tostring(checkout.checkout_id),
@@ -207,16 +222,8 @@ local function customerPayment(cfg,checkout)
     if not saveReview(review) then
       ui.message("CRITICAL: could not save local reconciliation record. Do not open another sale until this checkout is manually checked.",false)
     end
-    ui.clear(); ui.header("PAYMENT NOT CONFIRMED","Original checkout retained for reconciliation")
-    ui.message("Checkout: "..tostring(checkout.checkout_id).." • HTTP "..tostring(httpStatus or "unknown"),false)
-    ui.message("Payment result: "..tostring(err or "unknown"),false)
-    if status then
-      ui.message("Current checkout status: "..tostring(status.status)..". No second payment request was sent.",false)
-    else
-      ui.message("Checkout status could not be verified: "..tostring(statusErr or "unknown")..". Outcome must be reconciled before another sale.",false)
-    end
-    ui.pause()
-    return false,"Payment requires reconciliation."
+    ui.phase("CONTACT CASHIER","declined")
+    return false,"Payment requires reconciliation. The register remains locked."
   end
   if paid.status~="COMPLETED" then
     saveReview({
@@ -225,18 +232,13 @@ local function customerPayment(cfg,checkout)
       payment_http_status=200,payment_error="Unexpected response status: "..tostring(paid.status),
       checkout_status=tostring(paid.status),recorded_at=os.epoch("utc"),
     })
-    ui.clear(); ui.header("PAYMENT REQUIRES REVIEW","MineBank did not confirm COMPLETED")
-    ui.message("No success is shown. Reconcile checkout "..tostring(checkout.checkout_id).." before accepting another payment.",false)
-    ui.pause()
-    return false,"Unexpected payment status; reconciliation required."
+    ui.phase("CONTACT CASHIER","declined")
+    return false,"Unexpected payment status; reconciliation is required and the register remains locked."
   end
   recordSale(checkout,paid)
   clearReview()
-  ui.clear(); ui.header("PAYMENT APPROVED","Thank you for banking with MineBank")
-  ui.message(tostring(paid.amount).." Emerald paid successfully.",true)
-  ui.message("Funding source: "..tostring(paid.funding_source or funding),true)
-  ui.message("Transaction: "..tostring(paid.transaction_id),true)
-  ui.pause()
+  ui.phase("APPROVED","approved")
+  ui.waitSeconds(5,"APPROVED","approved")
   return true,"Payment completed."
 end
 
@@ -321,12 +323,24 @@ local function runSale(cfg,preset)
     local cancelled,cancelErr=ui.api("/merchant/checkouts/"..tostring(checkout.checkout_id).."/cancel",
       "POST",cfg.merchant_token,{})
     if not cancelled then
+      saveReview({
+        checkout_id=tostring(checkout.checkout_id),
+        amount=tonumber(checkout.amount) or 0,
+        payment_error="Customer result was not completed and checkout cancellation could not be confirmed.",
+        status_error=tostring(cancelErr or "unknown error"),
+        checkout_status="CANCEL_REVIEW",
+        recorded_at=os.epoch("utc"),
+      })
       ui.useTarget("terminal")
-      ui.message("The checkout could not be closed automatically: "..tostring(cancelErr or "unknown error")..". Verify its status before reuse.",false)
+      ui.message("The checkout could not be closed automatically: "..tostring(cancelErr or "unknown error")..". The register remains locked until reconciled.",false)
     end
   end
-  ui.useTarget("terminal")
-  ui.kioskIdle()
+  ui.useTarget("monitor")
+  if readJSON(REVIEW) then
+    ui.phase("CONTACT CASHIER","declined")
+  else
+    ui.kioskIdle()
+  end
   ui.useTarget("terminal")
   ui.clear(); ui.header(success and "SALE COMPLETE" or "SALE CLOSED","Cashier summary")
   ui.message(tostring(detail or (success and "Payment completed." or "Payment was not completed.")),success)
