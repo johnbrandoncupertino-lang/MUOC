@@ -115,7 +115,7 @@ local function returnInvalidItems(source,destination)
   return returned
 end
 local function draw(cfg)
-  return ui.choose("ATM", {
+  local options = {
     "Check balance",
     "Withdraw Emeralds",
     "Deposit Emeralds",
@@ -124,8 +124,11 @@ local function draw(cfg)
     "Revoke floppy card",
     "Diagnostics",
     "Resume pending operation",
-    "Exit"
-  }, "Touch a service. Physical Emeralds = MineBank Emeralds.")
+  }
+  -- A touchscreen is a customer surface, not a program-control surface.
+  -- Exit remains available from the physical computer keyboard/menu only.
+  if not ui.hasMonitor() then options[#options+1] = "Exit" end
+  return ui.choose("ATM", options, "Touch a service. Physical Emeralds = MineBank Emeralds.")
 end
 local function getCard()
   local card,err=ui.card()
