@@ -73,17 +73,22 @@ for i, file in ipairs(files) do
   -- require(), and some releases pass module paths with a trailing .lua.
   -- Normalize those paths before consulting the embedded module registry.
   if file.name == "basalt.lua" then
-    -- CC:Tweaked may not expose Lua's package library or native require().
-    -- Basalt's bundled module loader still reads package.path, so provide a
-    -- minimal compatibility table before any embedded module is evaluated.
-    body = "package = package or { path = '' }\\n" .. body
-    local original = 'local baseRequire = require\nrequire = function(path) if(project[path..".lua"])then if(loadedProject[path]==nil)then loadedProject[path] = project[path..".lua"]() end return loadedProject[path] end return baseRequire(path) end'
-    local patched = 'local baseRequire = require\nrequire = function(path) local key = path .. ".lua"; if project[key] == nil and type(path) == "string" and path:sub(-4) == ".lua" then key = path end; if project[key] then if loadedProject[key] == nil then loadedProject[key] = project[key]() end return loadedProject[key] end; if baseRequire then return baseRequire(path) end; error("Basalt2 bundled module not found: " .. tostring(path)) end'
-    if body:find(original, 1, true) then
-      body = body:gsub(original, function() return patched end, 1)
-      say("Applied Basalt2 require compatibility patch.", colors.lime)
+    -- Patch Basalt's bundled loader for CC:Tweaked, where package may be nil
+    -- and the native require function may not exist.
+    local patchedCount = 0
+    body, patchedCount = body:gsub("local baseRequire = require", "package = package or { path = '' }\\nlocal baseRequire = require", 1)
+    if patchedCount == 0 then
+      say("WARNING: Could not locate Basalt2 loader header; bundle left unchanged.", colors.yellow)
     else
-      say("WARNING: Basalt2 require wrapper did not match; using downloaded bundle unchanged.", colors.yellow)
+      local wrapper = 'require = function(path) if(project[path..".lua"])then if(loadedProject[path]==nil)then loadedProject[path] = project[path..".lua"]() end return loadedProject[path] end return baseRequire(path) end'
+      local safeWrapper = 'require = function(path) local key = path .. ".lua"; if project[key] == nil and type(path) == "string" and path:sub(-4) == ".lua" then key = path end; if project[key] then if loadedProject[key] == nil then loadedProject[key] = project[key]() end return loadedProject[key] end; if baseRequire then return baseRequire(path) end; error("Basalt2 bundled module not found: " .. tostring(path)) end'
+      local wrapperCount
+      body, wrapperCount = body:gsub(wrapper, function() return safeWrapper end, 1)
+      if wrapperCount > 0 then
+        say("Applied Basalt2 compatibility patch.", colors.lime)
+      else
+        say("WARNING: Basalt2 require wrapper did not match; package compatibility only was added.", colors.yellow)
+      end
     end
   end
 
