@@ -142,41 +142,74 @@ local function pin()
 end
 local function ensureConfig()
   local cfg=load(CONFIG)
-  if cfg and cfg.atm_token and cfg.api_base then ui.API_BASE=(cfg.api_base or ui.API_BASE):gsub("/+$",""); return cfg end
-  ui.clear(); ui.header("ATM SETUP","Guided peripheral configuration")
-  local base=ui.prompt("HTTPS MineBank API base",ui.API_BASE)
-  if not base:match("^https://") then return nil,"API base must use HTTPS." end
+  if cfg and cfg.pairing_version==1 and cfg.atm_token and cfg.api_base then
+    ui.API_BASE=(cfg.api_base or ui.API_BASE):gsub("/+$","")
+    return cfg
+  end
+
+  ui.clear(); ui.header("ATM SETUP","Pair this machine with MineBank")
+  local base=ui.prompt("MineBank HTTPS API base",cfg and cfg.api_base or ui.API_BASE)
+  if not base or not base:match("^https://") then return nil,"API base must use HTTPS." end
   ui.API_BASE=base:gsub("/+$","")
-  ui.clear(); ui.header("PROTECTED ATM SETUP","Operator-only • customers must not configure this machine")
-  local operatorPhrase=ui.prompt("Type OPERATOR SETUP to continue")
+
+  ui.clear(); ui.header("ATM SETUP","Operator controls • machine pairing")
+  local operatorPhrase=ui.prompt("Type OPERATOR SETUP on the physical computer")
   if operatorPhrase~="OPERATOR SETUP" then return nil,"Setup cancelled." end
-  local atmToken=ui.secret("Trusted ATM token from MineBank operator configuration: ")
-  if not atmToken or #atmToken<32 then return nil,"A trusted ATM token of at least 32 characters is required." end
-  local tokenCheck=ui.secret("Re-enter trusted ATM token to confirm: ")
-  if tokenCheck~=atmToken then return nil,"Token confirmation failed; setup was not saved." end
+
   local names=ui.findInventory()
   if #names<3 then
-    ui.clear(); ui.header("STORAGE NOT DETECTED","Found "..#names.." usable inventory peripheral(s); 3 are required")
+    ui.clear(); ui.header("STORAGE NOT DETECTED","Found "..#names.." usable inventories; 3 are required")
     print("Peripherals visible to this computer:")
-    local diagnostics=ui.inventoryDiagnostics()
-    for _,line in ipairs(diagnostics) do print(line) end
+    for _,line in ipairs(ui.inventoryDiagnostics()) do print(line) end
     print("")
     print("For remote chests, use a WIRED modem on the computer and")
     print("a wired modem on each chest, all linked by wired modem cable.")
     print("Wireless modems do not expose remote inventories.")
     print("If a chest is not listed above, CC:Tweaked cannot see it.")
-    return nil,"Only "..#names.." usable inventory peripheral(s) detected; see the storage diagnostics above."
+    return nil,"Only "..#names.." usable inventory peripherals detected; see the storage diagnostics above."
   end
-  local d=ui.choose("DEPOSIT INVENTORY",names,"Select the physical inventory that receives deposited Emeralds.")
+  local d=ui.choose("DEPOSIT INVENTORY",names,"Inventory that receives deposited Emeralds.")
   if not d or not names[d] then return nil,"Deposit inventory selection cancelled." end
-  local s=ui.choose("SECURE STOCK / ESCROW",names,"Select the secure inventory used for withdrawals and deposit escrow.")
+  local s=ui.choose("SECURE STOCK / ESCROW",names,"Inventory for ATM stock and deposit escrow.")
   if not s or not names[s] then return nil,"Secure stock inventory selection cancelled." end
-  local o=ui.choose("WITHDRAWAL OUTPUT",names,"Select the inventory that delivers withdrawn Emeralds to the customer.")
+  local o=ui.choose("WITHDRAWAL OUTPUT",names,"Inventory that delivers withdrawn Emeralds.")
   if not o or not names[o] then return nil,"Output inventory selection cancelled." end
   if d==s or d==o or s==o then return nil,"Select three different inventory peripherals." end
-  local cfg={api_base=ui.API_BASE,atm_token=atmToken,deposit_inventory=names[d],stock_inventory=names[s],output_inventory=names[o]}
-  if not save(CONFIG,cfg) then return nil,"Could not save ATM configuration." end
-  return cfg
+
+  ui.clear(); ui.header("PAIR ATM","Cardholder authorization required")
+  ui.message("Insert the MineBank floppy card of the customer pairing this machine. The machine credential will be created automatically; no Vercel environment token is needed.",true)
+  ui.pause()
+  local card,cardErr=ui.card()
+  if not card then return nil,cardErr or "Insert a valid MineBank card before pairing this ATM." end
+  local walletPin=ui.secret("Wallet PIN of the cardholder pairing this ATM")
+  if not walletPin or not walletPin:match("^%d%d%d%d%d%d$") then return nil,"A valid six-digit Wallet PIN is required for ATM pairing." end
+  local label=ui.prompt("ATM display name","ATM "..tostring(os.getComputerID()))
+  if not label or not label:match("%S") then label="ATM "..tostring(os.getComputerID()) end
+
+  local enrolled,err,status=ui.api("/atms/enroll","POST",card.credential,
+    {wallet_pin=walletPin,label=tostring(label):sub(1,80)},ui.key("atm-enroll"))
+  walletPin=nil
+  if not enrolled or type(enrolled.atm_token)~="string" or not enrolled.atm_token:match("^mbatm_") then
+    return nil,"ATM pairing failed"..(status and (" (HTTP "..tostring(status)..")") or "")..": "..tostring(err or "MineBank returned no machine credential")
+  end
+
+  local newCfg={
+    api_base=ui.API_BASE,
+    atm_token=enrolled.atm_token,
+    pairing_version=1,
+    atm_id=enrolled.atm_id,
+    atm_label=enrolled.label or label,
+    deposit_inventory=names[d],
+    stock_inventory=names[s],
+    output_inventory=names[o],
+  }
+  if not save(CONFIG,newCfg) then
+    return nil,"MineBank paired this machine, but the local config could not be saved. Keep the pairing token from the response private and check computer storage before retrying."
+  end
+  ui.clear(); ui.header("ATM PAIRED","Ready for MineBank transactions")
+  ui.message("This ATM is now paired as "..tostring(newCfg.atm_label)..". Its credential is saved locally and is not shown again.",true)
+  ui.pause()
+  return newCfg
 end
 local cfg,cfgErr=ensureConfig()
 if not cfg then ui.message(cfgErr,false); ui.pause(); return end
