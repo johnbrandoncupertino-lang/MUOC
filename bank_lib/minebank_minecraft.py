@@ -1142,6 +1142,98 @@ def minecraft_card_history():
     finally: release_db_connection(conn)
 
 
+@minecraft_bp.get("/merchant/checkouts")
+def list_merchant_checkouts():
+    """List recent checkouts for the authenticated merchant register."""
+    insecure = _transport_unavailable()
+    if insecure:
+        return insecure
+    token = _merchant_token()
+    if not token:
+        return jsonify(error="Merchant authorization is required."), 401
+    conn = get_db_connection()
+    if conn is None:
+        return jsonify(error="MineBank is temporarily unavailable."), 503
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT x.id,x.amount,x.description,x.status,x.transaction_id,
+                              x.created_at,x.paid_at,x.expires_at
+                       FROM minebank_minecraft_checkouts x
+                       JOIN minebank_minecraft_merchants m ON m.id=x.merchant_id
+                       WHERE m.token_hash=%s AND m.active=TRUE
+                       ORDER BY x.created_at DESC,x.id DESC LIMIT 20""",
+                    (hash_card_token(token),),
+                )
+                rows = cur.fetchall()
+                return jsonify(checkouts=[
+                    {
+                        "checkout_id": str(row[0]), "amount": int(row[1]),
+                        "description": row[2], "status": row[3],
+                        "transaction_id": row[4],
+                        "created_at": row[5].isoformat() if row[5] else None,
+                        "paid_at": row[6].isoformat() if row[6] else None,
+                        "expires_at": row[7].isoformat() if row[7] else None,
+                    } for row in rows
+                ]), 200
+    except Exception:
+        current_app.logger.exception("Minecraft merchant checkout history failed")
+        return jsonify(error="Checkout history is temporarily unavailable."), 503
+    finally:
+        release_db_connection(conn)
+
+
+@minecraft_bp.post("/merchant/checkouts/<checkout_id>/cancel")
+def cancel_merchant_checkout(checkout_id):
+    """Cancel a checkout only while it is open and not yet paid."""
+    insecure = _transport_unavailable()
+    if insecure:
+        return insecure
+    token = _merchant_token()
+    if not token:
+        return jsonify(error="Merchant authorization is required."), 401
+    if not str(checkout_id).isascii() or not str(checkout_id).isdigit() or len(str(checkout_id)) > 20:
+        return jsonify(error="Invalid checkout ID."), 400
+    conn = get_db_connection()
+    if conn is None:
+        return jsonify(error="MineBank is temporarily unavailable."), 503
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT x.id,x.status,m.client_id,m.account_id
+                       FROM minebank_minecraft_checkouts x
+                       JOIN minebank_minecraft_merchants m ON m.id=x.merchant_id
+                       WHERE x.id=%s AND m.token_hash=%s AND m.active=TRUE
+                       FOR UPDATE OF x,m""",
+                    (int(checkout_id), hash_card_token(token)),
+                )
+                row = cur.fetchone()
+                if not row:
+                    return jsonify(error="Checkout not found for this merchant."), 404
+                if row[1] != "OPEN":
+                    return jsonify(error="Only an open, unpaid checkout can be cancelled.",
+                                   error_code="CHECKOUT_CONFLICT", status=row[1]), 409
+                cur.execute(
+                    "UPDATE minebank_minecraft_checkouts SET status='CANCELLED' WHERE id=%s AND status='OPEN'",
+                    (row[0],),
+                )
+                if cur.rowcount != 1:
+                    return jsonify(error="Checkout state changed; check its status before continuing.",
+                                   error_code="CHECKOUT_CONFLICT"), 409
+                from .minebank_core import audit_event
+                audit_event(cur, actor_client_id=row[2], action="MINECRAFT_CHECKOUT_CANCELLED",
+                            target_type="CHECKOUT", target_id=str(row[0]), account_id=row[3],
+                            ip_address=request.remote_addr, context={"checkout_id": str(row[0])})
+        return jsonify(checkout_id=str(row[0]), status="CANCELLED"), 200
+    except Exception:
+        current_app.logger.exception("Minecraft merchant checkout cancellation failed")
+        return jsonify(error="Checkout could not be cancelled. Check its status before trying again."), 503
+    finally:
+        release_db_connection(conn)
+
+
 @minecraft_bp.get("/merchant/checkouts/<checkout_id>")
 def read_merchant_checkout(checkout_id):
     unavailable = _transactions_unavailable()
