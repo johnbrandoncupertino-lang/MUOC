@@ -318,14 +318,42 @@ while true do
              end
              if not card then
                local cancelled=cancelOpenCheckout(cfg,order)
-               ui.message(cancelled and "Purchase cancelled before authorisation. No payment was sent." or "Cancellation is unconfirmed. Keep the machine locked and reconcile the checkout.",cancelled)
-               ui.pause()
+
+               if cancelled then
+
+                 ui.phase("CANCELLED","declined")
+
+                 ui.waitSeconds(2,"CANCELLED","declined")
+
+                 ui.kioskIdle()
+
+               else
+
+                 ui.phase("CONTACT OPERATOR","declined")
+
+                 return
+
+               end
              else
                local pin=ui.secret("Customer Wallet PIN: ")
                if not pin or not pin:match("^%d%d%d%d%d%d$") then
                  local cancelled=cancelOpenCheckout(cfg,order)
-                 ui.message(cancelled and "A valid six-digit Wallet PIN is required. No payment was sent." or "Cancellation is unconfirmed. Reconcile the open checkout before another sale.",false)
-                 ui.pause()
+
+                 if cancelled then
+
+                   ui.message("A valid six-digit Wallet PIN is required. No payment was sent.",false)
+
+                   ui.waitSeconds(2,"CANCELLED","declined")
+
+                   ui.kioskIdle()
+
+                 else
+
+                   ui.phase("CONTACT OPERATOR","declined")
+
+                   return
+
+                 end
                else
                  local fundingOptions=ui.api("/payment-options","GET",card.credential)
                  local sourceOptions,sourceKinds={},{}
@@ -383,16 +411,26 @@ while true do
                            ui.message("No payment retry was sent. Order is locked for reconciliation before a new sale.",false)
                          end
                        end
-                       ui.pause()
+                       if order.state=="CANCELLED" then
+                         ui.phase("DECLINED","declined")
+                         ui.waitSeconds(5,"DECLINED","declined")
+                         ui.kioskIdle()
+                       else
+                         ui.phase("CONTACT OPERATOR","declined")
+                         return
+                       end
                      elseif paid.status~="COMPLETED" then
                        order.state="PAYMENT_REVIEW"
                        order.payment_error="Unexpected payment status: "..tostring(paid.status)
                        save(JOURNAL,order)
-                       ui.message("Payment status was not COMPLETED. No items dispensed; operator reconciliation is required.",false)
-                       ui.pause()
+                       ui.phase("CONTACT OPERATOR","declined")
+                       return
                      else
                        order.state="PAID"; order.transaction_id=paid.transaction_id
-                       if not save(JOURNAL,order) then ui.message("Payment completed but journal failed. Do not dispense; operator reconciliation required.",false); ui.pause()
+                       if not save(JOURNAL,order) then
+                         ui.message("Payment completed but journal failed. Do not dispense; operator reconciliation required.",false)
+                         ui.phase("CONTACT OPERATOR","declined")
+                         return
                        else
                          local ok,dispErr=dispense(cfg,order)
                          if ok then
@@ -410,11 +448,17 @@ while true do
                      if order.state~="COMPLETE" and order.state~="CANCELLED" then return end
                    else
                      local cancelled=cancelOpenCheckout(cfg,order)
-                      ui.message(cancelled and "Purchase cancelled. No payment was sent." or "Cancellation unconfirmed. Reconcile before another sale.",cancelled); ui.pause()
+
+                     if cancelled then ui.phase("CANCELLED","declined"); ui.waitSeconds(2,"CANCELLED","declined"); ui.kioskIdle()
+
+                     else ui.phase("CONTACT OPERATOR","declined"); return end
                    end
                  else
                    local cancelled=cancelOpenCheckout(cfg,order)
-                      ui.message(cancelled and "Purchase cancelled. No payment was sent." or "Cancellation unconfirmed. Reconcile before another sale.",cancelled); ui.pause()
+
+                   if cancelled then ui.phase("CANCELLED","declined"); ui.waitSeconds(2,"CANCELLED","declined"); ui.kioskIdle()
+
+                   else ui.phase("CONTACT OPERATOR","declined"); return end
                  end
                  pin=nil
                end
