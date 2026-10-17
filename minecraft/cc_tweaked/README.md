@@ -6,9 +6,9 @@ These programs connect CC:Tweaked computers/turtles to the feature-flagged MineB
 
 - `branch_terminal.lua`: authenticates a MineBank customer, lets them select an eligible account and issues a revocable card credential onto a floppy.
 - Balance checks are part of the ATM workflow; the redundant standalone `balance_reader.lua` program has been removed.
-- `merchant_checkout.lua`: trusted cashier workspace plus a separate customer-facing monitor flow. Creates a fixed-amount checkout, asks the customer to review/confirm, enter a PIN, choose Balance or CashLine, and explicitly authorise.
+- `merchant_checkout.lua`: cashier workspace plus a separate customer monitor flow. Creates fixed-amount checkouts, shows CashLine/Balance outcomes, keeps uncertain payments locked for reconciliation, offers recent local sales and MineBank checkout history, status inspection/cancellation, editable default descriptions and up to 12 quick-charge presets.
 - `atm.lua`: inventory-based ATM with withdrawals, deposits, transfers up to 1,000 Emeralds, recent history, card revocation, and durable journals for physical inventory operations.
-- `vending_machine.lua`: local per-machine product catalogue, touch-based stock/output setup, fixed-price checkout with Balance/CashLine selection, inventory checks, and a fail-closed fulfilment journal.
+- `vending_machine.lua`: local per-machine product catalogue, operator configuration for products/display name/inventories/API/merchant token/accepted payment methods, fixed-price checkout with Balance/CashLine selection, inventory checks, and a fail-closed fulfilment journal. Customer touch menus do not expose an Exit option; operator settings and exit remain on the physical computer.
 - `minebank_ui.lua`: shared native CC:Tweaked interface with terminal menus, touchscreen monitor buttons and keypad, HTTP client, floppy-card reader, inventory discovery and setup utilities. It has no Basalt or third-party UI dependency.
 
 ## Server setup
@@ -76,6 +76,17 @@ The code change does not itself apply the database migration, set deployment env
 On a CC:Tweaked computer with HTTP enabled, run `wget run https://raw.githubusercontent.com/johnbrandoncupertino-lang/MUOC/main/minecraft/cc_tweaked/install.lua`. Alternatively, download `install.lua` from this directory and run it locally. The installer downloads the supported MineBank programs into `/minebank`, stages all downloads before replacing existing files, and keeps the previous installation if a download fails. It does not request or embed customer credentials.
 
 The interface uses the standard CC:Tweaked terminal and monitor APIs; no third-party UI framework is downloaded or required.
+
+## Compact monitors and payment status
+
+- Monitor pages adapt to actual dimensions. On small displays, actions are presented one at a time; confirmation and message screens page through long content.
+- During payment, the display shows a changing “CONTACTING BANK” state and keeps “APPROVED” or “DECLINED” visible before presenting details. A tiny display necessarily shows one short line at a time.
+- Customer-facing monitor menus do not offer program exit. The cashier/terminal computer keeps operator controls.
+- If a payment request times out or gets a conflict, the software checks the existing checkout status rather than automatically resending the charge. It must remain locked if the outcome cannot be established.
+
+## ATM authorization note
+
+The ATM machine credential is still required for physical Emerald deposits and withdrawals. The deposit endpoint cannot independently observe the computer's inventory, so exposing it using only a card and PIN would let a client submit fictitious Emerald deposits and create bank balance without delivering physical items. The correct replacement is a reviewed, per-machine enrollment/pairing flow—not making the deposit endpoint anonymous.
 
 ## Interface redesign notes
 
