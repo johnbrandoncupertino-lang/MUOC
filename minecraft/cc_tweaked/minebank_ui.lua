@@ -455,7 +455,7 @@ local function touchInput(label, default, secret, numericOnly, isPin)
     else
       local rows = {"1234567890", "QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM-_"}
       local cw = math.max(1, math.floor((w - 2) / 10))
-      if y >= 9 and y <= 14 then
+      if y >= 9 and y <= 15 then
         local row = math.floor((y - 7) / 2)
         local col = math.floor((x - 2) / cw) + 1
         local rowText = rows[row]
