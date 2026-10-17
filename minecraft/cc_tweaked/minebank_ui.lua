@@ -10,6 +10,7 @@ local target = "terminal"
 local title = "MINEBANK"
 local subtitle = "THE NEW BANK"
 local messages = {}
+local phaseOverlay, phaseOverlayState = nil, nil
 local maxMessages = 120
 
 local function safeText(value)
@@ -126,10 +127,12 @@ local function renderLog()
     if w < 14 or h < 7 then
       pcall(function() d.setBackgroundColor(colors.black); d.setTextColor(colors.white); d.clear() end)
       local item = messages[#messages]
-      local content = item and item.text or (title ~= "" and title or subtitle)
+      local content = phaseOverlay or (item and item.text) or (title ~= "" and title or subtitle)
       local lines = wrapText(content, w)
       local line = lines[1] or title
-      local fg = item and (item.good and colors.white or colors.red) or colors.lime
+      local fg = phaseOverlayState == "approved" and colors.lime
+        or (phaseOverlayState == "declined" and colors.red)
+        or (item and (item.good and colors.white or colors.red) or colors.lime)
       writeAt(d, 1, math.max(1, math.floor((h + 1) / 2)), line, fg, colors.black, w)
       return
     end
@@ -255,6 +258,7 @@ end
 
 function M.clear()
   messages = {}
+  phaseOverlay, phaseOverlayState = nil, nil
   title = "MINEBANK"
   subtitle = "THE NEW BANK"
   renderLog()
@@ -264,6 +268,15 @@ function M.header(newTitle, newSubtitle)
   title = safeText(newTitle or "MINEBANK")
   subtitle = safeText(newSubtitle or "")
   messages = {}
+  phaseOverlay, phaseOverlayState = nil, nil
+  local lower = title:lower()
+  if lower:find("approved",1,true) or lower:find("completed",1,true) then
+    phaseOverlay, phaseOverlayState = "APPROVED", "approved"
+  elseif lower:find("declined",1,true) or lower:find("rejected",1,true) then
+    phaseOverlay, phaseOverlayState = "DECLINED", "declined"
+  elseif lower:find("contacting bank",1,true) then
+    phaseOverlay, phaseOverlayState = "CONTACTING BANK", "working"
+  end
   renderLog()
 end
 
@@ -271,6 +284,7 @@ function M.phase(label, state, frame)
   label = safeText(label or "PLEASE WAIT")
   state = state or "working"
   frame = tonumber(frame) or 0
+  phaseOverlay, phaseOverlayState = label, state
   local d = displayFor(target)
   local w, h = displaySize(d)
   local fg = state == "approved" and colors.lime or (state == "declined" and colors.red or colors.white)
