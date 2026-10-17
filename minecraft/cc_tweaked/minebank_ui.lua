@@ -290,36 +290,65 @@ function M.phase(label, state, frame)
   local fg = state == "approved" and colors.lime or (state == "declined" and colors.red or colors.white)
   local bg = colors.black
   withDisplay(function(display)
-    pcall(function()
-      display.setBackgroundColor(bg)
-      display.setTextColor(fg)
-      display.clear()
-    end)
+    pcall(function() display.setBackgroundColor(bg); display.setTextColor(fg); display.clear() end)
     if w >= 32 and h >= 14 then
-      writeAt(display, 2, 1, "MINEBANK", colors.lime, bg, w - 3)
-      writeAt(display, 2, 2, string.rep("-", math.max(1, w - 3)), colors.green, bg, w - 3)
-      local rows = wrapText(label, w - 3)
-      local start = math.max(1, math.floor((h - #rows) / 2))
-      for i, line in ipairs(rows) do writeAt(display, 2, start + i - 1, line, fg, bg, w - 3) end
+      local brand = "M I N E B A N K"
+      writeAt(display, math.max(1, math.floor((w - #brand) / 2) + 1), 2, brand, colors.lime, bg, #brand)
+      writeAt(display, 2, 3, string.rep("=", math.max(1, w - 3)), colors.green, bg, w - 3)
+      local main = state == "approved" and ("[ " .. label:upper() .. " ]")
+        or (state == "declined" and ("[ " .. label:upper() .. " ]") or label:upper())
+      local mainWidth = math.min(w - 4, #main)
+      local x = math.max(1, math.floor((w - mainWidth) / 2) + 1)
+      local y = math.max(4, math.floor(h / 2) - 1)
+      writeAt(display, x, y, main, fg, bg, mainWidth)
       if state == "working" then
+        local barWidth = math.min(26, w - 12)
+        local barX = math.max(1, math.floor((w - barWidth) / 2) + 1)
+        local barY = math.min(h - 3, y + 2)
+        local position = frame % math.max(1, barWidth)
+        local bar = {}
+        for i=1,barWidth do bar[i] = (i == position + 1) and "◆" or "─" end
+        writeAt(display, barX, barY, table.concat(bar), colors.lime, bg, barWidth)
         local dots = string.rep(".", frame % 4)
-        writeAt(display, 2, math.min(h, start + #rows + 1), dots, colors.lime, bg, w - 3)
+        if #dots > 0 then writeAt(display, math.max(1, math.floor((w - #dots) / 2) + 1), barY + 1, dots, colors.gray, bg, #dots) end
       elseif state == "approved" then
-        writeAt(display, 2, math.min(h, start + #rows + 1), "PAYMENT APPROVED", colors.lime, bg, w - 3)
+        local stamp = "PAYMENT APPROVED"
+        writeAt(display, math.max(1, math.floor((w - #stamp) / 2) + 1), math.min(h - 2, y + 2), stamp, colors.lime, bg, #stamp)
       elseif state == "declined" then
-        writeAt(display, 2, math.min(h, start + #rows + 1), "PAYMENT DECLINED", colors.red, bg, w - 3)
+        local stamp = "PAYMENT DECLINED"
+        writeAt(display, math.max(1, math.floor((w - #stamp) / 2) + 1), math.min(h - 2, y + 2), stamp, colors.red, bg, #stamp)
       end
+      local footer = "MINEBANK SECURE CHECKOUT"
+      writeAt(display, math.max(1, math.floor((w - #footer) / 2) + 1), h, footer, colors.gray, bg, #footer)
     else
-      -- Minimal mode deliberately shows one short state at a time. This remains
-      -- legible on one-block monitors instead of drawing clipped multi-line UI.
       local short = label:upper()
-      if state == "approved" then short = "APPROVED"
-      elseif state == "declined" then short = "DECLINED"
-      elseif state == "working" then short = short .. string.rep(".", frame % 4)
-      end
-      writeAt(display, 1, math.max(1, math.floor((h + 1) / 2)), short, fg, bg, w)
+      if w <= 8 then
+        if state == "approved" then short = "OK"
+        elseif state == "declined" then short = "NO"
+        elseif state == "working" then short = (frame % 2 == 0) and "BANK" or "WAIT"
+        end
+      elseif state == "working" then short = short .. string.rep(".", frame % 4) end
+      short = fit(short, w)
+      local y = math.max(1, math.floor((h + 1) / 2))
+      local x = math.max(1, math.floor((w - #short) / 2) + 1)
+      writeAt(display, x, y, short, fg, bg, #short)
     end
   end)
+end
+
+function M.waitSeconds(seconds, label, state)
+  local ticks = math.max(1, math.ceil((tonumber(seconds) or 0) * 4))
+  for frame = 0, ticks - 1 do
+    if label then M.phase(label, state or "working", frame) end
+    local timer = os.startTimer(0.25)
+    while true do
+      local event, timerId = os.pullEventRaw()
+      if event == "timer" and timerId == timer then break end
+      if event == "terminate" then pcall(os.cancelTimer, timer); return false end
+    end
+  end
+  if label then M.phase(label, state or "working", ticks) end
+  return true
 end
 
 function M.message(text, good)
@@ -389,30 +418,84 @@ function M.choose(menuTitle, options, menuSubtitle)
     local monitorW, monitorH
     withDisplay(function(d) monitorW, monitorH = displaySize(d) end)
     if monitorW < 32 or monitorH < 14 then
-      -- Compact one-monitor-block mode: show one option at a time so labels
-      -- remain legible. Tap the left half to cycle; tap the right half to choose.
+      if monitorW >= 14 and monitorH >= 6 then
+        local page = 1
+        local cols = monitorW >= 26 and 2 or 1
+        local rowsPerPage = math.max(1, monitorH - 3)
+        local pageSize = cols * rowsPerPage
+        while true do
+          local pages = math.max(1, math.ceil(#options / pageSize))
+          if page > pages then page = pages end
+          local first = (page - 1) * pageSize + 1
+          local last = math.min(#options, first + pageSize - 1)
+          withDisplay(function(d)
+            local w, h = displaySize(d)
+            pcall(function() d.setBackgroundColor(colors.black); d.setTextColor(colors.white); d.clear() end)
+            writeAt(d, 1, 1, fit(menuTitle:upper(), w), colors.lime, colors.black, w)
+            for i = first, last do
+              local offset = i - first
+              local col = math.floor(offset / rowsPerPage)
+              local row = offset % rowsPerPage
+              local cellW = cols == 1 and w or math.floor(w / cols)
+              local x = col * cellW + 1
+              local label = safeText(options[i])
+              local lower = label:lower()
+              local cancel = lower:find("cancel",1,true) or lower:find("back",1,true)
+              local danger = lower:find("revoke",1,true) or lower:find("delete",1,true)
+              drawButton(d, x, 2 + row, cellW, 1, label,
+                danger and colors.red or (cancel and colors.gray or colors.green),
+                cancel and colors.white or colors.black)
+            end
+            if pages > 1 then
+              local half = math.max(1, math.floor(w / 2))
+              if page > 1 then drawButton(d, 1, h, half, 1, "< PREV", colors.gray, colors.white) end
+              if page < pages then drawButton(d, half + 1, h, w - half, 1, "NEXT >", colors.gray, colors.white) end
+            else
+              writeAt(d, 1, h, "TAP A BUTTON", colors.lightGray, colors.black, w)
+            end
+          end, "monitor")
+          local x, y = waitTouch()
+          if not x then return nil end
+          local w, h = displaySize(displayFor("monitor"))
+          if pages > 1 and y == h then
+            if x <= math.floor(w / 2) and page > 1 then page = page - 1
+            elseif x > math.floor(w / 2) and page < pages then page = page + 1 end
+          else
+            local first = (page - 1) * pageSize + 1
+            local last = math.min(#options, first + pageSize - 1)
+            for i = first, last do
+              local offset = i - first
+              local col = math.floor(offset / rowsPerPage)
+              local row = offset % rowsPerPage
+              local cellW = cols == 1 and w or math.floor(w / cols)
+              local x1 = col * cellW + 1
+              if y == 2 + row and x >= x1 and x < x1 + cellW then return i end
+            end
+          end
+        end
+      end
+
+      -- A 1x1 display cannot show a conventional grid. These are real screen
+      -- buttons: tap > to advance through choices or OK to select the visible one.
       local selected = 1
       while true do
         withDisplay(function(d)
           local w, h = displaySize(d)
           pcall(function() d.setBackgroundColor(colors.black); d.setTextColor(colors.white); d.clear() end)
-          local label = safeText(options[selected])
-          if w >= 8 and h >= 4 then
-            writeAt(d, 1, 1, fit(menuTitle:upper(), w), colors.lime, colors.black, w)
-            local wrapped = wrapText(label, w)
-            local y = math.max(2, math.floor((h - #wrapped) / 2))
-            for i, line in ipairs(wrapped) do writeAt(d, 1, y + i - 1, line, colors.white, colors.black, w) end
-            writeAt(d, 1, h, tostring(selected) .. "/" .. tostring(#options) .. " L=NEXT R=OK", colors.gray, colors.black, w)
-          else
-            writeAt(d, 1, 1, fit(label:upper(), w), colors.lime, colors.black, w)
-          end
-        end)
-        local x = waitTouch()
+          if w >= 8 then writeAt(d, 1, 1, fit(menuTitle:upper(), w), colors.lime, colors.black, w) end
+          local label = fit(safeText(options[selected]), w)
+          local y = math.max(1, math.floor((h + 1) / 2))
+          writeAt(d, math.max(1, math.floor((w - #label) / 2) + 1), y, label, colors.white, colors.black, #label)
+          local half = math.max(1, math.floor(w / 2))
+          drawButton(d, 1, h, half, 1, half >= 5 and "NEXT" or ">", colors.gray, colors.white)
+          drawButton(d, half + 1, h, w - half, 1, "OK", colors.green, colors.black)
+        end, "monitor")
+        local x, y = waitTouch()
         if not x then return nil end
-        if monitorW >= 2 and x <= math.floor(monitorW / 2) then
-          selected = selected % #options + 1
-        else
-          return selected
+        local w, h = displaySize(displayFor("monitor"))
+        if y == h then
+          if x <= math.floor(w / 2) then selected = selected % #options + 1
+          else return selected end
         end
       end
     end
@@ -688,16 +771,24 @@ end
 function M.kioskIdle()
   local d = getMonitor()
   if not d then return false end
+  phaseOverlay, phaseOverlayState = nil, nil
   withDisplay(function(display)
     local w, h = displaySize(display)
     pcall(function() display.setBackgroundColor(colors.black); display.setTextColor(colors.white); display.clear() end)
     if w < 32 or h < 14 then
-      writeAt(display, 1, math.max(1, math.floor((h + 1) / 2)), "AWAITING CARD", colors.lime, colors.black, w)
+      local label = w <= 8 and "OPEN" or "LINE OPEN"
+      local x = math.max(1, math.floor((w - #label) / 2) + 1)
+      writeAt(display, x, math.max(1, math.floor((h + 1) / 2)), label, colors.lime, colors.black, #label)
     else
-      drawHeader(display, "PAYMENT POINT", "MINEBANK SECURE CHECKOUT")
-      drawButton(display, 2, 7, w - 3, math.max(2, math.min(4, h - 10)), "READY - WAITING FOR CASHIER", colors.green, colors.black)
-      writeAt(display, 2, math.min(h - 3, 13), "Your cashier will send a purchase here.", colors.white, colors.black, w - 3)
-      writeAt(display, 2, math.min(h - 2, 14), "No payment is requested while idle.", colors.lightGray, colors.black, w - 3)
+      local brand = "M I N E B A N K"
+      writeAt(display, math.max(1, math.floor((w - #brand) / 2) + 1), 2, brand, colors.lime, colors.black, #brand)
+      writeAt(display, 2, 3, string.rep("=", math.max(1,w-3)), colors.green, colors.black, w-3)
+      local label = "LINE OPEN"
+      drawButton(display, math.max(2, math.floor((w-26)/2)), math.floor(h/2)-1, math.min(26,w-4), 3, label, colors.green, colors.black)
+      local detail = "Ready for the next MineBank checkout"
+      writeAt(display, math.max(1, math.floor((w-#detail)/2)+1), math.floor(h/2)+3, detail, colors.lightGray, colors.black, #detail)
+      local footer = "SECURE TOUCH TERMINAL"
+      writeAt(display, math.max(1, math.floor((w-#footer)/2)+1), h, footer, colors.gray, colors.black, #footer)
     end
   end, "monitor")
   return true
