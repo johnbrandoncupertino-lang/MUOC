@@ -33,6 +33,15 @@ CREATE INDEX IF NOT EXISTS minebank_minecraft_cards_client_idx
 CREATE INDEX IF NOT EXISTS minebank_minecraft_cards_account_idx
     ON minebank_minecraft_cards(account_id, status);
 
+COMMENT ON TABLE minebank_minecraft_cards IS
+    'Revocable card credentials for MineBank Minecraft integration. Store only SHA-256 token hashes; never store raw card tokens, passwords, or Wallet PINs.';
+
+
+-- Composite ownership key for operation rows. The public card ID is not a
+-- secret and must never be used as the sole authorization check.
+CREATE UNIQUE INDEX IF NOT EXISTS minebank_minecraft_cards_id_client_id_uq
+    ON minebank_minecraft_cards(id, client_id);
+
 -- Per-machine ATM pairings replace the old deployment-wide shared environment token.
 -- The ATM secret is shown once by the pairing endpoint; only its SHA-256 hash is stored.
 CREATE TABLE IF NOT EXISTS minebank_minecraft_atms (
@@ -61,15 +70,6 @@ CREATE INDEX IF NOT EXISTS minebank_minecraft_atms_client_idx
 
 COMMENT ON TABLE minebank_minecraft_atms IS
     'Per-device ATM credentials created after MineBank card and Wallet PIN pairing. Only SHA-256 token hashes are stored.';
-
-COMMENT ON TABLE minebank_minecraft_cards IS
-    'Revocable card credentials for MineBank Minecraft integration. Store only SHA-256 token hashes; never store raw card tokens, passwords, or Wallet PINs.';
-
-
--- Composite ownership key for operation rows. The public card ID is not a
--- secret and must never be used as the sole authorization check.
-CREATE UNIQUE INDEX IF NOT EXISTS minebank_minecraft_cards_id_client_id_uq
-    ON minebank_minecraft_cards(id, client_id);
 
 -- Idempotency envelope for future Minecraft payments and withdrawals.
 -- A handler must validate card/client/account status and commit its ledger
