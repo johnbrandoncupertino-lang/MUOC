@@ -39,7 +39,8 @@ end
 local function displaySize(d)
   local w, h = 51, 19
   pcall(function() w, h = d.getSize() end)
-  return math.max(12, w or 51), math.max(8, h or 19)
+  -- Do not pretend a small monitor has more rows or columns than it actually has.
+  return math.max(1, w or 51), math.max(1, h or 19)
 end
 
 local function withDisplay(fn, name)
@@ -239,6 +240,47 @@ function M.header(newTitle, newSubtitle)
   subtitle = safeText(newSubtitle or "")
   messages = {}
   renderLog()
+end
+
+function M.phase(label, state, frame)
+  label = safeText(label or "PLEASE WAIT")
+  state = state or "working"
+  frame = tonumber(frame) or 0
+  local d = displayFor(target)
+  local w, h = displaySize(d)
+  local fg = state == "approved" and colors.lime or (state == "declined" and colors.red or colors.white)
+  local bg = colors.black
+  withDisplay(function(display)
+    pcall(function()
+      display.setBackgroundColor(bg)
+      display.setTextColor(fg)
+      display.clear()
+    end)
+    if w >= 14 and h >= 6 then
+      writeAt(display, 2, 1, "MINEBANK", colors.lime, bg, w - 3)
+      writeAt(display, 2, 2, string.rep("-", math.max(1, w - 3)), colors.green, bg, w - 3)
+      local rows = wrapText(label, w - 3)
+      local start = math.max(1, math.floor((h - #rows) / 2))
+      for i, line in ipairs(rows) do writeAt(display, 2, start + i - 1, line, fg, bg, w - 3) end
+      if state == "working" then
+        local dots = string.rep(".", frame % 4)
+        writeAt(display, 2, math.min(h, start + #rows + 1), dots, colors.lime, bg, w - 3)
+      elseif state == "approved" then
+        writeAt(display, 2, math.min(h, start + #rows + 1), "PAYMENT APPROVED", colors.lime, bg, w - 3)
+      elseif state == "declined" then
+        writeAt(display, 2, math.min(h, start + #rows + 1), "PAYMENT DECLINED", colors.red, bg, w - 3)
+      end
+    else
+      -- Minimal mode deliberately shows one short state at a time. This remains
+      -- legible on one-block monitors instead of drawing clipped multi-line UI.
+      local short = label:upper()
+      if state == "approved" then short = "APPROVED"
+      elseif state == "declined" then short = "DECLINED"
+      elseif state == "working" then short = short .. string.rep(".", frame % 4)
+      end
+      writeAt(display, 1, math.max(1, math.floor((h + 1) / 2)), short, fg, bg, w)
+    end
+  end)
 end
 
 function M.message(text, good)
@@ -519,30 +561,72 @@ function M.api(path, method, token, body, key, extraHeaders)
   for name, value in pairs(extraHeaders or {}) do headers[name] = value end
   local url = M.API_BASE .. path
   local requestBody = body and textutils.serializeJSON(body) or nil
+  if path == "/payments" then M.phase("CONTACTING BANK", "working", 0) end
   local options = {url=url, method=method or (requestBody and "POST" or "GET"), headers=headers, body=requestBody}
+  -- Modern CC:Tweaked accepts an options table. Retain a positional fallback
+  -- for older runtimes instead of failing before the request is sent.
   local ok, accepted, requestErr = pcall(http.request, options)
+  if not ok then
+    ok, accepted, requestErr = pcall(http.request, url, requestBody, headers)
+  end
   if not ok then return nil, "Network request could not start: " .. tostring(accepted) end
   if not accepted then return nil, tostring(requestErr or "MineBank request was rejected before sending."), 0 end
   local timer = os.startTimer(10)
+  local animationTimer = os.startTimer(0.35)
+  local frame = 0
   while true do
-    local event, a, b = os.pullEventRaw()
+    local event, a, b, c = os.pullEventRaw()
     if event == "http_success" and a == url then
       pcall(os.cancelTimer, timer)
+      pcall(os.cancelTimer, animationTimer)
       local response = b
       local status = response.getResponseCode and response.getResponseCode() or 200
       local raw = response.readAll()
       response.close()
       local parsed, data = pcall(textutils.unserializeJSON, raw)
       if not parsed or type(data) ~= "table" then return nil, "Invalid MineBank response (HTTP " .. status .. ").", status end
-      if status < 200 or status >= 300 then return nil, tostring(data.error or ("HTTP " .. status)), status end
+      if status < 200 or status >= 300 then
+        if path == "/payments" then M.phase("DECLINED", "declined") end
+        return nil, tostring(data.error or ("HTTP " .. status)) .. (data.error_code and (" [" .. tostring(data.error_code) .. "]") or ""), status
+      end
+      if path == "/payments" then M.phase("APPROVED", "approved") end
       return data, nil, status
+    elseif event == "timer" and a == animationTimer then
+      frame = frame + 1
+      pcall(os.cancelTimer, animationTimer)
+      animationTimer = os.startTimer(0.35)
+      if path == "/payments" then M.phase("CONTACTING BANK", "working", frame) end
     elseif event == "http_failure" and a == url then
       pcall(os.cancelTimer, timer)
+      pcall(os.cancelTimer, animationTimer)
+      -- CC:Tweaked can emit http_failure for non-2xx HTTP responses and include
+      -- the response handle as the third event argument. Preserve that status
+      -- and JSON error (e.g. CASHLINE_NOT_AVAILABLE) instead of mislabelling it
+      -- as a network outage and losing the bank's reason for rejection.
+      local response = c
+      if response and type(response.getResponseCode) == "function" then
+        local status = response.getResponseCode()
+        local raw = ""
+        pcall(function() raw = response.readAll() end)
+        pcall(function() response.close() end)
+        local parsed, data = pcall(textutils.unserializeJSON, raw)
+        local message = parsed and type(data) == "table" and (data.error or data.message) or nil
+        local code = parsed and type(data) == "table" and data.error_code or nil
+        if path == "/payments" then
+          M.phase(status == 409 and "CHECKOUT CONFLICT" or "DECLINED", "declined")
+        end
+        return nil, tostring(message or ("HTTP " .. tostring(status))) .. (code and (" [" .. tostring(code) .. "]") or ""), status
+      end
+      if path == "/payments" then M.phase("CHECK CONNECTION", "declined") end
+      pcall(os.cancelTimer, animationTimer)
       return nil, "Network request failed: " .. tostring(b or "unknown error")
     elseif event == "timer" and a == timer then
+      pcall(os.cancelTimer, animationTimer)
+      if path == "/payments" then M.phase("CHECKING BANK STATUS", "working") end
       return nil, "MineBank request timed out after 10 seconds. Its outcome is unknown; retry only with the saved idempotency key."
     elseif event == "terminate" then
       pcall(os.cancelTimer, timer)
+      pcall(os.cancelTimer, animationTimer)
       return nil, "Operation interrupted. Its outcome may be unknown; preserve the journal and reconcile before retrying."
     end
   end
