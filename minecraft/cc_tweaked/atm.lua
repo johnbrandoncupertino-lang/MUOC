@@ -306,10 +306,13 @@ local function runDeposit()
   local card=getCard(); if not card then return end
   ui.clear(); ui.header("DEPOSIT EMERALDS","Step 2 of 3 • Verify identity")
   local p=pin(); if not p then return end
-  ui.clear(); ui.header("DEPOSIT EMERALDS","Step 3 of 3 • Confirm deposit")
-  local ready=ui.choose("DEPOSIT EMERALDS",{"Count Emeralds in deposit slot","Cancel"},"Place the Emeralds you want to deposit in the deposit slot, then continue.")
-  if ready~=1 then ui.message("Deposit cancelled. No Emeralds moved.",true); ui.autoPause(2.4); return end
   local old=load(JOURNAL)
+  local resuming=old and old.state~="COMPLETE" and old.state~="CANCELLED"
+  if not resuming then
+    ui.clear(); ui.header("DEPOSIT EMERALDS","Step 3 of 3 • Confirm deposit")
+    local ready=ui.choose("DEPOSIT EMERALDS",{"Count Emeralds in deposit slot","Cancel"},"Place the Emeralds you want to deposit in the deposit slot, then continue.")
+    if ready~=1 then ui.message("Deposit cancelled. No Emeralds moved.",true); ui.autoPause(2.4); return end
+  end
   local order
   if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
     if old.kind~="DEPOSIT" or (old.state~="REQUEST_PENDING" and old.state~="ESCROW_PENDING") then
