@@ -415,6 +415,43 @@ function M.pause()
   return readTerminal("Press Enter to continue", nil, false) ~= nil
 end
 
+function M.autoPause(seconds)
+  if not isTouchTarget() then return M.pause() end
+  local d = displayFor("monitor")
+  local w, h = displaySize(d)
+  local rows = {}
+  local firstMessage = math.max(1, #messages - 3)
+  for i = firstMessage, #messages do
+    local item = messages[i]
+    for _, line in ipairs(wrapText(item.text, w)) do
+      rows[#rows + 1] = {text=line, good=item.good}
+    end
+  end
+  if #rows == 0 then rows[1] = {text=title ~= "" and title or "DONE", good=true} end
+  while #rows > 5 do table.remove(rows, 1) end
+  local dwell = math.max(0.65, (tonumber(seconds) or 2.4) / #rows)
+  for _, item in ipairs(rows) do
+    withDisplay(function(display)
+      local dw, dh = displaySize(display)
+      pcall(function() display.setBackgroundColor(colors.black); display.setTextColor(colors.white); display.clear() end)
+      local line = fit(item.text, dw)
+      local x = math.max(1, math.floor((dw - #line) / 2) + 1)
+      local y = math.max(1, math.floor((dh + 1) / 2))
+      writeAt(display, x, y, line, item.good and colors.lime or colors.red, colors.black, #line)
+      if dw >= 14 and dh >= 6 then
+        writeCentered(display, 1, item.good and "MINEBANK" or "ATTENTION", item.good and colors.lime or colors.red, colors.black)
+      end
+    end, "monitor")
+    local timer = os.startTimer(dwell)
+    while true do
+      local event, timerId = os.pullEventRaw()
+      if event == "timer" and timerId == timer then break end
+      if event == "terminate" then pcall(os.cancelTimer, timer); return false end
+    end
+  end
+  return true
+end
+
 function M.choose(menuTitle, options, menuSubtitle)
   options = options or {}
   if type(options) ~= "table" or #options == 0 then return nil end
@@ -482,19 +519,91 @@ function M.choose(menuTitle, options, menuSubtitle)
         end
       end
 
-      -- A 1x1 display cannot show a conventional grid. These are real screen
-      -- buttons: tap > to advance through choices or OK to select the visible one.
+      -- Ultra-compact monitors use a 2x2 direct-touch grid. Most choices
+      -- take one tap instead of cycling through every option with NEXT/OK.
+      local tinyPage = 1
+      local tinyPageSize = #options <= 4 and 4 or 3
+      local tinyPages = math.max(1, math.ceil(#options / tinyPageSize))
+      local function tinyLabel(raw, width)
+        local label = safeText(raw)
+        local lower = label:lower()
+        if lower:find("cancel",1,true) or lower:find("back",1,true) or lower == "no" then return width >= 4 and "BACK" or "NO" end
+        if lower:find("more services",1,true) then return "MORE" end
+        if lower:find("balance",1,true) then return "BAL" end
+        if lower:find("withdraw",1,true) then return "OUT" end
+        if lower:find("deposit",1,true) then return "IN" end
+        if lower:find("transfer",1,true) or lower:find("send",1,true) then return "SEND" end
+        if lower:find("history",1,true) or lower:find("transactions",1,true) then return "HIST" end
+        if lower:find("diagnostic",1,true) then return "INFO" end
+        if lower:find("resume",1,true) or lower:find("recover",1,true) then return "RESM" end
+        if lower:find("revoke",1,true) then return "REVK" end
+        if lower:find("authorise",1,true) or lower:find("authorize",1,true) or lower:find("confirm",1,true) then return "YES" end
+        if lower:find("pay ",1,true) then return "PAY" end
+        if lower:find("continue",1,true) then return "NEXT" end
+        if lower:find("ready",1,true) or lower:find("insert",1,true) then return "OK" end
+        if lower:find("operator",1,true) then return "HELP" end
+        return label:upper():gsub("[^A-Z0-9 ]",""):gsub("%s+",""):sub(1, math.max(1,width))
+      end
+      if monitorW >= 6 and monitorH >= 3 then
+        while true do
+          local first = (tinyPage - 1) * tinyPageSize + 1
+          local last = math.min(#options, first + tinyPageSize - 1)
+          withDisplay(function(d)
+            local w, h = displaySize(d)
+            pcall(function() d.setBackgroundColor(colors.black); d.setTextColor(colors.white); d.clear() end)
+            local cellW = math.floor(w / 2)
+            local cellH = math.floor(h / 2)
+            for slot = 1, 4 do
+              local col = (slot - 1) % 2
+              local row = math.floor((slot - 1) / 2)
+              local x = col * cellW + 1
+              local y = row * cellH + 1
+              local width = col == 0 and cellW or (w - cellW)
+              local height = row == 0 and cellH or (h - cellH)
+              local idx = first + slot - 1
+              if tinyPages > 1 and slot == 4 then
+                local nav = tinyPage < tinyPages and "NEXT" or "BACK"
+                drawButton(d, x, y, width, height, nav, colors.gray, colors.white)
+              elseif idx <= last then
+                local label = tinyLabel(options[idx], width)
+                local lower = safeText(options[idx]):lower()
+                local cancel = lower:find("cancel",1,true) or lower:find("back",1,true)
+                local danger = lower:find("revoke",1,true) or lower:find("delete",1,true)
+                drawButton(d, x, y, width, height, label,
+                  danger and colors.red or (cancel and colors.gray or colors.green),
+                  cancel and colors.white or colors.black)
+              else
+                drawButton(d, x, y, width, height, "", colors.black, colors.white)
+              end
+            end
+          end, "monitor")
+          local x, y = waitTouch()
+          if not x then return nil end
+          local w, h = displaySize(displayFor("monitor"))
+          local cellW = math.floor(w / 2)
+          local cellH = math.floor(h / 2)
+          local col = x > cellW and 1 or 0
+          local row = y > cellH and 1 or 0
+          local slot = row * 2 + col + 1
+          if tinyPages > 1 and slot == 4 then
+            tinyPage = tinyPage < tinyPages and tinyPage + 1 or 1
+          else
+            local idx = (tinyPage - 1) * tinyPageSize + slot
+            if idx <= #options then return idx end
+          end
+        end
+      end
+
+      -- Fallback for displays smaller than the normal 1-block monitor.
       local selected = 1
       while true do
         withDisplay(function(d)
           local w, h = displaySize(d)
           pcall(function() d.setBackgroundColor(colors.black); d.setTextColor(colors.white); d.clear() end)
-          if w >= 8 then writeAt(d, 1, 1, fit(menuTitle:upper(), w), colors.lime, colors.black, w) end
-          local label = fit(safeText(options[selected]), w)
-          local y = math.max(1, math.floor((h + 1) / 2))
-          writeAt(d, math.max(1, math.floor((w - #label) / 2) + 1), y, label, colors.white, colors.black, #label)
+          local label = tinyLabel(options[selected], w)
+          writeAt(d, 1, math.max(1, math.floor((h + 1) / 2)), label, colors.lime, colors.black, w)
           local half = math.max(1, math.floor(w / 2))
-          drawButton(d, 1, h, half, 1, half >= 5 and "NEXT" or ">", colors.gray, colors.white)
+          drawButton(d, 1, h, half, 1, ">", colors.gray, colors.white)
           drawButton(d, half + 1, h, w - half, 1, "OK", colors.green, colors.black)
         end, "monitor")
         local x, y = waitTouch()
