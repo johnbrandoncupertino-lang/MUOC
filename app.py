@@ -505,18 +505,12 @@ def minebank_register():
     else:
         email = request.form.get("email", "").strip().lower()
         password = request.form.get("password", "")
-        confirm = request.form.get("password_confirmation", "")
         pin = request.form.get("wallet_pin", "")
-        first_name = request.form.get("first_name", "").strip()[:100]
-        last_name = request.form.get("last_name", "").strip()[:100]
-        date_of_birth = request.form.get("date_of_birth", "").strip() or None
-        phone = request.form.get("phone", "").strip()[:40]
-        address = request.form.get("address", "").strip()[:300]
-        city = request.form.get("city", "").strip()[:120]
-        postal_code = request.form.get("postal_code", "").strip()[:20]
-        country = request.form.get("country", "").strip()[:80]
+        full_name = " ".join(request.form.get("full_name", "").strip().split())[:201]
+        name_parts = full_name.split(" ", 1) if full_name else []
+        first_name = (name_parts[0] if name_parts else "")[:100]
+        last_name = (name_parts[1] if len(name_parts) > 1 else "")[:100]
         occupation = request.form.get("occupation", "").strip()[:120]
-        state = request.form.get("state", "").strip()[:120]
         main_language = request.form.get("main_language", "").strip()[:80]
         discord_username = request.form.get("discord_username", "").strip()[:100]
         captcha_answer = request.form.get("captcha_answer", "").strip()
@@ -539,9 +533,6 @@ def minebank_register():
         elif len(password) < 8 or len(password) > 128:
             error = "Password must contain between 8 and 128 characters."
             registration_step = 3
-        elif confirm and password != confirm:
-            error = "Passwords do not match."
-            registration_step = 3
         elif not pin.isdigit() or len(pin) != 6:
             error = "Wallet PIN must contain exactly 6 digits."
             registration_step = 4
@@ -549,13 +540,12 @@ def minebank_register():
             try:
                 rows = execute_query(
                     """INSERT INTO bank_clients
-                       (email,password_hash,role,wallet_pin_hash,first_name,last_name,date_of_birth,
-                        phone,address,city,postal_code,country,occupation,state,main_language,discord_username)
-                       VALUES(%s,%s,'CLIENT',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                       (email,password_hash,role,wallet_pin_hash,first_name,last_name,
+                        occupation,main_language,discord_username)
+                       VALUES(%s,%s,'CLIENT',%s,%s,%s,%s,%s,%s)
                        RETURNING id""",
                     (email, generate_password_hash(password), generate_password_hash(pin),
-                     first_name, last_name, date_of_birth, phone, address, city, postal_code,
-                     country, occupation, state, main_language, discord_username),
+                     first_name, last_name, occupation, main_language, discord_username),
                     commit=True
                 )
                 client_id = rows[0][0]
@@ -1935,19 +1925,21 @@ def pay_payment_request(request_id):
 @require_login
 def minebank_profile_page():
     if request.method=="POST":
+        full_name = " ".join(request.form.get("full_name", "").strip().split())[:201]
+        name_parts = full_name.split(" ", 1) if full_name else []
+        first_name = (name_parts[0] if name_parts else "")[:100]
+        last_name = (name_parts[1] if len(name_parts) > 1 else "")[:100]
         execute_query("""UPDATE bank_clients
-                         SET date_of_birth=%s,first_name=%s,last_name=%s,occupation=%s,
-                             discord_username=%s,state=%s,main_language=%s,updated_at=CURRENT_TIMESTAMP
+                         SET first_name=%s,last_name=%s,occupation=%s,
+                             discord_username=%s,main_language=%s,
+                             date_of_birth=NULL,state=NULL,updated_at=CURRENT_TIMESTAMP
                          WHERE id=%s""",
-                      (request.form.get("date_of_birth") or None,
-                       request.form.get("first_name","").strip()[:100],
-                       request.form.get("last_name","").strip()[:100],
+                      (first_name, last_name,
                        request.form.get("occupation","").strip()[:120],
                        request.form.get("discord_username","").strip()[:100],
-                       request.form.get("state","").strip()[:120],
                        request.form.get("main_language","").strip()[:80],
                        session["minebank_client_id"]),commit=True)
-        flash("Profile updated.","success")
+        flash("Personal details updated.","success")
     return render_template("minebank_portal.html",mode="profile",client=current_client(),portal_active="profile")
 
 @app.route("/portal/notifications", methods=["GET","POST"])
