@@ -10,6 +10,7 @@ local target = "terminal"
 local title = "MINEBANK"
 local subtitle = "THE NEW BANK"
 local messages = {}
+local autoPauseCursor = 0
 local phaseOverlay, phaseOverlayState = nil, nil
 local maxMessages = 120
 
@@ -265,6 +266,7 @@ end
 
 function M.clear()
   messages = {}
+  autoPauseCursor = 0
   phaseOverlay, phaseOverlayState = nil, nil
   title = "MINEBANK"
   subtitle = "THE NEW BANK"
@@ -275,6 +277,7 @@ function M.header(newTitle, newSubtitle)
   title = safeText(newTitle or "MINEBANK")
   subtitle = safeText(newSubtitle or "")
   messages = {}
+  autoPauseCursor = 0
   phaseOverlay, phaseOverlayState = nil, nil
   local lower = title:lower()
   if lower:find("approved",1,true) or lower:find("completed",1,true) then
@@ -420,13 +423,15 @@ function M.autoPause(seconds)
   local d = displayFor("monitor")
   local w, h = displaySize(d)
   local rows = {}
-  local firstMessage = math.max(1, #messages - 3)
+  local firstMessage = autoPauseCursor + 1
+  if firstMessage > #messages then firstMessage = math.max(1, #messages) end
   for i = firstMessage, #messages do
     local item = messages[i]
     for _, line in ipairs(wrapText(item.text, w)) do
       rows[#rows + 1] = {text=line, good=item.good}
     end
   end
+  autoPauseCursor = #messages
   if #rows == 0 then rows[1] = {text=title ~= "" and title or "DONE", good=true} end
   while #rows > 5 do table.remove(rows, 1) end
   local dwell = math.max(0.65, (tonumber(seconds) or 2.4) / #rows)
