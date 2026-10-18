@@ -145,20 +145,7 @@ local function drawMore()
     "Back",
   }, "More MineBank services.")
 end
-local function runDiagnostics()
-  ui.clear(); ui.header("DIAGNOSTICS")
-  print("API: "..ui.API_BASE)
-  print("Deposit inventory: "..cfg.deposit_inventory)
-  print("Secure stock/escrow: "..cfg.stock_inventory)
-  print("Output inventory: "..cfg.output_inventory)
-  print("Deposit Emeralds: "..countEmeralds(depositInv))
-  print("Stock Emeralds: "..countEmeralds(stockInv))
-  print("Output Emeralds: "..countEmeralds(outputInv))
-  print("HTTP enabled: "..tostring(http~=nil))
-  print("Modem detected (optional): "..tostring(peripheral.find("modem")~=nil))
-  print("Monitor detected: "..tostring(peripheral.find("monitor")~=nil))
-  ui.autoPause(2.4)
-end
+
 local function getCard()
   local card,err=ui.card()
   if not card then ui.message(err,false); ui.autoPause(2.4); return nil end
@@ -464,6 +451,21 @@ local function runRecovery()
     end
     ui.autoPause(2.4)
   end
+end
+
+local function runDiagnostics()
+  ui.clear(); ui.header("DIAGNOSTICS")
+  print("API: "..ui.API_BASE)
+  print("Deposit inventory: "..cfg.deposit_inventory)
+  print("Secure stock/escrow: "..cfg.stock_inventory)
+  print("Output inventory: "..cfg.output_inventory)
+  print("Deposit Emeralds: "..countEmeralds(depositInv))
+  print("Stock Emeralds: "..countEmeralds(stockInv))
+  print("Output Emeralds: "..countEmeralds(outputInv))
+  print("HTTP enabled: "..tostring(http~=nil))
+  print("Modem detected (optional): "..tostring(peripheral.find("modem")~=nil))
+  print("Monitor detected: "..tostring(peripheral.find("monitor")~=nil))
+  ui.autoPause(2.4)
 end
 
 while true do
