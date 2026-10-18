@@ -470,7 +470,7 @@ function M.choose(menuTitle, options, menuSubtitle)
       if monitorW >= 14 and monitorH >= 6 then
         local page = 1
         local cols = monitorW >= 26 and 2 or 1
-        local rowsPerPage = math.max(1, monitorH - 3)
+        local rowsPerPage = math.max(1, monitorH - 4)
         local pageSize = cols * rowsPerPage
         while true do
           local pages = math.max(1, math.ceil(#options / pageSize))
