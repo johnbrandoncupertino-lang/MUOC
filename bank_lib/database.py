@@ -140,7 +140,14 @@ def ensure_minebank_schema():
                 execute_query("""ALTER TABLE bank_clients
                     ADD COLUMN IF NOT EXISTS discord_username VARCHAR(100),
                     ADD COLUMN IF NOT EXISTS state VARCHAR(120),
-                    ADD COLUMN IF NOT EXISTS main_language VARCHAR(80)""", fetch=False, commit=True)
+                    ADD COLUMN IF NOT EXISTS main_language VARCHAR(80),
+                    ALTER COLUMN date_of_birth DROP NOT NULL,
+                    ALTER COLUMN phone DROP NOT NULL,
+                    ALTER COLUMN address DROP NOT NULL,
+                    ALTER COLUMN city DROP NOT NULL,
+                    ALTER COLUMN postal_code DROP NOT NULL,
+                    ALTER COLUMN country DROP NOT NULL,
+                    ALTER COLUMN state DROP NOT NULL""", fetch=False, commit=True)
                 execute_query("""ALTER TABLE minebank_scheduled_transfers
                     ADD COLUMN IF NOT EXISTS funding_source VARCHAR(20) NOT NULL DEFAULT 'BALANCE'""", fetch=False, commit=True)
                 execute_query("ALTER TABLE settings ADD COLUMN IF NOT EXISTS system_suspended BOOLEAN NOT NULL DEFAULT FALSE", fetch=False, commit=True)
