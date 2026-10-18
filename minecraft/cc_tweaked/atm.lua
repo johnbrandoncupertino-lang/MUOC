@@ -237,7 +237,11 @@ if not depositInv or not stockInv or not outputInv then ui.message("Configured i
 ui.useTarget(ui.hasMonitor() and "monitor" or "terminal")
 
 local function runWithdrawal()
+  ui.clear(); ui.header("WITHDRAW EMERALDS","Step 1 of 3 • Card and PIN")
+  ui.message("Insert your MineBank floppy card, then enter your six-digit Wallet PIN when prompted.",true)
+  ui.autoPause(1.6)
   local card=getCard(); if not card then return end
+  ui.clear(); ui.header("WITHDRAW EMERALDS","Step 2 of 3 • Verify identity")
   local p=pin(); if not p then return end
   local old=load(JOURNAL)
   local order
@@ -248,10 +252,13 @@ local function runWithdrawal()
     if tostring(old.card_id or "")~=tostring(card.card_id or "") then ui.message("This unfinished withdrawal belongs to a different floppy card. Reinsert the original card.",false); ui.autoPause(2.4); return end
     order=old
   else
-    local amount=tonumber(ui.prompt("Whole Emeralds to withdraw (1-"..MAX_WITHDRAWAL..")"))
-    if not amount or amount%1~=0 or amount<1 or amount>MAX_WITHDRAWAL then ui.message("Invalid withdrawal amount.",false); ui.autoPause(2.4); return end
+    ui.clear(); ui.header("WITHDRAW EMERALDS","Step 3 of 3 • Enter amount")
+    local amount=tonumber(ui.prompt("Enter withdrawal amount in whole Emeralds (1-"..MAX_WITHDRAWAL..")"))
+    if not amount or amount%1~=0 or amount<1 or amount>MAX_WITHDRAWAL then ui.message("Invalid withdrawal amount. Enter a whole number from 1 to "..MAX_WITHDRAWAL..".",false); ui.autoPause(2.4); return end
     if countEmeralds(stockInv)<amount then ui.message("Secure stock does not contain enough emeralds.",false); ui.autoPause(2.4); return end
     if not canFit(outputInv,"minecraft:emerald",amount) then ui.message("Output inventory lacks space. No debit requested.",false); ui.autoPause(2.4); return end
+    local confirm=ui.choose("CONFIRM WITHDRAWAL",{"Withdraw "..amount.." Emeralds","Cancel"},"Your MineBank account will be debited before dispensing.")
+    if confirm~=1 then ui.message("Withdrawal cancelled. No debit requested.",true); ui.autoPause(2.4); return end
     order={version=1,key=ui.key("withdraw"),amount=amount,state="REQUEST_PENDING",kind="WITHDRAWAL",card_id=card.card_id}
     if not save(JOURNAL,order) then ui.message("Could not persist journal. No request sent.",false); ui.autoPause(2.4); return end
   end
@@ -293,8 +300,15 @@ local function runWithdrawal()
 end
 
 local function runDeposit()
+  ui.clear(); ui.header("DEPOSIT EMERALDS","Step 1 of 3 • Card and PIN")
+  ui.message("Insert your MineBank floppy card, then enter your six-digit Wallet PIN when prompted.",true)
+  ui.autoPause(1.6)
   local card=getCard(); if not card then return end
+  ui.clear(); ui.header("DEPOSIT EMERALDS","Step 2 of 3 • Verify identity")
   local p=pin(); if not p then return end
+  ui.clear(); ui.header("DEPOSIT EMERALDS","Step 3 of 3 • Confirm deposit")
+  local ready=ui.choose("DEPOSIT EMERALDS",{"Count Emeralds in deposit slot","Cancel"},"Place the Emeralds you want to deposit in the deposit slot, then continue.")
+  if ready~=1 then ui.message("Deposit cancelled. No Emeralds moved.",true); ui.autoPause(2.4); return end
   local old=load(JOURNAL)
   local order
   if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
@@ -312,6 +326,8 @@ local function runDeposit()
     end
     if amount>4096 then ui.message("Deposit is limited to 4,096 Emeralds per operation.",false); ui.autoPause(2.4); return end
     if not canFit(stockInv,"minecraft:emerald",amount) then ui.message("Secure stock inventory lacks space. No items moved.",false); ui.autoPause(2.4); return end
+    local confirm=ui.choose("CONFIRM DEPOSIT",{"Deposit "..amount.." Emeralds","Cancel"},"Detected "..amount.." Emeralds. Confirm to secure and credit them.")
+    if confirm~=1 then ui.message("Deposit cancelled. No Emeralds moved.",true); ui.autoPause(2.4); return end
     order={version=1,key=ui.key("deposit"),amount=amount,state="ESCROW_PENDING",kind="DEPOSIT",card_id=card.card_id}
     if not save(JOURNAL,order) then ui.message("Could not persist deposit journal; items left untouched.",false); ui.autoPause(2.4); return end
   end
