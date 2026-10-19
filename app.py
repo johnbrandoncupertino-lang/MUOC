@@ -45,6 +45,7 @@ from bank_lib.credicheck import (
     close_dynamic_cashline,
 )
 from bank_lib.minebank_security import ensure_security_schema, validate_session, list_active_sessions, terminate_session, terminate_other_sessions, security_event
+from bank_lib.minebank_privileges import resolve_privileges
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 # Vercel may run multiple serverless workers. Flask's signed session cookie
@@ -1297,6 +1298,27 @@ def minebank_statements_csv():
     for row in rows:
         writer.writerow([row["transaction_id"],row["transaction_type"],row["amount"],row["fee"],row["status"],row["description"],row["reference_id"],row["created_at"]])
     return Response(out.getvalue(),mimetype="text/csv",headers={"Content-Disposition":"attachment; filename=minebank-statement.csv"})
+
+@app.route("/portal/privileges")
+@require_login
+def minebank_privileges_page():
+    """Show server-resolved tier metadata without activating unapproved benefits."""
+    account_rows = get_accounts(session["minebank_client_id"])
+    privilege_accounts = []
+    for account_row in account_rows:
+        policy = resolve_privileges(
+            account_row.get("tier_code"),
+            account_row.get("account_type"),
+            account_row.get("status"),
+        )
+        privilege_accounts.append({"account": account_row, "policy": policy})
+    return render_template(
+        "minebank_portal.html",
+        mode="privileges",
+        privilege_accounts=privilege_accounts,
+        portal_active="privileges",
+    )
+
 
 @app.route("/portal/plans", methods=["GET","POST"])
 @require_login
