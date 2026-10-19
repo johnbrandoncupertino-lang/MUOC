@@ -39,6 +39,8 @@ _TIER_POLICIES = {
         "account_type": "BUSINESS",
         "service_level": "CORE",
         "mineclubs_access_level": "GENERAL",
+        "mineclubs_admission_fee": 50,
+        "mineclubs_unlimited_admission": False,
         "points_earning_class": "BASE",
     },
     "BUSINESS_PRO": {
