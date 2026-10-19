@@ -16,8 +16,8 @@ These programs connect CC:Tweaked computers/turtles to the feature-flagged MineB
 1. Review the code and run the repository tests before enabling the integration.
 2. Apply `extras/minebank_minecraft.sql` to the intended PostgreSQL database through the normal reviewed migration process. This is separate from `extras/minebank_v2.sql`; application requests do not apply this migration automatically.
 3. Confirm the schema includes `minebank_minecraft_cards`, `minebank_minecraft_operations`, `minebank_minecraft_merchants`, and `minebank_minecraft_checkouts`.
-4. Keep `MINEBANK_MINECRAFT_ENABLED` unset or false until the card schema is migrated and staging is verified. Keep `MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED` unset/false until the transaction schema is migrated, `MINEBANK_MINECRAFT_ATM_TOKEN` is configured, and money-movement tests pass; set it to `true` only for the intended deployment after explicit review.
-5. Configure a strong random `MINEBANK_MINECRAFT_ATM_TOKEN` (at least 32 characters) in the API deployment and enter the same secret in the trusted ATM setup wizard. Keep it off the floppy cards, out of the repository and away from player-accessible machines.
+4. Keep `MINEBANK_MINECRAFT_ENABLED` unset or false until the card schema is migrated and staging is verified. Keep `MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED` unset/false until the transaction schema is migrated and money-movement tests pass; set it to `true` only for the intended deployment after explicit review.
+5. ATM pairing uses a per-machine credential issued by `POST /atms/enroll` after an active card and Wallet PIN are verified. Do not configure or share a global ATM token. Keep the locally stored `minebank_atm.json` private and never copy it to a player-accessible floppy.
 6. Confirm HTTPS forwarding is correct at the Vercel deployment. All Lua programs require HTTPS.
 
 ## Merchant provisioning
@@ -69,6 +69,12 @@ Merchant checkout amounts are supplied by the trusted merchant terminal and stor
 - `POST /cards/revoke-self`: revoke the inserted card with its credential, Wallet PIN and explicit confirmation.
 
 The code change does not itself apply the database migration, set deployment environment variables, or verify a live Vercel deployment. Test in staging before enabling production money movement.
+
+### ATM recovery improvements
+
+- Before dispensing, withdrawals persist a stock/output checkpoint and use the same idempotency key to recover a bank-confirmed debit. A confirmed dispense is never automatically repeated.
+- Deposits persist input/stock checkpoints before moving Emeralds into escrow. If the computer stops partway through the move, recovery compares both inventories and completes only the verified remainder. A mismatch fails closed for operator reconciliation.
+- The Recovery Center can query MineBank for a customer-scoped operation receipt. It can mark confirmed transfers/deposits complete without replaying the request, and resume a confirmed withdrawal using its existing ticket. A not-found response is not treated as proof that an operation never happened; the local journal and inventories are preserved.
 
 
 ## All-in-one installer
