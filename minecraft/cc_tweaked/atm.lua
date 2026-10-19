@@ -152,6 +152,57 @@ local function cancelRejected(order,err)
   order.cancelled_at=os.epoch("utc")
   return save(JOURNAL,order)
 end
+local function refundRejectedDeposit(order)
+  local stockBefore=tonumber(order.stock_before_refund)
+  local depositBefore=tonumber(order.deposit_before_refund)
+  if not stockBefore or not depositBefore then
+    ui.message("Deposit refund has no saved inventory checkpoint. Do not move Emeralds; operator reconciliation is required.",false)
+    ui.autoPause(3.2)
+    return false
+  end
+  local stockNow=countEmeralds(stockInv)
+  local depositNow=countEmeralds(depositInv)
+  local movedFromStock=stockBefore-stockNow
+  local receivedByInput=depositNow-depositBefore
+  if movedFromStock<0 or receivedByInput<0 or movedFromStock~=receivedByInput
+    or movedFromStock>tonumber(order.amount or 0) then
+    ui.message("Deposit refund checkpoint mismatch (stock returned "..tostring(movedFromStock)..", input received "..tostring(receivedByInput).."). No further items were moved.",false)
+    ui.autoPause(3.2)
+    return false
+  end
+  local remaining=tonumber(order.amount)-movedFromStock
+  if remaining>0 then
+    if not canFit(depositInv,"minecraft:emerald",remaining) then
+      ui.message("The deposit input lacks space for the remaining refund. Keep the journal and secure stock unchanged until space is available.",false)
+      ui.autoPause(3)
+      return false
+    end
+    local returned=moveEmeraldAmount(stockInv,depositInv,remaining,cfg.deposit_inventory)
+    if returned~=remaining then
+      ui.message("Deposit refund is incomplete ("..tostring(movedFromStock+returned).." of "..tostring(order.amount).."). The REFUND_PENDING journal is retained; resume after checking both inventories.",false)
+      ui.autoPause(3.2)
+      return false
+    end
+  end
+  if countEmeralds(stockInv)~=stockBefore-tonumber(order.amount)
+    or countEmeralds(depositInv)~=depositBefore+tonumber(order.amount) then
+    ui.message("The full deposit refund could not be verified against both inventories. Preserve the journal and ask the operator to reconcile it.",false)
+    ui.autoPause(3.2)
+    return false
+  end
+  order.state="CANCELLED"
+  order.cancelled_at=os.epoch("utc")
+  order.failure=tostring(order.rejection or "MineBank rejected the deposit; escrow was returned.")
+  if not save(JOURNAL,order) then
+    ui.message("The refund is physically complete, but the cancellation journal could not be saved. Keep the ATM stopped and reconcile.",false)
+    ui.autoPause(3.2)
+    return false
+  end
+  ui.message("DEPOSIT REJECTED — all "..tostring(order.amount).." Emeralds have been returned to the deposit input. No credit was issued.",false)
+  ui.autoPause(3)
+  return true
+end
+
 local function returnInvalidItems(source,destination)
   local returned=0
   for slot,detail in pairs(source.list()) do
@@ -442,11 +493,11 @@ local function runDeposit()
   end
   local order
   if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
-    if old.kind~="DEPOSIT" or (old.state~="REQUEST_PENDING" and old.state~="ESCROW_PENDING") then
+    if old.kind~="DEPOSIT" or (old.state~="REQUEST_PENDING" and old.state~="ESCROW_PENDING" and old.state~="REFUND_PENDING") then
       ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.autoPause(2.4); return
     end
     if tostring(old.card_id or "")~=tostring(card.card_id or "") then
-      if old.state=="ESCROW_PENDING" or not adoptPendingOperationForSameCustomer(old,card,"DEPOSIT") then return end
+      if old.state=="ESCROW_PENDING" or old.state=="REFUND_PENDING" or not adoptPendingOperationForSameCustomer(old,card,"DEPOSIT") then return end
     end
     order=old
   else
@@ -462,6 +513,10 @@ local function runDeposit()
     if confirm~=1 then ui.message("Deposit cancelled. No Emeralds moved.",true); ui.autoPause(2.4); return end
     order={version=2,key=ui.key("deposit"),amount=amount,state="ESCROW_PENDING",kind="DEPOSIT",card_id=card.card_id,deposit_before=countEmeralds(depositInv),stock_before_escrow=countEmeralds(stockInv)}
     if not save(JOURNAL,order) then ui.message("Could not persist deposit journal; items left untouched.",false); ui.autoPause(2.4); return end
+  end
+  if order.state=="REFUND_PENDING" then
+    refundRejectedDeposit(order)
+    return
   end
   if order.state=="ESCROW_PENDING" then
     -- Recover interrupted physical escrow transfers. The journal is persisted
@@ -517,17 +572,25 @@ local function runDeposit()
   end
   local result,err,status=ui.api("/deposits","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
   if not result then
-    if (status==0 or (status and status>=400 and status<500)) and canFit(depositInv,"minecraft:emerald",order.amount) then
-      local returned=moveEmeraldAmount(stockInv,depositInv,order.amount,cfg.deposit_inventory)
-      if returned==order.amount and cancelRejected(order,err) then
-        ui.message("MineBank rejected the deposit; all "..order.amount.." Emeralds were returned and the operation was cancelled.",false)
-      else
-        ui.message("Deposit was rejected, but the physical refund could not be verified. Preserve the journal and contact the operator.",false)
+    if status==0 or (status and status>=400 and status<500) then
+      -- Persist refund intent and both inventory checkpoints before returning
+      -- any escrow. A restart can resume the refund without resubmitting a
+      -- bank request or returning the same amount twice.
+      order.state="REFUND_PENDING"
+      order.rejection=tostring(err or "MineBank rejected the deposit.")
+      order.stock_before_refund=countEmeralds(stockInv)
+      order.deposit_before_refund=countEmeralds(depositInv)
+      if not save(JOURNAL,order) then
+        ui.message("MineBank rejected the deposit, but refund intent could not be saved. Do not move Emeralds; operator reconciliation is required.",false)
+        ui.autoPause(3.2)
+        return
       end
+      refundRejectedDeposit(order)
     else
-      ui.message("Deposit outcome is unknown: "..tostring(err)..". Emeralds remain in secure stock; retry the same operation to reconcile it.",false)
+      ui.message("Deposit outcome is unknown: "..tostring(err)..". Emeralds remain in secure stock; check MineBank status or retry the same saved operation. Do not move escrow manually.",false)
+      ui.autoPause(3)
     end
-    ui.autoPause(2.4); return
+    return
   end
   order.state="COMPLETE"; order.transaction_id=result.transaction_id; order.completed_at=os.epoch("utc")
   if not save(JOURNAL,order) then ui.message("MineBank confirmed the deposit but journal update failed. Preserve the operation key and reconcile.",false); ui.autoPause(2.4); return end
