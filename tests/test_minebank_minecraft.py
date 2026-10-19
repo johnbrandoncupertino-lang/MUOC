@@ -117,6 +117,63 @@ def test_minecraft_operation_status_rejects_malformed_key_before_database_access
     assert "operation key" in response.get_json()["error"].lower()
 
 
+def test_minecraft_operation_status_returns_receipt_to_matching_customer(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, query, params=()):
+            self.query = query
+            self.params = params
+
+        def fetchone(self):
+            assert "FROM minebank_minecraft_operations" in self.query
+            assert self.params == (72, "atm-status-key")
+            return ("WITHDRAWAL", "COMPLETED",
+                    {"transaction_id": "MBTX-RECOVERY"}, "MBTX-RECOVERY", 64)
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    monkeypatch.setattr(minecraft_api, "_client_id_for_card_token",
+                        lambda cursor, token: 72)
+    monkeypatch.setattr(minecraft_api, "get_db_connection", lambda: FakeConnection())
+    monkeypatch.setattr(minecraft_api, "release_db_connection", lambda connection: None)
+
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+    response = app.test_client().get(
+        "/api/v1/minecraft/operations/atm-status-key",
+        headers={
+            "Authorization": "Bearer mbmc_" + "x" * 48,
+            "X-Forwarded-Proto": "https",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.get_json() == {
+        "found": True,
+        "operation_type": "WITHDRAWAL",
+        "status": "COMPLETED",
+        "response": {"transaction_id": "MBTX-RECOVERY"},
+        "transaction_id": "MBTX-RECOVERY",
+        "amount": 64,
+    }
+
+
 def test_minecraft_withdrawal_requires_idempotency_key(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
