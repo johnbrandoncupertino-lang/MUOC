@@ -152,11 +152,33 @@ local function customerPayment(cfg,checkout)
         sourceCodes[#sourceCodes+1]=item.code
       end
     end
+    local reasons=available.unavailable_reasons
+    if type(reasons)=="table" and #reasons>0 then
+      ui.message("Some credit methods are unavailable: "..table.concat(reasons," | "),false)
+      ui.autoPause(2.4)
+    end
   else
-    -- Balance is independent of CrediCheck. If credit options cannot be loaded,
-    -- do not offer a CashLine product that MineBank has not confirmed active.
-    sourceOptions[#sourceOptions+1]="MineBank Balance"
-    sourceCodes[#sourceCodes+1]="BALANCE"
+    -- Do not silently disguise a failed funding-options lookup as a customer
+    -- who has no CashLine. Let the customer retry or explicitly choose Balance.
+    ui.clear(); ui.header("CREDIT OPTIONS UNAVAILABLE","MineBank could not verify CashLine")
+    ui.message(tostring(optionsErr or (available and available.error) or "Payment methods could not be verified."),false)
+    local fallback=ui.choose("CONTINUE?",{"Use MineBank Balance","Retry payment methods","Cancel"},"CashLine has not been verified. No payment has been sent.")
+    if fallback==2 then
+      available, optionsErr, optionsStatus = ui.api("/payment-options?amount="..tostring(checkout.amount),"GET",card.credential)
+      if available and type(available.funding_sources)=="table" then
+        for _, item in ipairs(available.funding_sources) do
+          if item.code=="BALANCE" or item.code=="CASHLINE" or item.code=="DYNAMIC_CASHLINE" then
+            sourceOptions[#sourceOptions+1]=tostring(item.label or item.code)
+            sourceCodes[#sourceCodes+1]=item.code
+          end
+        end
+      end
+    elseif fallback==1 then
+      sourceOptions[#sourceOptions+1]="MineBank Balance"
+      sourceCodes[#sourceCodes+1]="BALANCE"
+    else
+      return false,"Payment cancelled because CashLine availability could not be verified."
+    end
   end
   if #sourceCodes == 0 then
     local reason=available and tostring(available.message or "No available payment source can cover this purchase.") or "MineBank could not verify credit products. Try again or choose another cashier."
