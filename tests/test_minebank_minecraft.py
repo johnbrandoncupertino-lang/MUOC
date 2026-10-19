@@ -177,6 +177,7 @@ def test_minecraft_operation_status_returns_receipt_to_matching_customer(monkeyp
 def test_minecraft_withdrawal_requires_idempotency_key(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setattr(minecraft_api, "_atm_authorized", lambda: True)
     monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
@@ -195,6 +196,7 @@ def test_minecraft_withdrawal_requires_idempotency_key(monkeypatch):
 def test_minecraft_withdrawal_rejects_non_integer_amounts(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setattr(minecraft_api, "_atm_authorized", lambda: True)
     monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
@@ -309,6 +311,7 @@ def test_clubcash_cashline_advance_requires_wallet_pin(monkeypatch):
 def test_minecraft_withdrawal_requires_wallet_pin(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setattr(minecraft_api, "_atm_authorized", lambda: True)
     monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
@@ -327,6 +330,7 @@ def test_minecraft_withdrawal_requires_wallet_pin(monkeypatch):
 def test_minecraft_deposit_requires_wallet_pin(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setattr(minecraft_api, "_atm_authorized", lambda: True)
     monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
