@@ -46,19 +46,60 @@ local function save(path,value)
   if fs.exists(backup) then fs.delete(backup) end
   return true
 end
+local function readJournalFile(file)
+  if not fs.exists(file) then return nil,false end
+  local h=fs.open(file,"r")
+  if not h then return nil,false end
+  local raw=h.readAll(); h.close()
+  local ok,value=pcall(textutils.unserializeJSON,raw)
+  if ok and type(value)=="table" then return value,true end
+  return nil,false
+end
 local function load(path)
+  -- Restore the last committed journal if a save was interrupted after moving
+  -- the primary file to its backup.
   if not fs.exists(path) and fs.exists(path..".bak") then
-    pcall(function() fs.move(path..".bak",path) end)
+    local restored=pcall(function() fs.move(path..".bak",path) end)
+    if not restored or not fs.exists(path) then return {state="CORRUPT"} end
   end
+
   if not fs.exists(path) then
-    if fs.exists(path..".tmp") or fs.exists(path..".bak") then return {state="CORRUPT"} end
+    -- A valid .tmp can be left behind if the computer stops during the very
+    -- first journal save. That save happens before any API request or physical
+    -- item movement, so recover its original idempotency key instead of
+    -- inventing a new operation or permanently reporting a false pending one.
+    if fs.exists(path..".tmp") and not fs.exists(path..".bak") then
+      local pending,valid=readJournalFile(path..".tmp")
+      local initialState=valid and type(pending.key)=="string"
+        and type(pending.amount)=="number"
+        and ((pending.state=="REQUEST_PENDING"
+              and (pending.kind=="WITHDRAWAL" or pending.kind=="TRANSFER"))
+          or (pending.state=="ESCROW_PENDING" and pending.kind=="DEPOSIT"))
+      if initialState then
+        local promoted=pcall(function() fs.move(path..".tmp",path) end)
+        if promoted and fs.exists(path) then return pending end
+        return {state="CORRUPT"}
+      elseif not valid then
+        -- With no primary or backup, an unreadable temp is an interrupted
+        -- first save. The program cannot have sent its request because save()
+        -- must succeed before it does so.
+        local removed=pcall(function() fs.delete(path..".tmp") end)
+        if removed and not fs.exists(path..".tmp") then return nil end
+      end
+      return {state="CORRUPT"}
+    end
+    if fs.exists(path..".bak") then return {state="CORRUPT"} end
     return nil
   end
-  local h=fs.open(path,"r"); if not h then return {state="CORRUPT"} end
-  local raw=h.readAll(); h.close()
-  local ok,v=pcall(textutils.unserializeJSON,raw)
-  if ok and type(v)=="table" then return v end
+
+  local value,valid=readJournalFile(path)
+  if valid then return value end
   return {state="CORRUPT"}
+end
+local function reportDamagedJournal()
+  ui.message("The local ATM journal is damaged. This does not prove that a bank operation is pending, but the ATM cannot safely infer the last operation's outcome.",false)
+  ui.message("Money movement is paused until the journal and account history are checked. Do not delete journal backups if a withdrawal or deposit may have started.",false)
+  ui.autoPause(3)
 end
 local function countItems(inv,item)
   local n=0
@@ -245,12 +286,39 @@ local function runWithdrawal()
   local p=pin(); if not p then return end
   local old=load(JOURNAL)
   local order
+  if old and old.state=="CORRUPT" then reportDamagedJournal(); return end
   if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
-    if old.kind~="WITHDRAWAL" or (old.state~="REQUEST_PENDING" and old.state~="AUTHORIZED") then
+    if old.kind~="WITHDRAWAL" or (old.state~="REQUEST_PENDING" and old.state~="AUTHORIZED" and old.state~="DISPENSE_STARTED") then
       ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.autoPause(2.4); return
     end
     if tostring(old.card_id or "")~=tostring(card.card_id or "") then ui.message("This unfinished withdrawal belongs to a different floppy card. Reinsert the original card.",false); ui.autoPause(2.4); return end
     order=old
+    if order.state=="DISPENSE_STARTED" then
+      local stockBefore=tonumber(order.stock_before_dispense)
+      local outputBefore=tonumber(order.output_before_dispense)
+      if not stockBefore or not outputBefore then
+        ui.message("This withdrawal was debited, but its older journal has no inventory checkpoint. The ATM cannot verify whether the Emeralds were dispensed.",false)
+        ui.message("Check the transaction in MineBank history and inspect secure stock/output. Do not start another withdrawal until that physical movement is reconciled.",false)
+        ui.autoPause(3.2); return
+      end
+      local stockMoved=stockBefore-countEmeralds(stockInv)
+      local outputAdded=countEmeralds(outputInv)-outputBefore
+      if stockMoved==order.amount and outputAdded==order.amount then
+        order.state="COMPLETE"; order.completed_at=os.epoch("utc")
+        if save(JOURNAL,order) then
+          ui.message("The inventory checkpoint confirms this withdrawal was fully dispensed. The journal is now complete; no items were moved again.",true)
+        else
+          ui.message("The checkpoint confirms the Emeralds were dispensed, but the journal could not be updated. Keep the ATM stopped and reconcile the journal.",false)
+        end
+        ui.autoPause(3); return
+      elseif stockMoved~=0 or outputAdded~=0 then
+        ui.message("Physical inventory changed after dispensing began (stock change: "..tostring(stockMoved).."; output change: "..tostring(outputAdded).."). No Emeralds were moved automatically.",false)
+        ui.message("This may be a partial dispense or customer collection. Operator reconciliation is required before continuing.",false)
+        ui.autoPause(3.2); return
+      end
+      -- Both inventories match the saved pre-dispense checkpoint. Continue
+      -- using the already-authorized ticket; do not send a second withdrawal.
+    end
   else
     ui.clear(); ui.header("WITHDRAW EMERALDS","Step 3 of 4 • Choose amount")
     local amountChoices={"10 Emeralds","32 Emeralds","64 Emeralds","128 Emeralds","Enter another amount","Cancel"}
@@ -297,8 +365,12 @@ local function runWithdrawal()
   else
     result={transaction_id=order.transaction_id,amount=order.amount}
   end
-  order.state="DISPENSE_STARTED"
-  if not save(JOURNAL,order) then ui.message("Could not lock the dispense journal. No items moved; operator reconciliation required.",false); ui.autoPause(2.4); return end
+  if order.state~="DISPENSE_STARTED" then
+    order.stock_before_dispense=countEmeralds(stockInv)
+    order.output_before_dispense=countEmeralds(outputInv)
+    order.state="DISPENSE_STARTED"
+    if not save(JOURNAL,order) then ui.message("Could not lock the dispense journal. No items moved; operator reconciliation required.",false); ui.autoPause(2.4); return end
+  end
   local remaining=order.amount
   for slot,detail in pairs(stockInv.list()) do
     if detail.name=="minecraft:emerald" and remaining>0 then
@@ -322,6 +394,7 @@ local function runDeposit()
   ui.clear(); ui.header("DEPOSIT EMERALDS","Step 2 of 3 • Verify identity")
   local p=pin(); if not p then return end
   local old=load(JOURNAL)
+  if old and old.state=="CORRUPT" then reportDamagedJournal(); return end
   local resuming=old and old.state~="COMPLETE" and old.state~="CANCELLED"
   if not resuming then
     ui.clear(); ui.header("DEPOSIT EMERALDS","Step 3 of 3 • Confirm deposit")
@@ -380,6 +453,7 @@ local function runTransfer()
   local p=pin(); if not p then return end
   local old=load(JOURNAL)
   local order
+  if old and old.state=="CORRUPT" then reportDamagedJournal(); return end
   if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
     if old.kind~="TRANSFER" or old.state~="REQUEST_PENDING" then
       ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.autoPause(2.4); return
@@ -496,6 +570,14 @@ local function runDiagnostics()
   print("Deposit Emeralds: "..countEmeralds(depositInv))
   print("Stock Emeralds: "..countEmeralds(stockInv))
   print("Output Emeralds: "..countEmeralds(outputInv))
+  local journal=load(JOURNAL)
+  if not journal then
+    print("Local operation journal: no unfinished operation")
+  elseif journal.state=="CORRUPT" then
+    print("Local operation journal: DAMAGED (not proof of a pending bank operation)")
+  else
+    print("Local operation journal: "..tostring(journal.kind or "UNKNOWN").." / "..tostring(journal.state or "UNKNOWN").." / "..tostring(journal.amount or "?").." Emeralds")
+  end
   print("HTTP enabled: "..tostring(http~=nil))
   print("Modem detected (optional): "..tostring(peripheral.find("modem")~=nil))
   print("Monitor detected: "..tostring(peripheral.find("monitor")~=nil))
