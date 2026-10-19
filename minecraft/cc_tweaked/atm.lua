@@ -252,9 +252,21 @@ local function runWithdrawal()
     if tostring(old.card_id or "")~=tostring(card.card_id or "") then ui.message("This unfinished withdrawal belongs to a different floppy card. Reinsert the original card.",false); ui.autoPause(2.4); return end
     order=old
   else
-    ui.clear(); ui.header("WITHDRAW EMERALDS","Step 3 of 3 • Enter amount")
-    local amount=tonumber(ui.prompt("Enter withdrawal amount in whole Emeralds (1-"..MAX_WITHDRAWAL..")"))
-    if not amount or amount%1~=0 or amount<1 or amount>MAX_WITHDRAWAL then ui.message("Invalid withdrawal amount. Enter a whole number from 1 to "..MAX_WITHDRAWAL..".",false); ui.autoPause(2.4); return end
+    ui.clear(); ui.header("WITHDRAW EMERALDS","Step 3 of 4 • Choose amount")
+    local amountChoices={"10 Emeralds","32 Emeralds","64 Emeralds","128 Emeralds","Enter another amount","Cancel"}
+    local selected=ui.choose("WITHDRAW EMERALDS",amountChoices,"Maximum per withdrawal: "..MAX_WITHDRAWAL.." Emeralds.")
+    local amount
+    if selected==1 then amount=10
+    elseif selected==2 then amount=32
+    elseif selected==3 then amount=64
+    elseif selected==4 then amount=128
+    elseif selected==5 then
+      local raw=ui.prompt("Whole Emerald amount (1-"..MAX_WITHDRAWAL..")")
+      amount=raw and tonumber(raw) or nil
+    else
+      ui.message("Withdrawal cancelled. No debit requested.",true); ui.autoPause(1.5); return
+    end
+    if not amount or amount%1~=0 or amount<1 or amount>MAX_WITHDRAWAL then ui.message("Invalid amount. Enter a whole number from 1 to "..MAX_WITHDRAWAL..". No debit was requested.",false); ui.autoPause(2.4); return end
     if countEmeralds(stockInv)<amount then ui.message("Secure stock does not contain enough emeralds.",false); ui.autoPause(2.4); return end
     if not canFit(outputInv,"minecraft:emerald",amount) then ui.message("Output inventory lacks space. No debit requested.",false); ui.autoPause(2.4); return end
     local confirm=ui.choose("CONFIRM WITHDRAWAL",{"Withdraw "..amount.." Emeralds","Cancel"},"Your MineBank account will be debited before dispensing.")
@@ -266,6 +278,9 @@ local function runWithdrawal()
   if not canFit(outputInv,"minecraft:emerald",order.amount) then ui.message("Output inventory lacks space. No new debit requested.",false); ui.autoPause(2.4); return end
   local result
   if order.state=="REQUEST_PENDING" then
+    ui.clear(); ui.header("WITHDRAWAL IN PROGRESS","Authorising with MineBank")
+    ui.message("Requested amount: "..tostring(order.amount).." Emeralds.",true)
+    ui.message("Checking your account and recording this request. Do not restart the ATM.",true)
     local err,status
     result,err,status=ui.api("/withdrawals","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
     if not result then
@@ -488,31 +503,47 @@ local function runDiagnostics()
 end
 
 while true do
-  local choice=draw(cfg)
-  if not choice then break end
-  if ui.hasMonitor() then
-    if choice==1 then runBalance()
-    elseif choice==2 then runWithdrawal()
-    elseif choice==3 then runDeposit()
-    elseif choice==4 then
-      local more=drawMore()
-      if more==1 then runTransfer()
-      elseif more==2 then runHistory()
-      elseif more==3 then runRevoke()
-      elseif more==4 then runDiagnostics()
-      elseif more==5 then runRecovery()
-      end
-    end
+  local ok,choice=pcall(draw,cfg)
+  if not ok then
+    ui.clear(); ui.header("ATM INTERFACE ERROR","The ATM recovered without submitting a transaction")
+    ui.message(tostring(choice),false); ui.message("Choose Exit/restart only after checking the operation journal.",false)
+    ui.autoPause(3)
+  elseif not choice then
+    break
   else
-    if choice==1 then runBalance()
-    elseif choice==2 then runWithdrawal()
-    elseif choice==3 then runDeposit()
-    elseif choice==4 then runTransfer()
-    elseif choice==5 then runHistory()
-    elseif choice==6 then runRevoke()
-    elseif choice==7 then runDiagnostics()
-    elseif choice==8 then runRecovery()
-    else break end
+    local actionOk,actionResult=pcall(function()
+      if ui.hasMonitor() then
+        if choice==1 then runBalance()
+        elseif choice==2 then runWithdrawal()
+        elseif choice==3 then runDeposit()
+        elseif choice==4 then
+          local more=drawMore()
+          if more==1 then runTransfer()
+          elseif more==2 then runHistory()
+          elseif more==3 then runRevoke()
+          elseif more==4 then runDiagnostics()
+          elseif more==5 then runRecovery()
+          end
+        end
+      else
+        if choice==1 then runBalance()
+        elseif choice==2 then runWithdrawal()
+        elseif choice==3 then runDeposit()
+        elseif choice==4 then runTransfer()
+        elseif choice==5 then runHistory()
+        elseif choice==6 then runRevoke()
+        elseif choice==7 then runDiagnostics()
+        elseif choice==8 then runRecovery()
+        else return "EXIT" end
+      end
+    end)
+    if actionOk and actionResult=="EXIT" then break end
+    if not actionOk then
+      ui.clear(); ui.header("ATM OPERATION INTERRUPTED","No silent failure")
+      ui.message("The ATM caught an interface/runtime error: "..tostring(actionResult),false)
+      ui.message("If a transaction may have started, use More services → Resume pending operation before trying again.",false)
+      ui.autoPause(4)
+    end
   end
 end
 ui.clear(); ui.header("MINEBANK ATM","Thank you for banking with MineBank.")
