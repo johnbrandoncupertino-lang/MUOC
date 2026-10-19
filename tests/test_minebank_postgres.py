@@ -464,13 +464,13 @@ def test_minecraft_merchant_payment_is_atomic_and_idempotent(accounts, monkeypat
 def test_minecraft_atm_withdrawal_is_atomic_and_idempotent(accounts, monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
-    monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "mbatm_" + "a" * 48)
     alice, _, alice_account_id, _, _, _ = accounts
     execute_query("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",
                   (alice,), fetch=False, commit=True)
     card_token = "mbmc_" + "w" * 48
     card_id = _insert_test_minecraft_card(alice, alice_account_id, card_token)
-    _insert_test_minecraft_atm(alice, card_id, "atm-test-token-" + "a" * 40)
+    _insert_test_minecraft_atm(alice, card_id, "mbatm_" + "a" * 48)
 
     from flask import Flask
     app = Flask(__name__)
@@ -479,7 +479,7 @@ def test_minecraft_atm_withdrawal_is_atomic_and_idempotent(accounts, monkeypatch
     client = app.test_client()
     headers = {
         "X-Forwarded-Proto": "https",
-        "X-MineBank-ATM-Token": "atm-test-token-" + "a" * 40,
+        "X-MineBank-ATM-Token": "mbatm_" + "a" * 48,
         "Authorization": f"Bearer {card_token}",
         "Idempotency-Key": "ci-atm-1",
     }
@@ -519,7 +519,7 @@ def test_clubcash_cashline_advance_is_atomic_and_idempotent(accounts, monkeypatc
     activate_credit(account_id, 500)
 
     card_token = "mbmc_" + "c" * 48
-    machine_token = "atm-cashline-test-" + "b" * 40
+    machine_token = "mbatm_" + "b" * 48
     card_id = _insert_test_minecraft_card(alice, account_id, card_token)
     _insert_test_minecraft_atm(alice, card_id, machine_token)
     before_balance = execute_query_dict(
@@ -564,7 +564,7 @@ def test_clubcash_cashline_advance_is_atomic_and_idempotent(accounts, monkeypatc
 def test_minecraft_atm_deposit_is_atomic_and_idempotent(accounts, monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
-    machine_token = "atm-test-token-" + "a" * 40
+    machine_token = "mbatm_" + "a" * 48
     monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", machine_token)
     alice, _, account_id, _, _, _ = accounts
     execute_query("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",
