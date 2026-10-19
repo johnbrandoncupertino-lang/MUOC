@@ -619,6 +619,51 @@ def minebank_dashboard():
             "amount": display_amount,
             "detail": detail,
         })
+    # Surface overdue credit obligations prominently on the dashboard. Keep this
+    # advisory query isolated so a missing optional credit table never breaks login.
+    overdue_credit_alerts = []
+    try:
+        ensure_loan_schema()
+        loan_alerts = execute_query_dict("""
+            SELECT loan_number, next_due_date, installments_paid, term_days, status
+              FROM minebank_loans
+             WHERE client_id=%s
+               AND status IN ('ACTIVE','OVERDUE')
+               AND installments_paid < term_days
+               AND next_due_date < CURRENT_DATE
+             ORDER BY next_due_date, requested_at
+        """, (session["minebank_client_id"],)) or []
+        for loan in loan_alerts:
+            overdue_credit_alerts.append({
+                "product": "Loan",
+                "reference": loan.get("loan_number") or "Loan",
+                "due_date": loan.get("next_due_date"),
+                "message": "A scheduled repayment is overdue. Add funds to the repayment account and review the loan."
+            })
+    except Exception as exc:
+        print(f"MineBank dashboard overdue-loan warning: {type(exc).__name__}: {exc}")
+    try:
+        ensure_transaction_schema()
+        overdue_statements = execute_query_dict("""
+            SELECT a.account_number, s.due_at, GREATEST(0, s.minimum_due-s.amount_paid) AS amount_overdue
+              FROM credit_statements s
+              JOIN bank_accounts a ON a.id=s.account_id
+             WHERE a.client_id=%s
+               AND s.due_at < CURRENT_TIMESTAMP
+               AND s.amount_paid < s.minimum_due
+               AND UPPER(COALESCE(s.status,'')) NOT IN ('PAID','CLOSED','SETTLED')
+             ORDER BY s.due_at
+        """, (session["minebank_client_id"],)) or []
+        for statement in overdue_statements:
+            overdue_credit_alerts.append({
+                "product": "CashLine",
+                "reference": statement.get("account_number") or "CashLine",
+                "due_date": statement.get("due_at"),
+                "amount_overdue": int(statement.get("amount_overdue") or 0),
+                "message": "The statement's minimum payment has not been fully paid. Review the statement and make a repayment."
+            })
+    except Exception as exc:
+        print(f"MineBank dashboard overdue-CashLine warning: {type(exc).__name__}: {exc}")
     messages = execute_query_dict(
         "SELECT title,message,created_at FROM bank_notifications WHERE client_id=%s ORDER BY created_at DESC LIMIT 5",
         (session["minebank_client_id"],)
@@ -636,7 +681,7 @@ def minebank_dashboard():
     return render_template("minebank_portal.html", mode="dashboard", account=account,
                            accounts=accounts, total_balance=total_balance, balance_breakdown=balance_breakdown,
                            cashline_accounts=cashline_accounts, total_cashline_credit=total_cashline_credit,
-                           has_dynamic_cashline=has_dynamic_cashline,
+                           has_dynamic_cashline=has_dynamic_cashline, overdue_credit_alerts=overdue_credit_alerts,
                            transactions=transactions, messages=messages, chart_rows=chart_rows,
                            portal_active="dashboard")
 
