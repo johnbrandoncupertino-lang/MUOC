@@ -164,10 +164,15 @@ local function returnInvalidItems(source,destination)
 end
 local function draw(cfg)
   local options
+  local journal=load(JOURNAL)
+  local pending=journal and journal.state~="COMPLETE" and journal.state~="CANCELLED"
   if ui.hasMonitor() then
-    -- The customer landing screen is deliberately limited to four direct actions:
-    -- each appears as a tappable tile on a 1x1 monitor, with no carousel.
-    options = {"Check balance","Withdraw Emeralds","Deposit Emeralds","More services"}
+    -- Put recovery first whenever a journal is unfinished, including on tiny monitors.
+    if pending then
+      options = {"Resume pending operation","Check balance","More services"}
+    else
+      options = {"Check balance","Withdraw Emeralds","Deposit Emeralds","More services"}
+    end
   else
     options = {
       "Check balance",
@@ -181,7 +186,9 @@ local function draw(cfg)
       "Exit",
     }
   end
-  return ui.choose("MINEBANK ATM", options, (cfg.atm_label or "THE NEW BANK").." • Secure Emerald services.")
+  local choice=ui.choose("MINEBANK ATM", options,
+    (cfg.atm_label or "THE NEW BANK").." • "..(pending and "Recovery required" or "Secure Emerald services"))
+  return choice,pending
 end
 local function drawMore()
   return ui.choose("MORE SERVICES", {
@@ -825,7 +832,7 @@ local function runDiagnostics()
 end
 
 while true do
-  local ok,choice=pcall(draw,cfg)
+  local ok,choice,pending=pcall(draw,cfg)
   if not ok then
     ui.clear(); ui.header("ATM INTERFACE ERROR","The ATM recovered without submitting a transaction")
     ui.message(tostring(choice),false); ui.message("Choose Exit/restart only after checking the operation journal.",false)
@@ -835,16 +842,30 @@ while true do
   else
     local actionOk,actionResult=pcall(function()
       if ui.hasMonitor() then
-        if choice==1 then runBalance()
-        elseif choice==2 then runWithdrawal()
-        elseif choice==3 then runDeposit()
-        elseif choice==4 then
-          local more=drawMore()
-          if more==1 then runTransfer()
-          elseif more==2 then runHistory()
-          elseif more==3 then runRevoke()
-          elseif more==4 then runDiagnostics()
-          elseif more==5 then runRecovery()
+        if pending then
+          if choice==1 then runRecovery()
+          elseif choice==2 then runBalance()
+          elseif choice==3 then
+            local more=drawMore()
+            if more==1 then runTransfer()
+            elseif more==2 then runHistory()
+            elseif more==3 then runRevoke()
+            elseif more==4 then runDiagnostics()
+            elseif more==5 then runRecovery()
+            end
+          end
+        else
+          if choice==1 then runBalance()
+          elseif choice==2 then runWithdrawal()
+          elseif choice==3 then runDeposit()
+          elseif choice==4 then
+            local more=drawMore()
+            if more==1 then runTransfer()
+            elseif more==2 then runHistory()
+            elseif more==3 then runRevoke()
+            elseif more==4 then runDiagnostics()
+            elseif more==5 then runRecovery()
+            end
           end
         end
       else
