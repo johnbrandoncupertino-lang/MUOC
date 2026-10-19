@@ -552,7 +552,7 @@ def _request_idempotency_key():
 
 
 @minecraft_bp.get("/operations/<key>")
-def minecraft_operation_status():
+def minecraft_operation_status(key):
     """Return an idempotent operation receipt only to the same MineBank customer.
 
     This lets a replacement card belonging to the same customer recover a
@@ -565,7 +565,7 @@ def minecraft_operation_status():
     if insecure:
         return insecure
     token = _authorized_card_token()
-    key = str(request.view_args.get("key") or "").strip()
+    key = str(key or "").strip()
     if not token or not key or len(key) > 128 or not key.isascii() or not all(
         ch.isalnum() or ch in "-_." for ch in key
     ):
