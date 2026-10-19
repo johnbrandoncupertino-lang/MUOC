@@ -8,12 +8,12 @@ from bank_lib.minebank_privileges import (
 
 
 EXPECTED_TIERS = {
-    "PERSONAL": ("PERSONAL", "CORE", "GENERAL", "BASE"),
-    "PERSONAL_PRO": ("PERSONAL", "PRO", "ENHANCED", "PRO"),
-    "PERSONAL_PRIVATE": ("PERSONAL", "PRIVATE", "PRIVATE", "PRIVATE"),
-    "BUSINESS": ("BUSINESS", "CORE", "GENERAL", "BASE"),
-    "BUSINESS_PRO": ("BUSINESS", "PRO", "BUSINESS", "PRO"),
-    "CORPORATE": ("BUSINESS", "CORPORATE", "CORPORATE", "CORPORATE"),
+    "PERSONAL": ("PERSONAL", "CORE", "GENERAL", "BASE", 50, False),
+    "PERSONAL_PRO": ("PERSONAL", "PRO", "ENHANCED", "PRO", 25, False),
+    "PERSONAL_PRIVATE": ("PERSONAL", "PRIVATE", "PRIVATE", "PRIVATE", 0, True),
+    "BUSINESS": ("BUSINESS", "CORE", "GENERAL", "BASE", 50, False),
+    "BUSINESS_PRO": ("BUSINESS", "PRO", "BUSINESS", "PRO", 25, False),
+    "CORPORATE": ("BUSINESS", "CORPORATE", "CORPORATE", "CORPORATE", 0, True),
 }
 
 
@@ -26,7 +26,7 @@ def test_privileges_support_exactly_the_six_existing_tiers():
     EXPECTED_TIERS.items(),
 )
 def test_active_account_resolves_expected_tier_policy(tier_code, expected):
-    account_type, service_level, club_level, points_class = expected
+    account_type, service_level, club_level, points_class, club_fee, unlimited = expected
     result = resolve_privileges(tier_code, account_type, "ENABLED")
 
     assert result["eligible"] is True
@@ -34,6 +34,8 @@ def test_active_account_resolves_expected_tier_policy(tier_code, expected):
     assert result["service_level"] == service_level
     assert result["mineclubs_access_level"] == club_level
     assert result["points_earning_class"] == points_class
+    assert result["mineclubs_admission_fee"] == club_fee
+    assert result["mineclubs_unlimited_admission"] is unlimited
     assert result["clubcash_network_eligible"] is True
     assert result["minepoints_programme_eligible"] is True
 
@@ -82,3 +84,26 @@ def test_foundation_does_not_activate_unapproved_financial_benefits():
         assert result["clubcash_fee_discount_enabled"] is False
         assert result["clubcash_limit_adjustment_enabled"] is False
         assert result["points_bonus_multiplier_enabled"] is False
+
+    
+@pytest.mark.parametrize(
+    "tier_code,account_type,expected_fee,unlimited",
+    [
+        ("PERSONAL", "PERSONAL", 50, False),
+        ("BUSINESS", "BUSINESS", 50, False),
+        ("PERSONAL_PRO", "PERSONAL", 25, False),
+        ("BUSINESS_PRO", "BUSINESS", 25, False),
+        ("PERSONAL_PRIVATE", "PERSONAL", 0, True),
+        ("CORPORATE", "BUSINESS", 0, True),
+    ],
+)
+def test_mineclubs_admission_tariff(tier_code, account_type, expected_fee, unlimited):
+    result = resolve_privileges(tier_code, account_type, "ACTIVE")
+    assert result["mineclubs_admission_fee"] == expected_fee
+    assert result["mineclubs_unlimited_admission"] is unlimited
+
+
+def test_inactive_account_has_no_admission_price_or_access():
+    result = resolve_privileges("PERSONAL_PRIVATE", "PERSONAL", "FROZEN")
+    assert result["mineclubs_admission_fee"] is None
+    assert result["mineclubs_unlimited_admission"] is False
