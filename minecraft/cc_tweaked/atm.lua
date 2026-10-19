@@ -960,7 +960,7 @@ while true do
           elseif choice==3 then
             local more=drawMore()
             if more==1 then runTransfer()
-            elseif more==2 then runWithdrawal(nil,nil,"CASHLINE")
+            elseif more==2 then ui.message("Resolve the pending physical operation in the Recovery Center before starting another withdrawal or CashLine advance.",false); ui.autoPause(2.8)
             elseif more==3 then runHistory()
             elseif more==4 then runRevoke()
             elseif more==5 then runDiagnostics()
