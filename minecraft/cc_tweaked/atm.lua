@@ -198,6 +198,7 @@ end
 local function drawMore()
   return ui.choose("MORE SERVICES", {
     "Transfer to another account (max 1,000)",
+    "CashLine Advance",
     "Recent transactions",
     "Revoke floppy card",
     "Diagnostics",
@@ -372,16 +373,18 @@ local function adoptPendingOperationForSameCustomer(order, card, expectedKind, j
   return true
 end
 
-local function runWithdrawal(providedCard,providedPin)
+local function runWithdrawal(providedCard,providedPin,requestedFundingSource)
+  local fundingSource=requestedFundingSource or "BALANCE"
+  local operationTitle=fundingSource=="CASHLINE" and "CASHLINE ADVANCE" or "WITHDRAW EMERALDS"
   if not providedCard then
-    ui.clear(); ui.header("WITHDRAW EMERALDS","Step 1 of 3 • Card and PIN")
+    ui.clear(); ui.header(operationTitle,"Step 1 of 3 • Card and PIN")
     ui.message("Insert your MineBank floppy card, then enter your six-digit Wallet PIN when prompted.",true)
     ui.autoPause(1.6)
   end
   local card=providedCard or getCard(); if not card then return end
   local p=providedPin
   if not p then
-    ui.clear(); ui.header("WITHDRAW EMERALDS","Step 2 of 3 • Verify identity")
+    ui.clear(); ui.header(operationTitle,"Step 2 of 3 • Verify identity")
     p=pin(); if not p then return end
   end
   local old=load(JOURNAL)
@@ -422,9 +425,9 @@ local function runWithdrawal(providedCard,providedPin)
       -- using the already-authorized ticket; do not send a second withdrawal.
     end
   else
-    ui.clear(); ui.header("WITHDRAW EMERALDS","Step 3 of 4 • Choose amount")
+    ui.clear(); ui.header(operationTitle,"Step 3 of 4 • Choose amount")
     local amountChoices={"10 Emeralds","32 Emeralds","64 Emeralds","128 Emeralds","Enter another amount","Cancel"}
-    local selected=ui.choose("WITHDRAW EMERALDS",amountChoices,"Maximum per withdrawal: "..MAX_WITHDRAWAL.." Emeralds.")
+    local selected=ui.choose(operationTitle,amountChoices,"Maximum per operation: "..MAX_WITHDRAWAL.." Emeralds. "..(fundingSource=="CASHLINE" and "This will create Standard CashLine debt." or "This will debit your available Balance."))
     local amount
     if selected==1 then amount=10
     elseif selected==2 then amount=32
@@ -439,26 +442,28 @@ local function runWithdrawal(providedCard,providedPin)
     if not amount or amount%1~=0 or amount<1 or amount>MAX_WITHDRAWAL then ui.message("Invalid amount. Enter a whole number from 1 to "..MAX_WITHDRAWAL..". No debit was requested.",false); ui.autoPause(2.4); return end
     if countEmeralds(stockInv)<amount then ui.message("Secure stock does not contain enough emeralds.",false); ui.autoPause(2.4); return end
     if not canFit(outputInv,"minecraft:emerald",amount) then ui.message("Output inventory lacks space. No debit requested.",false); ui.autoPause(2.4); return end
-    local confirm=ui.choose("CONFIRM WITHDRAWAL",{"Withdraw "..amount.." Emeralds","Cancel"},"Your MineBank account will be debited before dispensing.")
+    local confirm=ui.choose("CONFIRM "..operationTitle,{(fundingSource=="CASHLINE" and "Advance " or "Withdraw ")..amount.." Emeralds","Cancel"},fundingSource=="CASHLINE" and "This uses Standard CashLine credit and adds to your debt. Balance will not be used." or "Your MineBank Balance will be debited before dispensing.")
     if confirm~=1 then ui.message("Withdrawal cancelled. No debit requested.",true); ui.autoPause(2.4); return end
-    order={version=1,key=ui.key("withdraw"),amount=amount,state="REQUEST_PENDING",kind="WITHDRAWAL",card_id=card.card_id}
+    order={version=1,key=ui.key(fundingSource=="CASHLINE" and "cashline-advance" or "withdraw"),amount=amount,state="REQUEST_PENDING",kind="WITHDRAWAL",card_id=card.card_id,funding_source=fundingSource}
     if not save(JOURNAL,order) then ui.message("Could not persist journal. No request sent.",false); ui.autoPause(2.4); return end
   end
-  if countEmeralds(stockInv)<order.amount then ui.message("Secure stock is short. The saved withdrawal has not been re-requested.",false); ui.autoPause(2.4); return end
+  fundingSource=order.funding_source or fundingSource or "BALANCE"
+  operationTitle=fundingSource=="CASHLINE" and "CASHLINE ADVANCE" or "WITHDRAW EMERALDS"
+  if countEmeralds(stockInv)<order.amount then ui.message("Secure stock is short. The saved operation has not been re-requested.",false); ui.autoPause(2.4); return end
   if not canFit(outputInv,"minecraft:emerald",order.amount) then ui.message("Output inventory lacks space. No new debit requested.",false); ui.autoPause(2.4); return end
   local result
   if order.state=="REQUEST_PENDING" then
-    ui.clear(); ui.header("WITHDRAWAL IN PROGRESS","Authorising with MineBank")
+    ui.clear(); ui.header(operationTitle.." IN PROGRESS","Authorising with MineBank")
     ui.message("Requested amount: "..tostring(order.amount).." Emeralds.",true)
     ui.message("Checking your account and recording this request. Do not restart the ATM.",true)
     local err,status
-    result,err,status=ui.api("/withdrawals","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
+    result,err,status=ui.api("/withdrawals","POST",card.credential,{amount=order.amount,wallet_pin=p,funding_source=fundingSource},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
     if not result then
       if status==0 or (status and status>=400 and status<500) then
         cancelRejected(order,err)
-        ui.message("Withdrawal rejected by MineBank. No Emeralds were dispensed; this attempt is cancelled. "..tostring(err),false)
+        ui.message(operationTitle.." rejected by MineBank. No Emeralds were dispensed; this attempt is cancelled. "..tostring(err),false)
       else
-        ui.message("Withdrawal outcome is unknown: "..tostring(err)..". The same idempotency key is retained; retry this withdrawal to reconcile it.",false)
+        ui.message(operationTitle.." outcome is unknown: "..tostring(err)..". The same idempotency key is retained; retry this operation to reconcile it.",false)
       end
       ui.autoPause(2.4); return
     end
@@ -484,7 +489,7 @@ local function runWithdrawal(providedCard,providedPin)
   if remaining>0 then ui.message("Partial dispense detected. Do not retry. Operator reconciliation required.",false); ui.autoPause(2.4); return end
   order.state="COMPLETE"; order.completed_at=os.epoch("utc")
   if not save(JOURNAL,order) then ui.message("Items moved but journal completion failed. Lock ATM and reconcile.",false); ui.autoPause(2.4); return end
-  ui.message("WITHDRAWAL COMPLETE — "..order.amount.." Emeralds",true)
+  ui.message(operationTitle.." COMPLETE — "..order.amount.." Emeralds",true)
   print("Transaction: "..tostring(result.transaction_id)); ui.autoPause(2.4)
 end
 
@@ -826,11 +831,11 @@ local function runRecovery()
         ui.autoPause(3)
         return
       end
-      ui.clear(); ui.header("WITHDRAWAL RECOVERY","Bank confirmed • identity check required")
+      ui.clear(); ui.header((order.funding_source=="CASHLINE" and "CASHLINE ADVANCE RECOVERY" or "WITHDRAWAL RECOVERY"),"Bank confirmed • identity check required")
       ui.message("MineBank confirms this withdrawal. Enter the Wallet PIN to resume the saved dispense without creating another debit.",true)
       local p=pin()
       if not p then return end
-      runWithdrawal(card,p)
+      runWithdrawal(card,p,order.funding_source or "BALANCE")
       return
     else
       ui.message("Unknown operation type. No changes were made; operator reconciliation is required.",false)
@@ -955,10 +960,11 @@ while true do
           elseif choice==3 then
             local more=drawMore()
             if more==1 then runTransfer()
-            elseif more==2 then runHistory()
-            elseif more==3 then runRevoke()
-            elseif more==4 then runDiagnostics()
-            elseif more==5 then runRecovery()
+            elseif more==2 then ui.message("Resolve the pending physical operation in the Recovery Center before starting another withdrawal or CashLine advance.",false); ui.autoPause(2.8)
+            elseif more==3 then runHistory()
+            elseif more==4 then runRevoke()
+            elseif more==5 then runDiagnostics()
+            elseif more==6 then runRecovery()
             end
           end
         else
@@ -968,10 +974,11 @@ while true do
           elseif choice==4 then
             local more=drawMore()
             if more==1 then runTransfer()
-            elseif more==2 then runHistory()
-            elseif more==3 then runRevoke()
-            elseif more==4 then runDiagnostics()
-            elseif more==5 then runRecovery()
+            elseif more==2 then runWithdrawal(nil,nil,"CASHLINE")
+            elseif more==3 then runHistory()
+            elseif more==4 then runRevoke()
+            elseif more==5 then runDiagnostics()
+            elseif more==6 then runRecovery()
             end
           end
         end

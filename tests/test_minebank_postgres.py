@@ -372,6 +372,20 @@ def _insert_test_minecraft_card(client_id, account_id, token):
         (client_id, account_id, token[:16], hash_card_token(token)),
         fetch=False, commit=True,
     )
+    return execute_query_dict(
+        "SELECT id FROM minebank_minecraft_cards WHERE card_prefix=%s AND client_id=%s",
+        (token[:16], client_id),
+    )[0]["id"]
+
+
+def _insert_test_minecraft_atm(client_id, card_id, token):
+    execute_query(
+        """INSERT INTO minebank_minecraft_atms
+           (client_id,enrolled_by_card_id,token_prefix,token_hash,label)
+           VALUES(%s,%s,%s,%s,'test ClubCash ATM')""",
+        (client_id, card_id, token[:16], hash_card_token(token)),
+        fetch=False, commit=True,
+    )
 
 
 def test_minecraft_merchant_payment_is_atomic_and_idempotent(accounts, monkeypatch):
@@ -450,12 +464,13 @@ def test_minecraft_merchant_payment_is_atomic_and_idempotent(accounts, monkeypat
 def test_minecraft_atm_withdrawal_is_atomic_and_idempotent(accounts, monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
-    monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "mbatm_" + "a" * 48)
     alice, _, alice_account_id, _, _, _ = accounts
     execute_query("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",
                   (alice,), fetch=False, commit=True)
     card_token = "mbmc_" + "w" * 48
-    _insert_test_minecraft_card(alice, alice_account_id, card_token)
+    card_id = _insert_test_minecraft_card(alice, alice_account_id, card_token)
+    _insert_test_minecraft_atm(alice, card_id, "mbatm_" + "a" * 48)
 
     from flask import Flask
     app = Flask(__name__)
@@ -464,7 +479,7 @@ def test_minecraft_atm_withdrawal_is_atomic_and_idempotent(accounts, monkeypatch
     client = app.test_client()
     headers = {
         "X-Forwarded-Proto": "https",
-        "X-MineBank-ATM-Token": "atm-test-token-" + "a" * 40,
+        "X-MineBank-ATM-Token": "mbatm_" + "a" * 48,
         "Authorization": f"Bearer {card_token}",
         "Idempotency-Key": "ci-atm-1",
     }
@@ -495,16 +510,68 @@ def test_minecraft_atm_withdrawal_is_atomic_and_idempotent(accounts, monkeypatch
     assert rows[0]["n"] == 1
 
 
+def test_clubcash_cashline_advance_is_atomic_and_idempotent(accounts, monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    alice, _, account_id, _, _, _ = accounts
+    execute_query("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",
+                  (alice,), fetch=False, commit=True)
+    activate_credit(account_id, 500)
+
+    card_token = "mbmc_" + "c" * 48
+    machine_token = "mbatm_" + "b" * 48
+    card_id = _insert_test_minecraft_card(alice, account_id, card_token)
+    _insert_test_minecraft_atm(alice, card_id, machine_token)
+    before_balance = execute_query_dict(
+        "SELECT balance FROM bank_accounts WHERE id=%s", (account_id,)
+    )[0]["balance"]
+
+    from flask import Flask
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_api.minecraft_bp)
+    client = app.test_client()
+    headers = {
+        "X-Forwarded-Proto": "https",
+        "X-MineBank-ATM-Token": machine_token,
+        "Authorization": f"Bearer {card_token}",
+        "Idempotency-Key": "ci-clubcash-cashline-advance",
+    }
+    payload = {"amount": 64, "wallet_pin": "123456", "funding_source": "CASHLINE"}
+
+    advance = client.post("/api/v1/minecraft/withdrawals", json=payload, headers=headers)
+    assert advance.status_code == 200, advance.get_json()
+    assert advance.get_json()["funding_source"] == "CASHLINE"
+    assert advance.get_json()["amount"] == 64
+
+    replay = client.post("/api/v1/minecraft/withdrawals", json=payload, headers=headers)
+    assert replay.status_code == 200, replay.get_json()
+    assert replay.get_json()["idempotent_replay"] is True
+
+    after_balance = execute_query_dict(
+        "SELECT balance FROM bank_accounts WHERE id=%s", (account_id,)
+    )[0]["balance"]
+    assert after_balance == before_balance
+    rows = execute_query_dict(
+        """SELECT COUNT(*) AS n FROM ledger_transactions
+           WHERE transaction_type='CREDIT_DRAW' AND recipient_account_id=%s
+             AND transfer_kind='CASHLINE' AND reference_id=%s""",
+        (account_id, "ci-clubcash-cashline-advance"),
+    )
+    assert rows[0]["n"] == 1
+
+
 def test_minecraft_atm_deposit_is_atomic_and_idempotent(accounts, monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
-    machine_token = "atm-test-token-" + "a" * 40
+    machine_token = "mbatm_" + "a" * 48
     monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", machine_token)
     alice, _, account_id, _, _, _ = accounts
     execute_query("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",
                   (alice,), fetch=False, commit=True)
     card_token = "mbmc_" + "d" * 48
-    _insert_test_minecraft_card(alice, account_id, card_token)
+    card_id = _insert_test_minecraft_card(alice, account_id, card_token)
+    _insert_test_minecraft_atm(alice, card_id, machine_token)
 
     from flask import Flask
     app = Flask(__name__)

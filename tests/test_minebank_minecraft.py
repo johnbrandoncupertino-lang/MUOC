@@ -177,6 +177,7 @@ def test_minecraft_operation_status_returns_receipt_to_matching_customer(monkeyp
 def test_minecraft_withdrawal_requires_idempotency_key(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setattr(minecraft_api, "_atm_authorized", lambda: True)
     monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
@@ -195,6 +196,7 @@ def test_minecraft_withdrawal_requires_idempotency_key(monkeypatch):
 def test_minecraft_withdrawal_rejects_non_integer_amounts(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setattr(minecraft_api, "_atm_authorized", lambda: True)
     monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
@@ -255,9 +257,61 @@ def test_minecraft_money_movement_requires_separate_feature_flag(monkeypatch):
     assert response.get_json()["error"] == "Minecraft transactions are disabled."
 
 
+def test_clubcash_rejects_dynamic_cashline_advance_without_database_access(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setattr(minecraft_api, "_atm_authorized", lambda: True)
+    monkeypatch.setattr(minecraft_api, "_authorized_card_token", lambda: "mbmc_" + "x" * 48)
+    monkeypatch.setattr(minecraft_api, "get_db_connection",
+                        lambda: (_ for _ in ()).throw(AssertionError("DB must not be touched")))
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+
+    response = app.test_client().post(
+        "/api/v1/minecraft/withdrawals",
+        json={"amount": 10, "funding_source": "DYNAMIC_CASHLINE", "wallet_pin": "123456"},
+        headers={
+            "Authorization": "Bearer " + "mbmc_" + "x" * 48,
+            "Idempotency-Key": "atm-dynamic-advance",
+            "X-Forwarded-Proto": "https",
+        },
+    )
+    assert response.status_code == 400
+    assert "Standard CashLine advances only" in response.get_json()["error"]
+
+
+def test_clubcash_cashline_advance_requires_wallet_pin(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setattr(minecraft_api, "_atm_authorized", lambda: True)
+    monkeypatch.setattr(minecraft_api, "_authorized_card_token", lambda: "mbmc_" + "x" * 48)
+    monkeypatch.setattr(minecraft_api, "_verify_card_pin", lambda token, pin: (False, "Enter your six-digit Wallet PIN."))
+    import bank_lib.credicheck as credicheck
+    import bank_lib.database as database
+    monkeypatch.setattr(credicheck, "ensure_credicheck_schema", lambda: True)
+    monkeypatch.setattr(database, "ensure_loan_schema", lambda: True)
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+
+    response = app.test_client().post(
+        "/api/v1/minecraft/withdrawals",
+        json={"amount": 10, "funding_source": "CASHLINE"},
+        headers={
+            "Authorization": "Bearer " + "mbmc_" + "x" * 48,
+            "Idempotency-Key": "atm-cashline-pin-required",
+            "X-Forwarded-Proto": "https",
+        },
+    )
+    assert response.status_code == 401
+    assert "Wallet PIN" in response.get_json()["error"]
+
+
 def test_minecraft_withdrawal_requires_wallet_pin(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setattr(minecraft_api, "_atm_authorized", lambda: True)
     monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
@@ -276,6 +330,7 @@ def test_minecraft_withdrawal_requires_wallet_pin(monkeypatch):
 def test_minecraft_deposit_requires_wallet_pin(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    monkeypatch.setattr(minecraft_api, "_atm_authorized", lambda: True)
     monkeypatch.setenv("MINEBANK_MINECRAFT_ATM_TOKEN", "atm-test-token-" + "a" * 40)
     app = Flask(__name__)
     app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
