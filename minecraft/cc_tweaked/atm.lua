@@ -25,6 +25,7 @@ local function print(...)
 end
 local CONFIG="minebank_atm.json"
 local JOURNAL="minebank_atm_journal.json"
+local TRANSFER_JOURNAL="minebank_atm_transfer_journal.json"
 local MAX_WITHDRAWAL=4096
 local MAX_TRANSFER=1000
 
@@ -72,7 +73,7 @@ local function load(path)
       local pending,valid=readJournalFile(path..".tmp")
       -- load() also reads the ATM configuration. Recover its complete temp file
       -- too, otherwise a restart after successful pairing could enroll another ATM.
-      if valid and path~=JOURNAL then
+      if valid and path==CONFIG then
         local promoted=pcall(function() fs.move(path..".tmp",path) end)
         if promoted and fs.exists(path) then return pending end
         return {state="CORRUPT"}
@@ -146,11 +147,11 @@ local function moveEmeraldAmount(source,destination,amount,destinationName)
   end
   return moved
 end
-local function cancelRejected(order,err)
+local function cancelRejected(order,err,journalPath)
   order.state="CANCELLED"
   order.failure=tostring(err or "MineBank rejected the request.")
   order.cancelled_at=os.epoch("utc")
-  return save(JOURNAL,order)
+  return save(journalPath or JOURNAL,order)
 end
 local function returnInvalidItems(source,destination)
   local returned=0
@@ -165,7 +166,11 @@ end
 local function draw(cfg)
   local options
   local journal=load(JOURNAL)
-  local pending=journal and journal.state~="COMPLETE" and journal.state~="CANCELLED"
+  local transferJournal=load(TRANSFER_JOURNAL)
+  local function unfinished(value)
+    return value and value.state~="COMPLETE" and value.state~="CANCELLED"
+  end
+  local pending=unfinished(journal) or unfinished(transferJournal)
   if ui.hasMonitor() then
     -- Put recovery first whenever a journal is unfinished, including on tiny monitors.
     if pending then
@@ -342,7 +347,7 @@ local function refundRejectedDeposit(order)
   return true
 end
 
-local function adoptPendingOperationForSameCustomer(order, card, expectedKind)
+local function adoptPendingOperationForSameCustomer(order, card, expectedKind, journalPath)
   -- A replacement card from the same customer may recover an operation that
   -- already reached the bank. The server only returns a receipt scoped to the
   -- current cardholder; a different customer's operation remains inaccessible.
@@ -359,7 +364,7 @@ local function adoptPendingOperationForSameCustomer(order, card, expectedKind)
     return false
   end
   order.card_id=card.card_id
-  if not save(JOURNAL,order) then
+  if not save(journalPath or JOURNAL,order) then
     ui.message("The bank recognizes this operation, but the updated card association could not be saved. Keep the ATM stopped and reconcile the journal.",false)
     ui.autoPause(3)
     return false
@@ -387,7 +392,7 @@ local function runWithdrawal(providedCard,providedPin)
       ui.message("ATM temporarily locked by "..tostring(old.kind or "unknown").." / "..tostring(old.state or "unknown")..". Open More Services → Resume pending operation, then choose Check MineBank status. The saved operation must be reconciled before a new one can start.",false); ui.autoPause(3.2); return
     end
     if tostring(old.card_id or "")~=tostring(card.card_id or "") then
-      if not adoptPendingOperationForSameCustomer(old,card,"WITHDRAWAL") then return end
+      if not adoptPendingOperationForSameCustomer(old,card,"WITHDRAWAL",JOURNAL) then return end
     end
     order=old
     if order.state=="DISPENSE_STARTED" then
@@ -504,7 +509,7 @@ local function runDeposit()
       ui.message("ATM temporarily locked by "..tostring(old.kind or "unknown").." / "..tostring(old.state or "unknown")..". Open More Services → Resume pending operation, then choose Check MineBank status. The saved operation must be reconciled before a new one can start.",false); ui.autoPause(3.2); return
     end
     if tostring(old.card_id or "")~=tostring(card.card_id or "") then
-      if old.state=="ESCROW_PENDING" or old.state=="REFUND_PENDING" or not adoptPendingOperationForSameCustomer(old,card,"DEPOSIT") then return end
+      if old.state=="ESCROW_PENDING" or old.state=="REFUND_PENDING" or not adoptPendingOperationForSameCustomer(old,card,"DEPOSIT",JOURNAL) then return end
     end
     order=old
   else
@@ -608,7 +613,7 @@ end
 local function runTransfer()
   local card=getCard(); if not card then return end
   local p=pin(); if not p then return end
-  local old=load(JOURNAL)
+  local old=load(TRANSFER_JOURNAL)
   local order
   if old and old.state=="CORRUPT" then reportDamagedJournal(); return end
   if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
@@ -616,7 +621,7 @@ local function runTransfer()
       ui.message("ATM temporarily locked by "..tostring(old.kind or "unknown").." / "..tostring(old.state or "unknown")..". Open More Services → Resume pending operation, then choose Check MineBank status. The saved operation must be reconciled before a new one can start.",false); ui.autoPause(3.2); return
     end
     if tostring(old.card_id or "")~=tostring(card.card_id or "") then
-      if not adoptPendingOperationForSameCustomer(old,card,"TRANSFER") then return end
+      if not adoptPendingOperationForSameCustomer(old,card,"TRANSFER",TRANSFER_JOURNAL) then return end
     end
     order=old
   else
@@ -626,13 +631,13 @@ local function runTransfer()
     local confirm=ui.choose("CONFIRM TRANSFER",{"Transfer "..amount.." Emeralds","Cancel"},"Recipient: "..recipient)
     if confirm~=1 then ui.message("Cancelled. No transfer submitted.",true); ui.autoPause(2.4); return end
     order={version=1,key=ui.key("transfer"),amount=amount,recipient=recipient,state="REQUEST_PENDING",kind="TRANSFER",card_id=card.card_id}
-    if not save(JOURNAL,order) then ui.message("Could not save transfer journal; no request sent.",false); ui.autoPause(2.4); return end
+    if not save(TRANSFER_JOURNAL,order) then ui.message("Could not save transfer journal; no request sent.",false); ui.autoPause(2.4); return end
   end
   local result,err,status=ui.api("/transfers","POST",card.credential,
     {recipient_account_number=order.recipient,amount=order.amount,wallet_pin=p},order.key)
   if not result then
     if status==0 or (status and status>=400 and status<500) then
-      cancelRejected(order,err)
+      cancelRejected(order,err,TRANSFER_JOURNAL)
       ui.message("MineBank rejected the transfer. No transfer was accepted; this attempt is cancelled. "..tostring(err),false)
     else
       ui.message("Transfer outcome is unknown: "..tostring(err)..". The original idempotency key is retained; retry this operation to reconcile it.",false)
@@ -640,7 +645,7 @@ local function runTransfer()
     ui.autoPause(2.4); return
   end
   order.state="COMPLETE"; order.transaction_id=result.transaction_id; order.completed_at=os.epoch("utc")
-  if not save(JOURNAL,order) then ui.message("MineBank confirmed the transfer but the journal update failed. Preserve the key and reconcile.",false); ui.autoPause(2.4); return end
+  if not save(TRANSFER_JOURNAL,order) then ui.message("MineBank confirmed the transfer but the journal update failed. Preserve the key and reconcile.",false); ui.autoPause(2.4); return end
   ui.message("TRANSFER COMPLETE — "..order.amount.." Emeralds",true)
   print("Transaction: "..tostring(result.transaction_id)); print("Fee: "..tostring(result.fee or 0)); ui.autoPause(2.4)
 end
@@ -691,8 +696,26 @@ local function runRevoke()
 end
 
 local function runRecovery()
-  local order=load(JOURNAL)
-  if not order or order.state=="COMPLETE" or order.state=="CANCELLED" then
+  local physical=load(JOURNAL)
+  local transfer=load(TRANSFER_JOURNAL)
+  local function pending(value)
+    return value and value.state~="COMPLETE" and value.state~="CANCELLED"
+  end
+  local order,journalPath
+  if pending(physical) and pending(transfer) then
+    local selected=ui.choose("RECOVERY QUEUE",{
+      "Physical "..tostring(physical.kind or "operation").." • "..tostring(physical.state or "unknown"),
+      "Transfer • "..tostring(transfer.state or "unknown"),
+      "Return to ATM"
+    },"Resolve one saved operation at a time.")
+    if selected==1 then order,journalPath=physical,JOURNAL
+    elseif selected==2 then order,journalPath=transfer,TRANSFER_JOURNAL
+    else return end
+  elseif pending(physical) then
+    order,journalPath=physical,JOURNAL
+  elseif pending(transfer) then
+    order,journalPath=transfer,TRANSFER_JOURNAL
+  else
     ui.message("No unfinished ATM operation needs recovery.",true); ui.autoPause(2.4); return
   end
   if order.state=="CORRUPT" then
@@ -738,7 +761,7 @@ local function runRecovery()
       order.transaction_id=transactionId
       order.completed_at=os.epoch("utc")
       order.recovered_from_bank=true
-      if save(JOURNAL,order) then
+      if save(journalPath,order) then
         ui.message("TRANSFER RECONCILED — MineBank confirms transaction "..tostring(transactionId or "recorded")..". No transfer was submitted again.",true)
       else
         ui.message("MineBank confirms the transfer, but the journal could not be updated. Keep the ATM stopped and preserve the journal.",false)
@@ -755,7 +778,7 @@ local function runRecovery()
       order.transaction_id=transactionId
       order.completed_at=os.epoch("utc")
       order.recovered_from_bank=true
-      if save(JOURNAL,order) then
+      if save(journalPath,order) then
         ui.message("DEPOSIT RECONCILED — MineBank confirms the credit. Emeralds remain in secure stock; do not return or deposit them again.",true)
       else
         ui.message("MineBank confirms the deposit, but the journal could not be updated. Preserve the journal and escrow.",false)
@@ -771,7 +794,7 @@ local function runRecovery()
       order.transaction_id=transactionId
       if order.state=="REQUEST_PENDING" then order.state="AUTHORIZED" end
       order.recovered_from_bank=true
-      if not save(JOURNAL,order) then
+      if not save(journalPath,order) then
         ui.message("MineBank confirms the debit, but the recovery ticket could not be saved. Do not dispense; preserve the journal.",false)
         ui.autoPause(3)
         return
@@ -798,7 +821,7 @@ local function runRecovery()
       local confirm=ui.choose("CANCEL DEPOSIT",{"Cancel unstarted deposit","Keep pending"},"Confirm that the Emeralds are still in the deposit input and no items have moved.")
       if confirm==1 then
         order.state="CANCELLED"; order.cancelled_at=os.epoch("utc"); order.failure="Cancelled before escrow movement by operator."
-        if save(JOURNAL,order) then ui.message("Deposit cancelled. No MineBank request was sent.",true)
+        if save(journalPath,order) then ui.message("Deposit cancelled. No MineBank request was sent.",true)
         else ui.message("Could not save cancellation. Keep the machine stopped and reconcile.",false) end
       end
     else
@@ -824,6 +847,14 @@ local function runDiagnostics()
     print("Local operation journal: DAMAGED (not proof of a pending bank operation)")
   else
     print("Local operation journal: "..tostring(journal.kind or "UNKNOWN").." / "..tostring(journal.state or "UNKNOWN").." / "..tostring(journal.amount or "?").." Emeralds")
+  end
+  local transferJournal=load(TRANSFER_JOURNAL)
+  if not transferJournal then
+    print("Transfer journal: no unfinished transfer")
+  elseif transferJournal.state=="CORRUPT" then
+    print("Transfer journal: DAMAGED")
+  else
+    print("Transfer journal: "..tostring(transferJournal.state or "UNKNOWN").." / "..tostring(transferJournal.amount or "?").." Emeralds")
   end
   print("HTTP enabled: "..tostring(http~=nil))
   print("Modem detected (optional): "..tostring(peripheral.find("modem")~=nil))
