@@ -862,6 +862,55 @@ local function runDiagnostics()
   ui.autoPause(2.4)
 end
 
+local function migrateLegacyTransferJournal()
+  local legacy=load(JOURNAL)
+  if not legacy or legacy.state=="COMPLETE" or legacy.state=="CANCELLED"
+    or legacy.kind~="TRANSFER" then
+    return true
+  end
+  if legacy.state=="CORRUPT" then return false end
+
+  local current=load(TRANSFER_JOURNAL)
+  if current and current.state=="CORRUPT" then
+    ui.message("Both legacy and transfer journals need operator review. No journal was deleted.",false)
+    return false
+  end
+  if current then
+    if tostring(current.key or "")~=tostring(legacy.key or "") then
+      ui.message("Two different unresolved transfers were found in the ATM journals. No journal was deleted; operator reconciliation is required.",false)
+      return false
+    end
+  else
+    if not save(TRANSFER_JOURNAL,legacy) then
+      ui.message("Could not migrate the older transfer journal. The original journal was preserved.",false)
+      return false
+    end
+  end
+
+  local verified=load(TRANSFER_JOURNAL)
+  if not verified or verified.state=="CORRUPT"
+    or tostring(verified.key or "")~=tostring(legacy.key or "") then
+    ui.message("The migrated transfer journal could not be verified. The original journal was preserved.",false)
+    return false
+  end
+  -- Transfers do not move physical inventory. Once the same idempotency key is
+  -- durably stored in the dedicated transfer journal, remove only the obsolete
+  -- physical-journal copies so they no longer block deposits/withdrawals.
+  pcall(fs.delete,JOURNAL)
+  pcall(fs.delete,JOURNAL..".tmp")
+  pcall(fs.delete,JOURNAL..".bak")
+  if fs.exists(JOURNAL) or fs.exists(JOURNAL..".bak") then
+    ui.message("Transfer journal migrated, but the obsolete journal file could not be cleared. Restart and inspect diagnostics.",false)
+    return false
+  end
+  return true
+end
+
+if not migrateLegacyTransferJournal() then
+  ui.message("Legacy ATM journal migration needs attention. Use Diagnostics and Recovery Center before moving physical Emeralds.",false)
+  ui.autoPause(3.5)
+end
+
 while true do
   local ok,choice,pending=pcall(draw,cfg)
   if not ok then
