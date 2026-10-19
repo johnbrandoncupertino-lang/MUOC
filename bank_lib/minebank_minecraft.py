@@ -866,7 +866,11 @@ def minecraft_payment_options():
         message = None
         if not sources:
             message = reasons[0] if reasons else "No active payment method can cover this purchase."
-        return jsonify(funding_sources=sources, amount=amount, message=message), 200
+        # Return per-product reasons even when Balance is available. Otherwise
+        # the terminal can silently show Balance only and hide why CashLine
+        # was excluded (inactive product, restricted access, or insufficient limit).
+        return jsonify(funding_sources=sources, amount=amount, message=message,
+                       unavailable_reasons=reasons), 200
     except PermissionError as exc:
         return jsonify(error=str(exc)), 401
     except ValueError as exc:
