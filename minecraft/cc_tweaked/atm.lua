@@ -460,14 +460,60 @@ local function runDeposit()
     if not canFit(stockInv,"minecraft:emerald",amount) then ui.message("Secure stock inventory lacks space. No items moved.",false); ui.autoPause(2.4); return end
     local confirm=ui.choose("CONFIRM DEPOSIT",{"Deposit "..amount.." Emeralds","Cancel"},"Detected "..amount.." Emeralds. Confirm to secure and credit them.")
     if confirm~=1 then ui.message("Deposit cancelled. No Emeralds moved.",true); ui.autoPause(2.4); return end
-    order={version=1,key=ui.key("deposit"),amount=amount,state="ESCROW_PENDING",kind="DEPOSIT",card_id=card.card_id}
+    order={version=2,key=ui.key("deposit"),amount=amount,state="ESCROW_PENDING",kind="DEPOSIT",card_id=card.card_id,deposit_before=countEmeralds(depositInv),stock_before_escrow=countEmeralds(stockInv)}
     if not save(JOURNAL,order) then ui.message("Could not persist deposit journal; items left untouched.",false); ui.autoPause(2.4); return end
   end
   if order.state=="ESCROW_PENDING" then
-    local moved=moveEmeralds(depositInv,cfg.stock_inventory)
-    if moved~=order.amount then ui.message("Only "..moved.." of "..order.amount.." Emeralds entered escrow. Stop and reconcile.",false); ui.autoPause(2.4); return end
+    -- Recover interrupted physical escrow transfers. The journal is persisted
+    -- before movement, so compare both sides against that checkpoint instead of
+    -- assuming an all-or-nothing inventory push.
+    local depositBefore=tonumber(order.deposit_before)
+    local stockBefore=tonumber(order.stock_before_escrow)
+    if not depositBefore or not stockBefore then
+      -- Legacy journals have no checkpoint. If the entire original amount is
+      -- still in the input, no part of this operation appears to have moved;
+      -- establish a fresh checkpoint. Partial legacy movement remains manual.
+      if countEmeralds(depositInv)~=tonumber(order.amount) then
+        ui.message("This older deposit journal has no escrow checkpoint and the input no longer contains the full amount. Do not move Emeralds; operator reconciliation is required.",false)
+        ui.autoPause(3.2)
+        return
+      end
+      order.deposit_before=countEmeralds(depositInv)
+      order.stock_before_escrow=countEmeralds(stockInv)
+      depositBefore=order.deposit_before
+      stockBefore=order.stock_before_escrow
+      if not save(JOURNAL,order) then
+        ui.message("Could not save the escrow recovery checkpoint. No Emeralds were moved.",false)
+        ui.autoPause(2.4)
+        return
+      end
+    end
+    local depositNow=countEmeralds(depositInv)
+    local stockNow=countEmeralds(stockInv)
+    local depositMoved=depositBefore-depositNow
+    local stockAdded=stockNow-stockBefore
+    if depositMoved<0 or stockAdded<0 or depositMoved~=stockAdded or depositMoved>order.amount then
+      ui.message("Deposit inventory checkpoint mismatch (input moved "..tostring(depositMoved)..", secure stock added "..tostring(stockAdded).."). No further Emeralds were moved; operator reconciliation is required.",false)
+      ui.autoPause(3.2)
+      return
+    end
+    local remaining=order.amount-depositMoved
+    if remaining>0 then
+      local moved=moveEmeraldAmount(depositInv,stockInv,remaining,cfg.stock_inventory)
+      if moved~=remaining then
+        ui.message("Escrow transfer is incomplete ("..tostring(depositMoved+moved).." of "..tostring(order.amount).."). The journal is retained; retry recovery only after checking both inventories.",false)
+        ui.autoPause(3.2)
+        return
+      end
+    end
+    if countEmeralds(depositInv)~=depositBefore-order.amount
+      or countEmeralds(stockInv)~=stockBefore+order.amount then
+      ui.message("Escrow movement could not be verified against both inventory checkpoints. The bank request was not sent; operator reconciliation is required.",false)
+      ui.autoPause(3.2)
+      return
+    end
     order.state="REQUEST_PENDING"
-    if not save(JOURNAL,order) then ui.message("Emeralds are secured in escrow but journal failed. Do not move them.",false); ui.autoPause(2.4); return end
+    if not save(JOURNAL,order) then ui.message("Emeralds are secured in escrow but journal update failed. Do not move them.",false); ui.autoPause(2.4); return end
   end
   local result,err,status=ui.api("/deposits","POST",card.credential,{amount=order.amount,wallet_pin=p},order.key,{["X-MineBank-ATM-Token"]=cfg.atm_token})
   if not result then
