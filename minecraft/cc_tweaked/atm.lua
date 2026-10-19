@@ -974,10 +974,11 @@ while true do
           elseif choice==4 then
             local more=drawMore()
             if more==1 then runTransfer()
-            elseif more==2 then runHistory()
-            elseif more==3 then runRevoke()
-            elseif more==4 then runDiagnostics()
-            elseif more==5 then runRecovery()
+            elseif more==2 then runWithdrawal(nil,nil,"CASHLINE")
+            elseif more==3 then runHistory()
+            elseif more==4 then runRevoke()
+            elseif more==5 then runDiagnostics()
+            elseif more==6 then runRecovery()
             end
           end
         end
