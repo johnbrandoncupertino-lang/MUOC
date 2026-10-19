@@ -181,7 +181,7 @@ local function draw(cfg)
       "Exit",
     }
   end
-  return ui.choose("ATM", options, "Physical Emeralds = MineBank Emeralds.")
+  return ui.choose("MINEBANK ATM", options, (cfg.atm_label or "THE NEW BANK").." • Secure Emerald services.")
 end
 local function drawMore()
   return ui.choose("MORE SERVICES", {
@@ -191,7 +191,7 @@ local function drawMore()
     "Diagnostics",
     "Resume pending operation",
     "Back",
-  }, "More MineBank services.")
+  }, "THE NEW BANK • Account and recovery services.")
 end
 
 local function getCard()
@@ -494,7 +494,7 @@ local function runDeposit()
   local order
   if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
     if old.kind~="DEPOSIT" or (old.state~="REQUEST_PENDING" and old.state~="ESCROW_PENDING" and old.state~="REFUND_PENDING") then
-      ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.autoPause(2.4); return
+      ui.message("ATM temporarily locked by "..tostring(old.kind or "unknown").." / "..tostring(old.state or "unknown")..". Open More Services → Resume pending operation, then choose Check MineBank status. The saved operation must be reconciled before a new one can start.",false); ui.autoPause(3.2); return
     end
     if tostring(old.card_id or "")~=tostring(card.card_id or "") then
       if old.state=="ESCROW_PENDING" or old.state=="REFUND_PENDING" or not adoptPendingOperationForSameCustomer(old,card,"DEPOSIT") then return end
@@ -606,7 +606,7 @@ local function runTransfer()
   if old and old.state=="CORRUPT" then reportDamagedJournal(); return end
   if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
     if old.kind~="TRANSFER" or old.state~="REQUEST_PENDING" then
-      ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.autoPause(2.4); return
+      ui.message("ATM temporarily locked by "..tostring(old.kind or "unknown").." / "..tostring(old.state or "unknown")..". Open More Services → Resume pending operation, then choose Check MineBank status. The saved operation must be reconciled before a new one can start.",false); ui.autoPause(3.2); return
     end
     if tostring(old.card_id or "")~=tostring(card.card_id or "") then
       if not adoptPendingOperationForSameCustomer(old,card,"TRANSFER") then return end
