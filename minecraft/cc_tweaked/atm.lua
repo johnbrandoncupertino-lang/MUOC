@@ -849,7 +849,7 @@ local function runDiagnostics()
     print("Local operation journal: "..tostring(journal.kind or "UNKNOWN").." / "..tostring(journal.state or "UNKNOWN").." / "..tostring(journal.amount or "?").." Emeralds")
   end
   local transferJournal=load(TRANSFER_JOURNAL)
-  if not transferJournal then
+  if not transferJournal or transferJournal.state=="COMPLETE" or transferJournal.state=="CANCELLED" then
     print("Transfer journal: no unfinished transfer")
   elseif transferJournal.state=="CORRUPT" then
     print("Transfer journal: DAMAGED")
