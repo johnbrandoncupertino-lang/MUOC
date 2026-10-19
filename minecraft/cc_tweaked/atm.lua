@@ -309,19 +309,24 @@ local function adoptPendingOperationForSameCustomer(order, card, expectedKind)
   return true
 end
 
-local function runWithdrawal()
-  ui.clear(); ui.header("WITHDRAW EMERALDS","Step 1 of 3 • Card and PIN")
-  ui.message("Insert your MineBank floppy card, then enter your six-digit Wallet PIN when prompted.",true)
-  ui.autoPause(1.6)
-  local card=getCard(); if not card then return end
-  ui.clear(); ui.header("WITHDRAW EMERALDS","Step 2 of 3 • Verify identity")
-  local p=pin(); if not p then return end
+local function runWithdrawal(providedCard,providedPin)
+  if not providedCard then
+    ui.clear(); ui.header("WITHDRAW EMERALDS","Step 1 of 3 • Card and PIN")
+    ui.message("Insert your MineBank floppy card, then enter your six-digit Wallet PIN when prompted.",true)
+    ui.autoPause(1.6)
+  end
+  local card=providedCard or getCard(); if not card then return end
+  local p=providedPin
+  if not p then
+    ui.clear(); ui.header("WITHDRAW EMERALDS","Step 2 of 3 • Verify identity")
+    p=pin(); if not p then return end
+  end
   local old=load(JOURNAL)
   local order
   if old and old.state=="CORRUPT" then reportDamagedJournal(); return end
   if old and old.state~="COMPLETE" and old.state~="CANCELLED" then
     if old.kind~="WITHDRAWAL" or (old.state~="REQUEST_PENDING" and old.state~="AUTHORIZED" and old.state~="DISPENSE_STARTED") then
-      ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.autoPause(2.4); return
+      ui.message("ATM temporarily locked by "..tostring(old.kind or "unknown").." / "..tostring(old.state or "unknown")..". Open More Services → Resume pending operation, then choose Check MineBank status. The saved operation must be reconciled before a new one can start.",false); ui.autoPause(3.2); return
     end
     if tostring(old.card_id or "")~=tostring(card.card_id or "") then
       if not adoptPendingOperationForSameCustomer(old,card,"WITHDRAWAL") then return end
@@ -575,16 +580,104 @@ local function runRecovery()
     ui.message("No unfinished ATM operation needs recovery.",true); ui.autoPause(2.4); return
   end
   if order.state=="CORRUPT" then
-    ui.message("The ATM journal is damaged. Stop money movement and ask the operator to inspect the journal backups.",false); ui.autoPause(2.4); return
+    reportDamagedJournal()
+    return
   end
-  local summary=tostring(order.kind or "UNKNOWN").." • "..tostring(order.amount or "?").." Emeralds • "..tostring(order.state or "UNKNOWN")
-  local action=ui.choose("OPERATION RECOVERY",{"Resume the same operation","Cancel safe pre-movement operation","Return to ATM"},summary)
+
+  local summary=tostring(order.kind or "UNKNOWN").." • "..tostring(order.amount or "?")..
+    " Emeralds • "..tostring(order.state or "UNKNOWN")
+  local action=ui.choose("OPERATION RECOVERY",{
+    "Check MineBank status",
+    "Resume the saved operation",
+    "Cancel safe unstarted deposit",
+    "Return to ATM"
+  },summary)
+
   if action==1 then
+    local card=getCard()
+    if not card then return end
+    ui.clear(); ui.header("RECOVERY CHECK","Checking the bank's authoritative record")
+    local receipt,err,status=ui.api("/operations/"..tostring(order.key or ""),"GET",card.credential)
+    if not receipt or receipt.found~=true then
+      ui.message("MineBank could not match this operation to the inserted card: "..tostring(err or ("HTTP "..tostring(status or "?"))),false)
+      ui.message("A not-found response does not prove the operation was never recorded for another customer. Keep the journal and inventories unchanged; try the original card or ask the operator to reconcile it.",false)
+      ui.autoPause(4)
+      return
+    end
+    if tostring(receipt.operation_type or "")~=tostring(order.kind or "") then
+      ui.message("The bank operation type differs from the local journal. Do not move Emeralds; operator reconciliation is required.",false)
+      ui.autoPause(3.5)
+      return
+    end
+    if tostring(receipt.status or ""):upper()~="COMPLETED" then
+      ui.message("MineBank returned an operation record that is not confirmed complete. No physical items were moved.",false)
+      ui.autoPause(3)
+      return
+    end
+
+    local bankResponse=receipt.response or {}
+    local transactionId=receipt.transaction_id or bankResponse.transaction_id or order.transaction_id
+    if order.kind=="TRANSFER" then
+      order.state="COMPLETE"
+      order.transaction_id=transactionId
+      order.completed_at=os.epoch("utc")
+      order.recovered_from_bank=true
+      if save(JOURNAL,order) then
+        ui.message("TRANSFER RECONCILED — MineBank confirms transaction "..tostring(transactionId or "recorded")..". No transfer was submitted again.",true)
+      else
+        ui.message("MineBank confirms the transfer, but the journal could not be updated. Keep the ATM stopped and preserve the journal.",false)
+      end
+      ui.autoPause(3)
+      return
+    elseif order.kind=="DEPOSIT" then
+      if order.state~="REQUEST_PENDING" then
+        ui.message("MineBank confirms a deposit, but the local journal is not at the expected post-escrow stage. Do not move stock; operator reconciliation is required.",false)
+        ui.autoPause(3.5)
+        return
+      end
+      order.state="COMPLETE"
+      order.transaction_id=transactionId
+      order.completed_at=os.epoch("utc")
+      order.recovered_from_bank=true
+      if save(JOURNAL,order) then
+        ui.message("DEPOSIT RECONCILED — MineBank confirms the credit. Emeralds remain in secure stock; do not return or deposit them again.",true)
+      else
+        ui.message("MineBank confirms the deposit, but the journal could not be updated. Preserve the journal and escrow.",false)
+      end
+      ui.autoPause(3)
+      return
+    elseif order.kind=="WITHDRAWAL" then
+      if order.state~="REQUEST_PENDING" and order.state~="AUTHORIZED" and order.state~="DISPENSE_STARTED" then
+        ui.message("MineBank confirms a withdrawal, but the local journal stage is unexpected. Stop and reconcile the physical inventories.",false)
+        ui.autoPause(3.5)
+        return
+      end
+      order.transaction_id=transactionId
+      if order.state=="REQUEST_PENDING" then order.state="AUTHORIZED" end
+      order.recovered_from_bank=true
+      if not save(JOURNAL,order) then
+        ui.message("MineBank confirms the debit, but the recovery ticket could not be saved. Do not dispense; preserve the journal.",false)
+        ui.autoPause(3)
+        return
+      end
+      ui.clear(); ui.header("WITHDRAWAL RECOVERY","Bank confirmed • identity check required")
+      ui.message("MineBank confirms this withdrawal. Enter the Wallet PIN to resume the saved dispense without creating another debit.",true)
+      local p=pin()
+      if not p then return end
+      runWithdrawal(card,p)
+      return
+    else
+      ui.message("Unknown operation type. No changes were made; operator reconciliation is required.",false)
+      ui.autoPause(3)
+      return
+    end
+
+  elseif action==2 then
     if order.kind=="WITHDRAWAL" then runWithdrawal()
     elseif order.kind=="DEPOSIT" then runDeposit()
     elseif order.kind=="TRANSFER" then runTransfer()
     else ui.message("Unknown journal type. Operator reconciliation is required.",false); ui.autoPause(2.4) end
-  elseif action==2 then
+  elseif action==3 then
     if order.kind=="DEPOSIT" and order.state=="ESCROW_PENDING" and countEmeralds(depositInv)>=tonumber(order.amount or 0) then
       local confirm=ui.choose("CANCEL DEPOSIT",{"Cancel unstarted deposit","Keep pending"},"Confirm that the Emeralds are still in the deposit input and no items have moved.")
       if confirm==1 then
@@ -593,7 +686,7 @@ local function runRecovery()
         else ui.message("Could not save cancellation. Keep the machine stopped and reconcile.",false) end
       end
     else
-      ui.message("This operation may already have reached MineBank or moved physical Emeralds. It cannot be safely cancelled from this screen. Resume with the same card/key or reconcile the journal and inventory.",false)
+      ui.message("This operation may already have reached MineBank or moved physical Emeralds. It cannot be cancelled safely here. Check MineBank status, resume with the original card, or reconcile the journal and inventory.",false)
     end
     ui.autoPause(2.4)
   end
