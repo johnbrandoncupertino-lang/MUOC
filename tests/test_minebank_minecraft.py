@@ -79,6 +79,44 @@ def test_minecraft_api_rejects_plain_http_when_enabled(monkeypatch):
 
 
 
+def test_minecraft_operation_status_route_is_hidden_when_feature_disabled(monkeypatch):
+    monkeypatch.delenv("MINEBANK_MINECRAFT_ENABLED", raising=False)
+    app = Flask(__name__)
+    app.register_blueprint(minecraft_bp)
+    response = app.test_client().get("/api/v1/minecraft/operations/atm-test-key")
+    assert response.status_code == 404
+
+
+def test_minecraft_operation_status_requires_https(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    app = Flask(__name__)
+    app.register_blueprint(minecraft_bp)
+    response = app.test_client().get(
+        "/api/v1/minecraft/operations/atm-test-key",
+        headers={"Authorization": "Bearer mbmc_" + "x" * 48},
+    )
+    assert response.status_code == 400
+    assert response.get_json()["error"] == "Minecraft integration requires HTTPS."
+
+
+def test_minecraft_operation_status_rejects_malformed_key_before_database_access(monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setattr(minecraft_api, "_client_id_for_card_token",
+                        lambda cursor, token: (_ for _ in ()).throw(AssertionError("DB lookup must not run")))
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_bp)
+    response = app.test_client().get(
+        "/api/v1/minecraft/operations/bad%20key",
+        headers={
+            "Authorization": "Bearer mbmc_" + "x" * 48,
+            "X-Forwarded-Proto": "https",
+        },
+    )
+    assert response.status_code == 400
+    assert "operation key" in response.get_json()["error"].lower()
+
+
 def test_minecraft_withdrawal_requires_idempotency_key(monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
