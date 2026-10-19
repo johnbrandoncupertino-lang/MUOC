@@ -723,6 +723,33 @@ local function runRecovery()
     return
   end
 
+  -- A completed physical withdrawal can be reconciled without the original
+  -- customer card when both saved inventory checkpoints match exactly.
+  if order.kind=="WITHDRAWAL" and order.state=="DISPENSE_STARTED" then
+    local stockBefore=tonumber(order.stock_before_dispense)
+    local outputBefore=tonumber(order.output_before_dispense)
+    if stockBefore and outputBefore then
+      local stockMoved=stockBefore-countEmeralds(stockInv)
+      local outputAdded=countEmeralds(outputInv)-outputBefore
+      if stockMoved==tonumber(order.amount) and outputAdded==tonumber(order.amount) then
+        order.state="COMPLETE"
+        order.completed_at=os.epoch("utc")
+        order.recovered_from_inventory_checkpoint=true
+        if save(journalPath,order) then
+          ui.message("WITHDRAWAL RECONCILED — saved inventory checkpoints confirm all "..tostring(order.amount).." Emeralds were dispensed. No items were moved again.",true)
+        else
+          ui.message("The inventory confirms the withdrawal completed, but the journal could not be updated. Preserve the journal and ask the operator to inspect it.",false)
+        end
+        ui.autoPause(3)
+        return
+      elseif stockMoved~=0 or outputAdded~=0 then
+        ui.message("Withdrawal inventory checkpoints show a partial or externally changed dispense (stock change "..tostring(stockMoved)..", output change "..tostring(outputAdded).."). No items were moved; operator reconciliation is required.",false)
+        ui.autoPause(3.5)
+        return
+      end
+    end
+  end
+
   local summary=tostring(order.kind or "UNKNOWN").." • "..tostring(order.amount or "?")..
     " Emeralds • "..tostring(order.state or "UNKNOWN")
   local action=ui.choose("OPERATION RECOVERY",{
