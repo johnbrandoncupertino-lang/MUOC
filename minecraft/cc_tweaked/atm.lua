@@ -70,6 +70,13 @@ local function load(path)
     -- inventing a new operation or permanently reporting a false pending one.
     if fs.exists(path..".tmp") and not fs.exists(path..".bak") then
       local pending,valid=readJournalFile(path..".tmp")
+      -- load() also reads the ATM configuration. Recover its complete temp file
+      -- too, otherwise a restart after successful pairing could enroll another ATM.
+      if valid and path~=JOURNAL then
+        local promoted=pcall(function() fs.move(path..".tmp",path) end)
+        if promoted and fs.exists(path) then return pending end
+        return {state="CORRUPT"}
+      end
       local initialState=valid and type(pending.key)=="string"
         and type(pending.amount)=="number"
         and ((pending.state=="REQUEST_PENDING"
