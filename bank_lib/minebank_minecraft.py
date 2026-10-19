@@ -551,6 +551,63 @@ def _request_idempotency_key():
     return key
 
 
+@minecraft_bp.get("/operations/<key>")
+def minecraft_operation_status():
+    """Return an idempotent operation receipt only to the same MineBank customer.
+
+    This lets a replacement card belonging to the same customer recover a
+    pending ATM journal. It never reveals whether another customer's key exists.
+    """
+    unavailable = _feature_unavailable()
+    if unavailable:
+        return unavailable
+    insecure = _transport_unavailable()
+    if insecure:
+        return insecure
+    token = _authorized_card_token()
+    key = str(request.view_args.get("key") or "").strip()
+    if not token or not key or len(key) > 128 or not key.isascii() or not all(
+        ch.isalnum() or ch in "-_." for ch in key
+    ):
+        return jsonify(error="A valid card credential and operation key are required."), 400
+    conn = get_db_connection()
+    if conn is None:
+        return jsonify(error="MineBank is temporarily unavailable."), 503
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                client_id = _client_id_for_card_token(cur, token)
+                if client_id is None:
+                    return jsonify(error="Card credential is invalid or revoked."), 401
+                cur.execute(
+                    """SELECT operation_type,status,response,transaction_id,amount
+                       FROM minebank_minecraft_operations
+                       WHERE client_id=%s AND idempotency_key=%s
+                       LIMIT 1""",
+                    (client_id, key),
+                )
+                row = cur.fetchone()
+                if not row:
+                    # Deliberately indistinguishable from an unknown key belonging
+                    # to another customer: never leak cross-customer activity.
+                    return jsonify(error="No operation with this key exists for this customer."), 404
+                response = row[2] if isinstance(row[2], dict) else {}
+                if isinstance(response, str):
+                    try:
+                        response = __import__("json").loads(response)
+                    except (TypeError, ValueError):
+                        response = {}
+                return jsonify(
+                    found=True, operation_type=row[0], status=row[1],
+                    response=response or {}, transaction_id=row[3], amount=int(row[4] or 0),
+                ), 200
+    except Exception as exc:
+        current_app.logger.error("Minecraft operation status lookup failed: %s", type(exc).__name__)
+        return jsonify(error="Operation status is temporarily unavailable."), 503
+    finally:
+        release_db_connection(conn)
+
+
 def _merchant_token():
     header = request.headers.get("Authorization", "")
     scheme, separator, token = header.partition(" ")
