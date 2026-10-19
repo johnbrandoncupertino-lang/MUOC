@@ -511,7 +511,7 @@ while true do
   elseif not choice then
     break
   else
-    local actionOk,actionErr=pcall(function()
+    local actionOk,actionResult=pcall(function()
       if ui.hasMonitor() then
         if choice==1 then runBalance()
         elseif choice==2 then runWithdrawal()
@@ -537,10 +537,10 @@ while true do
         else return "EXIT" end
       end
     end)
-    if actionOk=="EXIT" then break end
+    if actionOk and actionResult=="EXIT" then break end
     if not actionOk then
       ui.clear(); ui.header("ATM OPERATION INTERRUPTED","No silent failure")
-      ui.message("The ATM caught an interface/runtime error: "..tostring(actionErr),false)
+      ui.message("The ATM caught an interface/runtime error: "..tostring(actionResult),false)
       ui.message("If a transaction may have started, use More services → Resume pending operation before trying again.",false)
       ui.autoPause(4)
     end
