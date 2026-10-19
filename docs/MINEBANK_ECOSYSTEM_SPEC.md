@@ -21,6 +21,7 @@
 The official branded ATM network, presented as **MineBank ClubCash** (short form: **ClubCash**). It includes physical CC:Tweaked ATM installations and their customer-facing software.
 
 - Core deposit, withdrawal, balance, and recovery behaviour remains available according to current product rules and machine capability.
+- CashLine Advance is a separate ATM action: it creates a Standard CashLine credit draw and dispenses physical Emeralds; it must never debit the ordinary balance or silently fall back to it. Require an active Standard CashLine facility, successful CrediCheck/product access, available credit, customer PIN verification, system/account checks, an idempotency key, and the existing dispense journal/recovery flow. Dynamic CashLine is not eligible for this ATM advance in the initial release.
 - Tier-based fee discounts, enhanced allowances, or other ATM privileges are configuration-driven and must be checked server-side before charging or authorising an operation.
 - An ATM's pairing credential identifies the machine; a customer's card/account credential identifies the customer. These identities must not be conflated.
 - ATM journal/idempotency/recovery controls remain mandatory. A cosmetic tier label must never affect physical cash accounting.
@@ -32,6 +33,8 @@ Physical member lounges and private service spaces inside the Minecraft world. T
 
 - A club location has a stable ID, name, world/location description, published facilities, operating status, and access policy.
 - Access checks use a server-side account/member credential and current Privileges result; never trust a client-supplied tier.
+- Admission price per visit: Personal and Business pay 50 Emeralds; Personal Pro and Business Pro pay 25 Emeralds; Personal Private and Corporate pay no per-visit admission fee (unlimited visits).
+- Charge once per admission, not per interaction. Verify and debit server-side, and use an idempotent admission record so retry/recovery cannot double-charge. If payment succeeds but the terminal disconnects, resume the same admission without charging again. The account used for admission determines eligibility; benefits do not carry across a customer's separate accounts.
 - Possible facilities: member reception, account service terminal, quiet/private rooms, business networking, and tier-specific events.
 - The first release should provide the data model and entitlement checks before any Minecraft building automation. Physical builds and their coordinates are operator-managed content.
 - MineClubs access does not imply access to another player's account, private messages, or business data.
@@ -86,7 +89,7 @@ The words "Core", "Enhanced", "Private", and "Corporate" in this table are servi
 | Portal insights | Existing banking dashboard | Enhanced reports and activity insights | More comprehensive reporting and service overview |
 | Offers | General catalogue | Pro-eligible offers | Private/corporate catalogue items |
 
-These are proposed differentiators, not existing product behaviour. Do not invent rates, point multipliers, fee waivers, limits, or lounge locations in code. Until those values are approved, use explicit safe defaults: no new financial discount, no altered limit, and no restricted access grant.
+MineClubs admission pricing is approved and fixed: Personal and Business 50 Emeralds per admission; Personal Pro and Business Pro 25 Emeralds per admission; Personal Private and Corporate unlimited admissions at no per-visit fee. Unlimited admissions do not waive unrelated fees. The points programme remains a loyalty currency redeemable for approved discounts and exclusive benefits, but the catalogue, award rules, point prices, and earning multipliers remain unapproved and must not be invented in code. No other financial discounts or limit changes are approved.
 
 Business benefits must be business-relevant. Corporate access does not imply Personal Private access unless the entitlement rule explicitly says so.
 
@@ -160,7 +163,7 @@ All tables should have appropriate foreign keys/indexes, uniqueness for idempote
 
 ### Stage 4 — ClubCash and Minecraft integration
 - Apply the brand consistently and surface entitlement metadata.
-- Add only approved server-enforced ATM benefits; retain current withdrawal/deposit journals, idempotency, per-machine credentials, and recovery.
+- Add the MineBank ClubCash branding and a dedicated Standard CashLine Advance action. Reuse the existing ATM dispense journal and operation-status recovery, but record the banking transaction as a CashLine credit draw; never debit the ordinary balance. Require an active Standard CashLine facility, CrediCheck/product eligibility, sufficient unused limit, system/account authorisation, and idempotency. Dynamic CashLine advances remain disabled.
 - Test operation-status/recovery behaviour and customer tier boundaries.
 
 ### Stage 5 — Portal, admin, and institutional website
@@ -182,7 +185,8 @@ All tables should have appropriate foreign keys/indexes, uniqueness for idempote
 - Points cannot be created or redeemed twice by request retries.
 - Points ledger is auditable and does not mutate the Emerald banking ledger.
 - Failed redemption fulfilment can be reconciled without duplicate points debits.
-- MineClubs access is checked server-side.
+- MineClubs access and the exact 50/25/unlimited admission tariff are checked server-side and charged at most once per admission.
+- ClubCash CashLine Advance creates a standard CashLine debt entry and dispenses no more than once; it cannot debit balance or fall back to balance.
 - ClubCash retains transaction journals and physical inventory safeguards.
 - Optional ecosystem services cannot break login or core banking.
 - Branding is consistent with the existing MineBank look; no unrelated redesign.
