@@ -1127,7 +1127,7 @@ def pay_merchant_checkout():
 
 @minecraft_bp.post("/withdrawals")
 def withdraw_emerald_items():
-    """Atomically debit MineBank balance and issue a single-use ATM dispense ticket."""
+    """Issue an idempotent ATM dispense ticket funded by Balance or Standard CashLine."""
     unavailable = _transactions_unavailable()
     if unavailable:
         return unavailable
@@ -1141,11 +1141,24 @@ def withdraw_emerald_items():
     key = _request_idempotency_key()
     if not token or not isinstance(data, dict) or not key:
         return jsonify(error="Card credential, JSON body, and Idempotency-Key are required."), 400
+    funding_source = str(data.get("funding_source", "BALANCE") or "BALANCE").strip().upper()
+    if funding_source not in ("BALANCE", "CASHLINE"):
+        return jsonify(error="ClubCash supports MineBank Balance withdrawals or Standard CashLine advances only."), 400
+    if funding_source == "CASHLINE":
+        try:
+            from .credicheck import ensure_credicheck_schema
+            from .database import ensure_loan_schema
+            if not ensure_credicheck_schema() or not ensure_loan_schema():
+                return jsonify(error="CashLine checks are temporarily unavailable.", error_code="CASHLINE_SCHEMA_UNAVAILABLE"), 503
+        except Exception:
+            current_app.logger.exception("ClubCash CashLine schema initialization failed")
+            return jsonify(error="CashLine checks are temporarily unavailable.", error_code="CASHLINE_SCHEMA_UNAVAILABLE"), 503
     raw_amount = data.get("amount")
     if isinstance(raw_amount, bool) or not isinstance(raw_amount, int) or raw_amount < 1 or raw_amount > MAX_MINECRAFT_WITHDRAWAL:
         return jsonify(error=f"Withdrawal must be a whole Emerald amount from 1 to {MAX_MINECRAFT_WITHDRAWAL}."), 400
     amount = raw_amount
-    request_hash = hashlib.sha256(("WITHDRAWAL:" + str(amount)).encode("utf-8")).hexdigest()
+    # Preserve the legacy Balance request hash so existing pending journals remain replayable.
+    request_hash = hashlib.sha256(("WITHDRAWAL:" + str(amount) if funding_source == "BALANCE" else "CASHLINE_ADVANCE:" + str(amount)).encode("utf-8")).hexdigest()
     pin_ok, pin_message = _verify_card_pin(token, data.get("wallet_pin"))
     if not pin_ok:
         return jsonify(error=pin_message or "Wallet PIN verification failed."), 401
@@ -1182,38 +1195,62 @@ def withdraw_emerald_items():
                             (card[1],))
                 if cur.fetchone():
                     raise ValueError("Banking operations are temporarily locked for this client.")
-                monthly_used, period, _ = _validate_outgoing_limits(cur, card, amount)
-                if int(card[8]) < amount:
-                    raise ValueError("Insufficient MineBank Balance. CashLine cannot be used at an ATM.")
-                txid = __import__("bank_lib.minebank_core", fromlist=["next_transaction_id"]).next_transaction_id(cur)
-                cur.execute(
-                    """UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
-                       monthly_outgoing_period=%s,last_outgoing_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
-                       WHERE id=%s""",
-                    (amount, monthly_used + amount, period, card[2]),
-                )
                 from bank_lib.minebank_core import create_ledger_transaction, audit_event
+                if funding_source == "BALANCE":
+                    monthly_used, period, _ = _validate_outgoing_limits(cur, card, amount)
+                    if int(card[8]) < amount:
+                        raise ValueError("Insufficient MineBank Balance.")
+                    cur.execute(
+                        """UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
+                           monthly_outgoing_period=%s,last_outgoing_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+                           WHERE id=%s""",
+                        (amount, monthly_used + amount, period, card[2]),
+                    )
+                    transaction_type = "WITHDRAWAL"
+                    sender_account_id = card[2]
+                    recipient_account_id = None
+                    transfer_kind = "MINECRAFT_ATM"
+                    description = "MineBank ClubCash balance withdrawal"
+                else:
+                    from bank_lib.minebank_core import cashline_outstanding, _assert_credicheck_product_access
+                    _assert_credicheck_product_access(cur, card[1], "CASHLINE")
+                    cur.execute("SELECT credit_limit,status FROM credit_facilities WHERE account_id=%s FOR UPDATE", (card[2],))
+                    facility = cur.fetchone()
+                    if not facility or str(facility[1] or "").upper() != "ACTIVE":
+                        raise ValueError("Standard CashLine is not active for this account. No Balance withdrawal was made.")
+                    outstanding = cashline_outstanding(cur, card[2])
+                    available_credit = max(0, int(facility[0] or 0) - outstanding)
+                    if amount > available_credit:
+                        raise ValueError("Insufficient Standard CashLine availability. Available: " + str(available_credit) + " Emerald. No Balance withdrawal was made.")
+                    transaction_type = "CREDIT_DRAW"
+                    sender_account_id = None
+                    recipient_account_id = card[2]
+                    transfer_kind = "CASHLINE"
+                    description = "MineBank ClubCash Standard CashLine advance"
+                txid = __import__("bank_lib.minebank_core", fromlist=["next_transaction_id"]).next_transaction_id(cur)
                 create_ledger_transaction(
-                    cur, transaction_id=txid, transaction_type="WITHDRAWAL",
-                    amount=amount, currency="Emerald", sender_account_id=card[2],
-                    status="COMPLETED", description="MineBank Minecraft ATM withdrawal",
-                    reference_id=key, transfer_kind="MINECRAFT_ATM",
+                    cur, transaction_id=txid, transaction_type=transaction_type,
+                    amount=amount, currency="Emerald", sender_account_id=sender_account_id,
+                    recipient_account_id=recipient_account_id,
+                    status="COMPLETED", description=description,
+                    reference_id=key, transfer_kind=transfer_kind,
                 )
                 response_body = {
                     "status": "COMPLETED", "transaction_id": txid,
                     "withdrawal_id": key, "amount": amount,
                     "item": "minecraft:emerald", "items": amount,
                     "currency": "emerald",
-                    "warning": "This withdrawal has been debited. Dispense the listed items once only.",
+                    "funding_source": funding_source,
+                    "warning": ("This withdrawal has been debited from MineBank Balance. Dispense the listed items once only." if funding_source == "BALANCE" else "A Standard CashLine draw has been recorded. Dispense the listed items once only."),
                 }
                 _save_operation(cur, client_id=card[1], card_id=card[0], account_id=card[2],
                                 key=key, op_type="WITHDRAWAL", request_hash=request_hash,
                                 status="COMPLETED", amount=amount, transaction_id=txid,
                                 response=response_body)
-                audit_event(cur, actor_client_id=card[1], action="MINECRAFT_ATM_WITHDRAWAL",
+                audit_event(cur, actor_client_id=card[1], action=("MINECRAFT_ATM_WITHDRAWAL" if funding_source == "BALANCE" else "MINEBANK_CLUBCASH_CASHLINE_ADVANCE"),
                             target_type="TRANSACTION", target_id=txid, account_id=card[2],
                             transaction_id=txid, ip_address=request.remote_addr,
-                            context={"withdrawal_id": key, "items": amount})
+                            context={"withdrawal_id": key, "items": amount, "funding_source": funding_source})
         return jsonify(response_body), 200
     except PermissionError as exc:
         return jsonify(error=str(exc)), 401
