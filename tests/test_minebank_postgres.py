@@ -372,6 +372,20 @@ def _insert_test_minecraft_card(client_id, account_id, token):
         (client_id, account_id, token[:16], hash_card_token(token)),
         fetch=False, commit=True,
     )
+    return execute_query_dict(
+        "SELECT id FROM minebank_minecraft_cards WHERE card_prefix=%s AND client_id=%s",
+        (token[:16], client_id),
+    )[0]["id"]
+
+
+def _insert_test_minecraft_atm(client_id, card_id, token):
+    execute_query(
+        """INSERT INTO minebank_minecraft_atms
+           (client_id,enrolled_by_card_id,token_prefix,token_hash,label)
+           VALUES(%s,%s,%s,%s,'test ClubCash ATM')""",
+        (client_id, card_id, token[:16], hash_card_token(token)),
+        fetch=False, commit=True,
+    )
 
 
 def test_minecraft_merchant_payment_is_atomic_and_idempotent(accounts, monkeypatch):
@@ -455,7 +469,8 @@ def test_minecraft_atm_withdrawal_is_atomic_and_idempotent(accounts, monkeypatch
     execute_query("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",
                   (alice,), fetch=False, commit=True)
     card_token = "mbmc_" + "w" * 48
-    _insert_test_minecraft_card(alice, alice_account_id, card_token)
+    card_id = _insert_test_minecraft_card(alice, alice_account_id, card_token)
+    _insert_test_minecraft_atm(alice, card_id, "atm-test-token-" + "a" * 40)
 
     from flask import Flask
     app = Flask(__name__)
@@ -504,7 +519,8 @@ def test_minecraft_atm_deposit_is_atomic_and_idempotent(accounts, monkeypatch):
     execute_query("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",
                   (alice,), fetch=False, commit=True)
     card_token = "mbmc_" + "d" * 48
-    _insert_test_minecraft_card(alice, account_id, card_token)
+    card_id = _insert_test_minecraft_card(alice, account_id, card_token)
+    _insert_test_minecraft_atm(alice, card_id, machine_token)
 
     from flask import Flask
     app = Flask(__name__)
