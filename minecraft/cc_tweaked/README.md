@@ -74,6 +74,7 @@ The code change does not itself apply the database migration, set deployment env
 
 - Before dispensing, withdrawals persist a stock/output checkpoint and use the same idempotency key to recover a bank-confirmed debit. A confirmed dispense is never automatically repeated.
 - Deposits persist input/stock checkpoints before moving Emeralds into escrow. If the computer stops partway through the move, recovery compares both inventories and completes only the verified remainder. A mismatch fails closed for operator reconciliation.
+- Transfers have a separate journal from physical deposits/withdrawals, so an uncertain transfer no longer blocks unrelated cash services. A legacy pending transfer journal is migrated automatically only after its idempotency key is durably verified in the new location.
 - The Recovery Center can query MineBank for a customer-scoped operation receipt and presents recovery first on the monitor whenever any journal is unfinished. It can mark confirmed transfers/deposits complete without replaying the request, and resume a confirmed withdrawal using its existing ticket. A not-found response is not treated as proof that an operation never happened; the local journal and inventories are preserved. Only one physical deposit/withdrawal may be unresolved at a time; a transfer has its own journal because it does not move physical inventory.
 
 
