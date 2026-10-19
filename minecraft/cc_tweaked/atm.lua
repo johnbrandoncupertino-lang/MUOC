@@ -284,6 +284,31 @@ local outputInv=ui.inventory(cfg.output_inventory)
 if not depositInv or not stockInv or not outputInv then ui.message("Configured inventory missing. Run setup again.",false); ui.autoPause(2.4); return end
 ui.useTarget(ui.hasMonitor() and "monitor" or "terminal")
 
+local function adoptPendingOperationForSameCustomer(order, card, expectedKind)
+  -- A replacement card from the same customer may recover an operation that
+  -- already reached the bank. The server only returns a receipt scoped to the
+  -- current cardholder; a different customer's operation remains inaccessible.
+  if not order or not order.key or not card or not card.credential then return false end
+  local receipt,err,status=ui.api("/operations/"..tostring(order.key),"GET",card.credential)
+  if not receipt or receipt.found~=true then
+    ui.message("This pending operation cannot be matched to the inserted cardholder. Insert the original card, or have the operator reconcile the journal and physical inventories. "..tostring(err or ("HTTP "..tostring(status or "?"))),false)
+    ui.autoPause(3)
+    return false
+  end
+  if tostring(receipt.operation_type or "")~=tostring(expectedKind or "") then
+    ui.message("The bank's operation record does not match the local journal. Stop and reconcile the ATM journal before moving Emeralds.",false)
+    ui.autoPause(3)
+    return false
+  end
+  order.card_id=card.card_id
+  if not save(JOURNAL,order) then
+    ui.message("The bank recognizes this operation, but the updated card association could not be saved. Keep the ATM stopped and reconcile the journal.",false)
+    ui.autoPause(3)
+    return false
+  end
+  return true
+end
+
 local function runWithdrawal()
   ui.clear(); ui.header("WITHDRAW EMERALDS","Step 1 of 3 • Card and PIN")
   ui.message("Insert your MineBank floppy card, then enter your six-digit Wallet PIN when prompted.",true)
@@ -298,7 +323,9 @@ local function runWithdrawal()
     if old.kind~="WITHDRAWAL" or (old.state~="REQUEST_PENDING" and old.state~="AUTHORIZED" and old.state~="DISPENSE_STARTED") then
       ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.autoPause(2.4); return
     end
-    if tostring(old.card_id or "")~=tostring(card.card_id or "") then ui.message("This unfinished withdrawal belongs to a different floppy card. Reinsert the original card.",false); ui.autoPause(2.4); return end
+    if tostring(old.card_id or "")~=tostring(card.card_id or "") then
+      if not adoptPendingOperationForSameCustomer(old,card,"WITHDRAWAL") then return end
+    end
     order=old
     if order.state=="DISPENSE_STARTED" then
       local stockBefore=tonumber(order.stock_before_dispense)
@@ -413,7 +440,9 @@ local function runDeposit()
     if old.kind~="DEPOSIT" or (old.state~="REQUEST_PENDING" and old.state~="ESCROW_PENDING") then
       ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.autoPause(2.4); return
     end
-    if tostring(old.card_id or "")~=tostring(card.card_id or "") then ui.message("This unfinished deposit belongs to a different floppy card. Reinsert the original card.",false); ui.autoPause(2.4); return end
+    if tostring(old.card_id or "")~=tostring(card.card_id or "") then
+      if old.state=="ESCROW_PENDING" or not adoptPendingOperationForSameCustomer(old,card,"DEPOSIT") then return end
+    end
     order=old
   else
     local returned=returnInvalidItems(depositInv,cfg.output_inventory)
@@ -465,7 +494,9 @@ local function runTransfer()
     if old.kind~="TRANSFER" or old.state~="REQUEST_PENDING" then
       ui.message("An unfinished ATM operation exists. Reconcile it before starting another.",false); ui.autoPause(2.4); return
     end
-    if tostring(old.card_id or "")~=tostring(card.card_id or "") then ui.message("This unfinished transfer belongs to a different floppy card. Reinsert the original card.",false); ui.autoPause(2.4); return end
+    if tostring(old.card_id or "")~=tostring(card.card_id or "") then
+      if not adoptPendingOperationForSameCustomer(old,card,"TRANSFER") then return end
+    end
     order=old
   else
     local recipient=ui.prompt("Recipient account number")
