@@ -442,8 +442,15 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                         cur.execute("SELECT transaction_id,status,amount,fee FROM ledger_transactions WHERE transaction_id=%s",
                                     (existing[0],))
                         row = cur.fetchone()
-                        return {"transaction_id": row[0], "status": row[1], "amount": row[2], "fee": row[3],
-                                "idempotent_replay": True}
+                        replay = {"transaction_id": row[0], "status": row[1], "amount": row[2], "fee": row[3],
+                                  "idempotent_replay": True}
+                        if row[1] == "COMPLETED":
+                            try:
+                                from .minepoints import award_completed_external_transfer_by_id
+                                award_completed_external_transfer_by_id(row[0])
+                            except Exception as points_exc:
+                                print(f"MinePoints replay award warning: {type(points_exc).__name__}: {points_exc}")
+                        return replay
 
                 if actor_client_id is not None:
                     _assert_banking_unlocked(cur, actor_client_id)
@@ -529,7 +536,14 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 score_points = 2 if risk_score >= 60 else (1 if risk_score >= 30 else (-1 if status == "COMPLETED" and risk_score == 0 and amount >= 300 else 0))
                 _record_credicheck_activity(cur, sender[1], "TRANSFER_ACTIVITY", score_points,
                     "; ".join(risk_reasons) if risk_reasons else "Transfer reviewed; no elevated risk indicators.", txid, credicheck_ready)
-                return {"transaction_id":txid,"ledger_id":ledger_id,"status":status,"amount":amount,"fee":fee}
+                result = {"transaction_id":txid,"ledger_id":ledger_id,"status":status,"amount":amount,"fee":fee}
+        if result.get("status") == "COMPLETED":
+            try:
+                from .minepoints import award_completed_external_transfer_by_id
+                award_completed_external_transfer_by_id(result.get("transaction_id"))
+            except Exception as points_exc:
+                print(f"MinePoints award warning: {type(points_exc).__name__}: {points_exc}")
+        return result
     finally:
         release_db_connection(conn)
 
@@ -568,7 +582,14 @@ def approve_business_transfer(transaction_id, approver_client_id, ip_address=Non
                 cur.execute("UPDATE minebank_business_payment_approvals SET status='APPROVED',approved_by=%s,reviewed_at=CURRENT_TIMESTAMP WHERE id=%s",(approver_client_id,row[0]))
                 cur.execute("UPDATE ledger_transactions SET status=%s,approved_by=%s,approved_at=CURRENT_TIMESTAMP WHERE transaction_id=%s",(next_status,approver_client_id,transaction_id))
                 audit_event(cur,actor_client_id=approver_client_id,action="BUSINESS_TRANSFER_APPROVED",target_type="TRANSACTION",target_id=transaction_id,account_id=row[1],transaction_id=transaction_id,ip_address=ip_address,context={"next_status":next_status})
-                return next_status
+                result = next_status
+        if result == "COMPLETED":
+            try:
+                from .minepoints import award_completed_external_transfer_by_id
+                award_completed_external_transfer_by_id(transaction_id)
+            except Exception as points_exc:
+                print(f"MinePoints award warning: {type(points_exc).__name__}: {points_exc}")
+        return result
     finally:
         release_db_connection(conn)
 
@@ -647,7 +668,13 @@ def approve_transfer(transaction_id, actor_user_id, ip_address=None):
                                  AND status='PENDING'""",(transaction_id,transaction_id))
                 audit_event(cur,actor_client_id=actor_user_id,action="TRANSFER_SELF_AUTHORISED" if self_authorised else "TRANSFER_APPROVED",target_type="TRANSACTION",target_id=transaction_id,account_id=tx[2],transaction_id=transaction_id,ip_address=ip_address,context={"self_authorised":self_authorised})
                 _record_credicheck_activity(cur, sender[1] if sender else None, "TRANSFER_AUTHORISED", 0, "Pending transfer authorised.", transaction_id, credicheck_ready)
-                return transaction_id
+                result = transaction_id
+        try:
+            from .minepoints import award_completed_external_transfer_by_id
+            award_completed_external_transfer_by_id(result)
+        except Exception as points_exc:
+            print(f"MinePoints award warning: {type(points_exc).__name__}: {points_exc}")
+        return result
     finally:
         release_db_connection(conn)
 
