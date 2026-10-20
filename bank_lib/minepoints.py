@@ -95,33 +95,32 @@ def award_points_for_verified_event(client_id, account_id, tier_code, event_code
         return 0
     source_key = f"{event_code}:{source_id}"
     idem = hashlib.sha256(source_key.encode("utf-8")).hexdigest()
+    source_key = f"{event_code}:{source_id}"
+    idem = hashlib.sha256(source_key.encode("utf-8")).hexdigest()
     rows = execute_query_dict(
-        """INSERT INTO minepoints_ledger
-             (client_id,entry_type,points_delta,idempotency_key,reason,source_type,
-              source_id,related_account_id,rule_version)
-           VALUES(%s,'AWARD',%s,%s,%s,%s,%s,%s,%s)
-           ON CONFLICT (client_id,idempotency_key) DO NOTHING
-           RETURNING id""",
-        (client_id, points, "mp-award-" + idem[:110],
+        """WITH inserted_source AS (
+             INSERT INTO minepoints_award_sources
+               (client_id,account_id,event_code,source_id,eligible_amount,tier_code,
+                rule_version,points_awarded)
+             VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+             ON CONFLICT(event_code,source_id) DO NOTHING
+             RETURNING client_id
+           ), inserted_ledger AS (
+             INSERT INTO minepoints_ledger
+               (client_id,entry_type,points_delta,idempotency_key,reason,source_type,
+                source_id,related_account_id,rule_version)
+             SELECT %s,'AWARD',%s,%s,%s,%s,%s,%s,%s FROM inserted_source
+             ON CONFLICT(client_id,idempotency_key) DO NOTHING
+             RETURNING id
+           )
+           SELECT id FROM inserted_ledger""",
+        (client_id, account_id, event_code, str(source_id), amount, tier_code,
+         f"{rule_version}|{rate[0]['rule_version']}", points,
+         client_id, points, "mp-award-" + idem[:110],
          f"Eligible activity: {event_code}", event_code, str(source_id),
          account_id, f"{rule_version}|{rate[0]['rule_version']}"),
+        commit=True,
     )
     if not rows:
         return 0
-    try:
-        execute_query(
-            """INSERT INTO minepoints_award_sources
-                 (client_id,account_id,event_code,source_id,eligible_amount,tier_code,
-                  rule_version,points_awarded)
-               VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
-               ON CONFLICT(event_code,source_id) DO NOTHING""",
-            (client_id, account_id, event_code, str(source_id), amount, tier_code,
-             f"{rule_version}|{rate[0]['rule_version']}", points),
-            fetch=False, commit=True,
-        )
-    except Exception:
-        # Do not silently hide a failed audit insert. The calling integration
-        # must alert/reconcile; the ledger idempotency key still prevents a
-        # duplicate award on retry.
-        raise
     return points
