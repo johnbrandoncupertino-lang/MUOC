@@ -109,3 +109,8 @@ The merchant monitor requests /payment-options after reading the card. It presen
 - Do not use a monitor as a keyboard-prompt mirror. A monitor should be treated as a touch-capable display with readable, bounded content.
 - Keep operator-only setup separate from customer flows. The trusted ATM token must never be written to a floppy card.
 - The shared API client times out after 10 seconds. A timeout is not proof that a financial request failed. Retry only with the original idempotency key; definitive HTTP 4xx rejections are marked cancelled, and a rejected deposit is cancelled only after all physical Emeralds are returned. Physical item movement after a withdrawal/deposit is uncertain until inventory and journal state agree; never erase that record just to unlock the ATM.
+
+
+## MineClubs entrance API
+
+Use `POST /api/v1/minecraft/clubs/admissions` from a trusted entrance terminal over HTTPS. Provide `X-MineBank-Club-Token`, the customer's active MineBank card credential, `wallet_pin`, and a stable `Idempotency-Key` for that admission attempt. The server applies the account-tier tariff, checks Balance, and records admission and any fee atomically. Admission fees never use CashLine. Apply `extras/mineclubs.sql` explicitly, provision active venue/terminal records through the operator process, and store only the terminal token hash. Install and test a trusted CC:Tweaked entrance controller separately; the API does not actuate doors by itself.
