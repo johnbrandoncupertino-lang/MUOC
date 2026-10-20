@@ -5,7 +5,7 @@ presentation live here; financial mutations are delegated to bank_lib's tested
 ledger/auth modules.  The old fragmented portal is no longer assembled at
 import time.
 """
-import csv, io, secrets, hashlib, os
+import csv, io, secrets, hashlib, os, re
 from datetime import datetime, timezone, timedelta
 from functools import wraps
 
@@ -2496,12 +2496,14 @@ def admin_mineclubs_management():
     new_terminal_label = None
     error = None
     if request.method == "POST":
+        supplied_csrf = request.form.get("csrf_token", "")
+        if not supplied_csrf or not secrets.compare_digest(supplied_csrf, session.get("csrf", "")):
+            return "Invalid security token. Reload the page and try again.", 400
         action = (request.form.get("action") or "").strip()
         try:
             if action == "create_club":
                 code = (request.form.get("code") or "").strip().lower()
                 name = (request.form.get("display_name") or "").strip()
-                description = (request.form.get("description") or "").strip()[:2000]
                 if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,47}", code):
                     raise ValueError("Club code must be 2–48 lowercase letters, digits, or hyphens.")
                 if not name or len(name) > 120:
@@ -2563,11 +2565,12 @@ def admin_mineclubs_management():
     clubs = execute_query_dict(
         """SELECT l.id,l.code,l.display_name,l.status,l.created_at,
                   COUNT(DISTINCT t.id) FILTER (WHERE t.status='ACTIVE') AS active_terminals,
-                  COUNT(DISTINCT a.id) FILTER (WHERE a.created_at >= CURRENT_DATE) AS admissions_today,
-                  COALESCE(SUM(a.fee_amount) FILTER (WHERE a.created_at >= CURRENT_DATE),0) AS fees_today
+                  (SELECT COUNT(*) FROM minebank_club_admissions a
+                    WHERE a.club_id=l.id AND a.created_at >= CURRENT_DATE) AS admissions_today,
+                  (SELECT COALESCE(SUM(a.fee_amount),0) FROM minebank_club_admissions a
+                    WHERE a.club_id=l.id AND a.created_at >= CURRENT_DATE) AS fees_today
            FROM minebank_club_locations l
            LEFT JOIN minebank_club_terminals t ON t.club_id=l.id
-           LEFT JOIN minebank_club_admissions a ON a.club_id=l.id
            GROUP BY l.id ORDER BY l.created_at DESC"""
     )
     terminals = execute_query_dict(
