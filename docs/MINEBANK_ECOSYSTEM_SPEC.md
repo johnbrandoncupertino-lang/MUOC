@@ -191,3 +191,10 @@ All tables should have appropriate foreign keys/indexes, uniqueness for idempote
 - Optional ecosystem services cannot break login or core banking.
 - Branding is consistent with the existing MineBank look; no unrelated redesign.
 - Tests and deployment limitations are documented honestly.
+
+
+## 6. MinePoints foundation implementation status
+
+The first implementation stage provides an additive PostgreSQL migration for the append-only points ledger, a draft-only reward catalogue, and a redemption/fulfilment record model. The internal ledger primitive serializes changes per customer, derives balances from signed entries, rejects negative balances, and protects idempotency keys against payload changes. MinePoints never modifies Emerald balances or CashLine/loan records.
+
+No rewards are seeded or activated, and no customer-facing earning/redemption route is enabled in this stage. Before enabling those flows, explicitly approve: eligible earning events and rates, anti-farming/reversal rules, reward catalogue and per-reward points prices, eligibility conditions, and fulfilment/cancellation handling. No points expiry is introduced.
