@@ -124,3 +124,35 @@ def award_points_for_verified_event(client_id, account_id, tier_code, event_code
     if not rows:
         return 0
     return points
+
+
+def award_completed_external_transfer(transaction_id, client_id):
+    """Verify a completed transfer from the authoritative ledger, then award once."""
+    rows = execute_query_dict(
+        """SELECT l.transaction_id,l.amount,l.status,l.transaction_type,l.transfer_kind,
+                  s.id AS account_id,t.code AS tier_code,s.client_id,
+                  r.client_id AS recipient_client_id
+           FROM ledger_transactions l
+           JOIN bank_accounts s ON s.id=l.sender_account_id
+           JOIN account_tiers_v2 t ON t.id=s.tier_id
+           LEFT JOIN bank_accounts r ON r.id=l.recipient_account_id
+           WHERE l.transaction_id=%s AND s.client_id=%s
+             AND l.transaction_type='TRANSFER' AND l.status='COMPLETED'
+             AND COALESCE(l.transfer_kind,'BALANCE') NOT IN ('CASHLINE','DYNAMIC_CASHLINE')
+             AND l.recipient_account_id IS NOT NULL
+             AND (r.client_id IS NULL OR r.client_id<>s.client_id)
+           LIMIT 1""",
+        (str(transaction_id), client_id),
+    )
+    if not rows:
+        return 0
+    row = rows[0]
+    return award_points_for_verified_event(
+        client_id=int(row["client_id"]),
+        account_id=int(row["account_id"]),
+        tier_code=str(row["tier_code"]),
+        event_code="EXTERNAL_TRANSFER_OUT",
+        source_id=str(row["transaction_id"]),
+        eligible_amount=row["amount"],
+        rule_version="transfer-v1",
+    )
