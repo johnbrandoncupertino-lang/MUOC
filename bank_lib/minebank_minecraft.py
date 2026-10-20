@@ -1347,6 +1347,135 @@ def minecraft_player_transfer():
     finally: release_db_connection(conn)
 
 
+
+
+@minecraft_bp.post("/clubs/admissions")
+def mineclubs_admission():
+    """Authorize one physical MineClubs entrance using a trusted terminal and MineBank card."""
+    unavailable = _transactions_unavailable()
+    if unavailable:
+        return unavailable
+    insecure = _transport_unavailable()
+    if insecure:
+        return insecure
+    terminal_token = request.headers.get("X-MineBank-Club-Token", "").strip()
+    if not terminal_token.startswith("mbclub_") or len(terminal_token) < 40 or len(terminal_token) > 180:
+        return jsonify(error="A trusted MineClubs entrance terminal is required."), 401
+    card_token = _authorized_card_token()
+    data = request.get_json(silent=True)
+    key = _request_idempotency_key()
+    if not card_token or not isinstance(data, dict) or not key:
+        return jsonify(error="Card credential, JSON body, and Idempotency-Key are required."), 400
+    pin_ok, pin_message = _verify_card_pin(card_token, data.get("wallet_pin"))
+    if not pin_ok:
+        return jsonify(error=pin_message or "Wallet PIN verification failed."), 401
+    request_hash = hashlib.sha256(
+        ("MINECLUB_ADMISSION:" + hash_card_token(terminal_token)).encode("utf-8")
+    ).hexdigest()
+    conn = get_db_connection()
+    if conn is None:
+        return jsonify(error="MineBank is temporarily unavailable."), 503
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """SELECT t.id,t.club_id,c.code,c.display_name
+                       FROM minebank_club_terminals t
+                       JOIN minebank_club_locations c ON c.id=t.club_id
+                       WHERE t.token_hash=%s AND t.status='ACTIVE'
+                         AND t.revoked_at IS NULL AND c.status='ACTIVE'
+                       LIMIT 1 FOR UPDATE OF t,c""",
+                    (hash_card_token(terminal_token),),
+                )
+                venue = cur.fetchone()
+                if not venue:
+                    raise PermissionError("This MineClubs terminal or venue is inactive.")
+                terminal_id, club_id, club_code, club_name = venue
+                client_id = _client_id_for_card_token(cur, card_token)
+                if client_id is None:
+                    raise PermissionError("Card credential is invalid or revoked.")
+                replay = _replay_operation(cur, client_id, key, "CLUB_ADMISSION", request_hash)
+                if replay:
+                    return replay
+                card = _card_row_for_update(cur, card_token)
+                cur.execute("SELECT COALESCE(system_suspended,FALSE) FROM settings ORDER BY id LIMIT 1")
+                system_row = cur.fetchone()
+                if system_row and system_row[0]:
+                    raise ValueError("MineBank banking operations are temporarily suspended.")
+                cur.execute(
+                    "SELECT 1 FROM minebank_banking_locks WHERE client_id=%s AND unlocked_at IS NULL",
+                    (card[1],),
+                )
+                if cur.fetchone():
+                    raise ValueError("Banking operations are temporarily locked for this client.")
+                cur.execute("SELECT code FROM account_tiers_v2 WHERE id=%s AND active=TRUE", (card[7],))
+                tier_row = cur.fetchone()
+                tier_code = str(tier_row[0] or "").upper() if tier_row else ""
+                from bank_lib.minebank_privileges import resolve_privileges
+                privileges = resolve_privileges(tier_code, card[6], card[9])
+                if not privileges.get("eligible") or privileges.get("mineclubs_admission_fee") is None:
+                    raise ValueError("This account is not eligible for MineClubs admission.")
+                fee = int(privileges["mineclubs_admission_fee"])
+                txid = None
+                if fee > 0:
+                    monthly_used, period, _ = _validate_outgoing_limits(cur, card, fee)
+                    if int(card[8]) < fee:
+                        raise ValueError("Insufficient MineBank Balance to pay the MineClubs admission fee.")
+                    cur.execute(
+                        """UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
+                           monthly_outgoing_period=%s,last_outgoing_at=CURRENT_TIMESTAMP,updated_at=CURRENT_TIMESTAMP
+                           WHERE id=%s""",
+                        (fee, monthly_used + fee, period, card[2]),
+                    )
+                    from bank_lib.minebank_core import next_transaction_id, create_ledger_transaction
+                    txid = next_transaction_id(cur)
+                    create_ledger_transaction(
+                        cur, transaction_id=txid, transaction_type="FEE", amount=fee,
+                        currency="Emerald", sender_account_id=card[2], status="COMPLETED",
+                        description="MineClubs admission — " + str(club_name),
+                        reference_id=key, transfer_kind="MINECLUB_ADMISSION",
+                    )
+                cur.execute(
+                    """INSERT INTO minebank_club_admissions
+                       (client_id,account_id,club_id,terminal_id,idempotency_key,tier_code,fee_amount,transaction_id)
+                       VALUES(%s,%s,%s,%s,%s,%s,%s,%s)
+                       RETURNING id,created_at""",
+                    (card[1], card[2], club_id, terminal_id, key, tier_code, fee, txid),
+                )
+                admission_id, admitted_at = cur.fetchone()
+                result = {
+                    "status": "ADMITTED", "admission_id": admission_id,
+                    "club_code": club_code, "club_name": club_name,
+                    "tier_code": tier_code, "fee": fee, "currency": "emerald",
+                    "transaction_id": txid, "admitted_at": admitted_at.isoformat(),
+                    "unlimited_admission": bool(privileges.get("mineclubs_unlimited_admission")),
+                }
+                _save_operation(
+                    cur, client_id=card[1], card_id=card[0], account_id=card[2],
+                    key=key, op_type="CLUB_ADMISSION", request_hash=request_hash,
+                    status="COMPLETED", amount=fee, transaction_id=txid, response=result,
+                )
+                from bank_lib.minebank_core import audit_event
+                audit_event(
+                    cur, actor_client_id=card[1], action="MINECLUBS_ADMISSION",
+                    target_type="MINECLUB_ADMISSION", target_id=str(admission_id),
+                    account_id=card[2], transaction_id=txid, ip_address=request.remote_addr,
+                    context={"club_code": club_code, "tier_code": tier_code, "fee": fee,
+                             "unlimited_admission": bool(privileges.get("mineclubs_unlimited_admission"))},
+                )
+                cur.execute("UPDATE minebank_club_terminals SET last_used_at=CURRENT_TIMESTAMP WHERE id=%s", (terminal_id,))
+        return jsonify(result), 200
+    except PermissionError as exc:
+        return jsonify(error=str(exc)), 401
+    except ValueError as exc:
+        return jsonify(error=str(exc)), 409
+    except Exception as exc:
+        current_app.logger.error("MineClubs admission failed: %s", type(exc).__name__)
+        return jsonify(error="Admission could not be confirmed. Check the admission journal before retrying."), 503
+    finally:
+        release_db_connection(conn)
+
+
 @minecraft_bp.post("/deposits")
 def minecraft_emerald_deposit():
     """Credit only emeralds the trusted ATM has already secured in its deposit escrow."""
