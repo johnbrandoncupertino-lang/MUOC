@@ -1,0 +1,5 @@
+{
+  "api_base": "https://YOUR-MINEBANK-DOMAIN/api/v1/minecraft",
+  "club_token": "mbclub_REPLACE_WITH_ONE_TIME_TOKEN",
+  "redstone_side": "back"
+}
