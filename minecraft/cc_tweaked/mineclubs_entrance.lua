@@ -83,13 +83,44 @@ local function newKey()
   return key
 end
 
-local function promptNonEmpty(label)
+local function promptNonEmpty(label, mask)
   while true do
     write(label)
-    local value = read()
+    local value = read(mask and "*" or nil)
     if value and value:match("%S") then return value end
     say("A value is required.")
   end
+end
+
+local function readCardCredential()
+  -- Prefer the revocable credential on the MineBank floppy card. Never read or
+  -- persist the Wallet PIN from the disk.
+  if peripheral and type(peripheral.find) == "function" then
+    local okDrive, drive = pcall(peripheral.find, "drive")
+    if okDrive and drive and drive.isDiskPresent and drive.isDiskPresent() then
+      local mount = drive.getMountPath and drive.getMountPath()
+      if mount and fs.exists(mount) then
+        local path = fs.combine(mount, "minebank.card")
+        if fs.exists(path) then
+          local h = fs.open(path, "r")
+          if h then
+            local raw = h.readAll()
+            h.close()
+            local ok, card = pcall(textutils.unserializeJSON, raw)
+            if ok and type(card) == "table" and type(card.credential) == "string"
+                and card.credential:match("^mbmc_") then
+              return card.credential
+            end
+            return nil, "The inserted MineBank card file is invalid."
+          end
+          return nil, "Cannot read the inserted MineBank card."
+        end
+        return nil, "The inserted floppy has no MineBank card file."
+      end
+      return nil, "The inserted floppy is not mounted."
+    end
+  end
+  return promptNonEmpty("MineBank card credential (input masked): ", true)
 end
 
 local function apiAdmission(cardCredential, pin, key)
@@ -148,7 +179,13 @@ local function runAdmission()
     key = newKey()
   end
 
-  local card = promptNonEmpty("MineBank card credential: ")
+  print("Insert your MineBank floppy card.")
+  print("The credential is read from minebank.card; the Wallet PIN is never stored on the floppy.")
+  local card, cardError = readCardCredential()
+  if not card then
+    say(cardError or "Could not read a valid MineBank card.")
+    return
+  end
   write("Wallet PIN: ")
   local pin = read("*")
   if not pin or not pin:match("^%d%d%d%d%d%d$") then
