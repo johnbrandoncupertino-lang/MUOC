@@ -156,3 +156,17 @@ def award_completed_external_transfer(transaction_id, client_id):
         eligible_amount=row["amount"],
         rule_version="transfer-v1",
     )
+
+
+def award_completed_external_transfer_by_id(transaction_id):
+    """Resolve the source owner from the ledger before processing an approval."""
+    rows = execute_query_dict(
+        """SELECT s.client_id FROM ledger_transactions l
+           JOIN bank_accounts s ON s.id=l.sender_account_id
+           WHERE l.transaction_id=%s AND l.status='COMPLETED'
+             AND l.transaction_type='TRANSFER'""",
+        (str(transaction_id),),
+    )
+    if not rows:
+        return 0
+    return award_completed_external_transfer(transaction_id, int(rows[0]["client_id"]))
