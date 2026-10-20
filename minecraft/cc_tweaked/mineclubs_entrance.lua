@@ -6,7 +6,6 @@
 local CONFIG = "minebank_club_entrance.json"
 local JOURNAL = "minebank_club_entrance_journal.json"
 local API_PATH = "/clubs/admissions"
-local DOOR_PULSE_SECONDS = 2
 
 local function readJson(path)
   if not fs.exists(path) then return nil end
@@ -44,12 +43,10 @@ end
 local apiBase = tostring(cfg.api_base or ""):gsub("/+$", "")
 local terminalToken = tostring(cfg.club_token or "")
 local redstoneSide = tostring(cfg.redstone_side or "")
+local terminalName = tostring(cfg.terminal_name or "Trusted entrance terminal")
+local pulseSeconds = tonumber(cfg.door_pulse_seconds) or 2
 if not apiBase:match("^https://") or not apiBase:match("/api/v1/minecraft$") then
   say("api_base must be HTTPS and end with /api/v1/minecraft.")
-  return
-end
-if not terminalToken:match("^mbclub_") or #terminalToken < 40 then
-  say("club_token is missing or invalid. Provision a terminal with the MineBank operator tool.")
   return
 end
 local validSides = {top=true, bottom=true, left=true, right=true, front=true, back=true}
@@ -57,7 +54,20 @@ if not validSides[redstoneSide] then
   say("redstone_side must be top, bottom, left, right, front, or back.")
   return
 end
+-- De-energize the configured relay before validating secrets or other settings.
 failClosed(redstoneSide)
+if not terminalToken:match("^mbclub_") or #terminalToken < 40 then
+  say("club_token is missing or invalid. Provision a terminal with the MineBank operator tool.")
+  return
+end
+if pulseSeconds < 1 or pulseSeconds > 5 then
+  say("door_pulse_seconds must be between 1 and 5 seconds.")
+  return
+end
+if #terminalName < 1 or #terminalName > 60 then
+  say("terminal_name must be 1-60 characters.")
+  return
+end
 
 local journal = readJson(JOURNAL) or {}
 if type(journal.counter) ~= "number" then journal.counter = 0 end
@@ -110,7 +120,7 @@ end
 local function openDoor()
   failClosed(redstoneSide)
   redstone.setOutput(redstoneSide, true)
-  os.sleep(DOOR_PULSE_SECONDS)
+  os.sleep(pulseSeconds)
   redstone.setOutput(redstoneSide, false)
 end
 
@@ -182,7 +192,7 @@ while true do
   term.clear()
   term.setCursorPos(1,1)
   print("MineBank MineClubs")
-  print("Trusted entrance terminal")
+  print(terminalName)
   print("")
   print("1. Authorize admission")
   print("2. Exit")
