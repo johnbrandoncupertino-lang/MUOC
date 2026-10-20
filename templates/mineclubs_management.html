@@ -1,0 +1,84 @@
+{% extends 'minebank_layout.html' %}
+{% block title %}MineClubs Management — MineBank{% endblock %}
+{% block content %}
+<style>
+.mc-head{display:flex;justify-content:space-between;align-items:flex-start;gap:18px;flex-wrap:wrap;margin-bottom:20px}
+.mc-eyebrow{font-size:11px;letter-spacing:.14em;color:#72bfa1;font-weight:800}
+.mc-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin:16px 0 22px}
+.mc-stat,.mc-panel{background:var(--panel-bg,#101b27);border:1px solid var(--border-color,rgba(130,160,180,.22));border-radius:10px;padding:18px;min-width:0}
+.mc-stat strong{display:block;font-size:26px;margin-top:7px}
+.mc-panel{margin:14px 0}
+.mc-panel h2{font-size:17px;margin:0 0 12px}
+.mc-muted{color:var(--muted,#8da1b2);font-size:12px}
+.mc-form{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;align-items:end}
+.mc-form label{display:grid;gap:6px;font-size:12px;font-weight:700}
+.mc-form input,.mc-form select,.mc-form textarea{width:100%;min-width:0;box-sizing:border-box}
+.mc-table-wrap{overflow:auto;max-width:100%}
+.mc-table{width:100%;border-collapse:collapse;font-size:13px}
+.mc-table th,.mc-table td{padding:11px 9px;border-bottom:1px solid var(--border-color,rgba(130,160,180,.16));text-align:left;white-space:nowrap}
+.mc-table th{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted,#8da1b2)}
+.mc-inline{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.mc-inline select{max-width:140px}
+.mc-token{overflow-wrap:anywhere;background:#07110f;border:1px solid #34765e;padding:12px;border-radius:7px;font-family:monospace;color:#a9f2ce}
+.mc-warning{border-left:4px solid #d6a34e}
+.mc-badge{display:inline-block;border-radius:999px;padding:4px 8px;font-size:10px;font-weight:800;background:rgba(110,180,150,.12)}
+@media(max-width:900px){.mc-grid{grid-template-columns:1fr}.mc-form{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.mc-form{grid-template-columns:1fr}.mc-table th,.mc-table td{padding:9px 7px}}
+</style>
+<div class="mc-head">
+  <div><div class="mc-eyebrow">BANK OWNER CONSOLE</div><h1>MineClubs Management</h1><p class="muted">Manage club locations, entrance credentials, and admission activity from the bank portal.</p></div>
+  <span class="mc-badge">ADMIN ONLY</span>
+</div>
+{% if error %}<section class="panel notice error" role="alert">{{ error }}</section>{% endif %}
+{% if new_terminal_token %}
+<section class="mc-panel mc-warning" role="alert">
+  <h2>Entrance credential created — copy it now</h2>
+  <p>This secret is shown only in this response. Paste it into the protected CC:Tweaked entrance configuration. Never share it with customers or store it in source control.</p>
+  <div class="mc-token" id="newClubToken">{{ new_terminal_token }}</div>
+  <div class="mc-inline" style="margin-top:10px"><button class="button primary" type="button" onclick="navigator.clipboard.writeText(document.getElementById('newClubToken').textContent)">Copy credential</button><span class="mc-muted">Terminal: {{ new_terminal_label }}</span></div>
+</section>
+{% endif %}
+<div class="mc-grid">
+  <div class="mc-stat"><span class="mc-muted">Registered clubs</span><strong>{{ clubs|length }}</strong></div>
+  <div class="mc-stat"><span class="mc-muted">Active entrances</span><strong>{{ terminals|selectattr('status','equalto','ACTIVE')|list|length }}</strong></div>
+  <div class="mc-stat"><span class="mc-muted">Admissions today</span><strong>{{ clubs|sum(attribute='admissions_today') }}</strong></div>
+</div>
+<section class="mc-panel">
+  <h2>Create a club location</h2><p class="mc-muted">Register a lounge once, then add one or more entrances below. Use a short unique code, such as <code>padua-central</code>.</p>
+  <form method="post" class="mc-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="create_club">
+    <label>Club code<input name="code" required minlength="2" maxlength="48" pattern="[a-zA-Z0-9][a-zA-Z0-9-]+" placeholder="padua-central"></label>
+    <label>Display name<input name="display_name" required maxlength="120" placeholder="MineClubs Padua Central"></label>
+    <div><button class="button primary" type="submit">Create club</button></div>
+  </form>
+</section>
+<section class="mc-panel">
+  <h2>Club locations</h2>
+  {% if clubs %}
+  <div class="mc-table-wrap"><table class="mc-table"><thead><tr><th>Club</th><th>Status</th><th>Entrances</th><th>Today</th><th>Fees today</th><th>Manage</th></tr></thead><tbody>
+  {% for club in clubs %}<tr><td><strong>{{ club.display_name }}</strong><br><span class="mc-muted">{{ club.code }} · ID {{ club.id }}</span></td><td>{{ club.status }}</td><td>{{ club.active_terminals }}</td><td>{{ club.admissions_today }}</td><td>{{ club.fees_today }} Emerald</td><td><form method="post" class="mc-inline"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="set_club_status"><input type="hidden" name="club_id" value="{{ club.id }}"><select name="status" aria-label="Status for {{ club.display_name }}"><option value="ACTIVE" {% if club.status=='ACTIVE' %}selected{% endif %}>Active</option><option value="PAUSED" {% if club.status=='PAUSED' %}selected{% endif %}>Paused</option><option value="CLOSED" {% if club.status=='CLOSED' %}selected{% endif %}>Closed</option></select><button class="button" type="submit">Save</button></form></td></tr>{% endfor %}
+  </tbody></table></div>
+  {% else %}<p class="mc-muted">No clubs registered yet. Create the first location above.</p>{% endif %}
+</section>
+<section class="mc-panel">
+  <h2>Register an entrance</h2><p class="mc-muted">Creates a new active terminal credential. Lost credentials should be revoked below and replaced with a new terminal; existing credentials cannot be recovered.</p>
+  <form method="post" class="mc-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="create_terminal">
+    <label>Active club<select name="club_id" required>{% for club in clubs if club.status=='ACTIVE' %}<option value="{{ club.id }}">{{ club.display_name }}</option>{% endfor %}</select></label>
+    <label>Entrance label<input name="label" required maxlength="80" value="Main entrance"></label>
+    <div><button class="button primary" type="submit" {% if not clubs|selectattr('status','equalto','ACTIVE')|list %}disabled{% endif %}>Create entrance credential</button></div>
+  </form>
+</section>
+<section class="mc-panel">
+  <h2>Entrance credentials</h2>
+  <div class="mc-table-wrap"><table class="mc-table"><thead><tr><th>Entrance</th><th>Club</th><th>Status</th><th>Last used</th><th>Action</th></tr></thead><tbody>
+  {% for terminal in terminals %}<tr><td>{{ terminal.label }} <span class="mc-muted">#{{ terminal.id }}</span></td><td>{{ terminal.display_name }}</td><td>{{ terminal.status }}</td><td>{{ terminal.last_used_at or 'Never' }}</td><td>{% if terminal.status=='ACTIVE' %}<form method="post" onsubmit="return confirm('Revoke this entrance credential immediately?');"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="action" value="revoke_terminal"><input type="hidden" name="terminal_id" value="{{ terminal.id }}"><button class="button" type="submit">Revoke</button></form>{% else %}<span class="mc-muted">Revoked</span>{% endif %}</td></tr>{% else %}<tr><td colspan="5">No entrance terminals registered.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+<section class="mc-panel">
+  <h2>Recent admissions</h2><p class="mc-muted">Latest 50 recorded admissions, including complimentary visits. Fees are shown in Emeralds.</p>
+  <div class="mc-table-wrap"><table class="mc-table"><thead><tr><th>Time</th><th>Customer</th><th>Club / entrance</th><th>Tier</th><th>Fee</th><th>Status</th></tr></thead><tbody>
+  {% for item in admissions %}<tr><td>{{ item.created_at }}</td><td>{{ item.email }}</td><td>{{ item.display_name }}<br><span class="mc-muted">{{ item.label }}</span></td><td>{{ item.tier_code }}</td><td>{{ item.fee_amount }} {{ item.currency }}</td><td>{{ item.status }}</td></tr>{% else %}<tr><td colspan="6">No admissions recorded yet.</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}
