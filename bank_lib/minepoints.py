@@ -56,7 +56,8 @@ def customer_summary(client_id):
     for account in accounts:
         rate = rate_by_tier.get(str(account["tier_code"]))
         account["earning_rule"] = rate
-        rate_enabled = bool(rate and rate["enabled"] and rate["points_per_100_emeralds"] is not None)
+        rate_enabled = bool(rate and rate["enabled"] and rate["points_per_100_emeralds"] is not None
+                            and int(rate["points_per_100_emeralds"]) > 0)
         account_enabled = str(account["status"]).upper() == "ENABLED"
         account["points_eligible"] = bool(account_enabled and rate_enabled and transfer_enabled)
         if not account_enabled:
