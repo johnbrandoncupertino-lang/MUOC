@@ -661,7 +661,13 @@ def approve_transfer(transaction_id, actor_user_id, ip_address=None):
                                  AND status='PENDING'""",(transaction_id,transaction_id))
                 audit_event(cur,actor_client_id=actor_user_id,action="TRANSFER_SELF_AUTHORISED" if self_authorised else "TRANSFER_APPROVED",target_type="TRANSACTION",target_id=transaction_id,account_id=tx[2],transaction_id=transaction_id,ip_address=ip_address,context={"self_authorised":self_authorised})
                 _record_credicheck_activity(cur, sender[1] if sender else None, "TRANSFER_AUTHORISED", 0, "Pending transfer authorised.", transaction_id, credicheck_ready)
-                return transaction_id
+                result = transaction_id
+        try:
+            from .minepoints import award_completed_external_transfer_by_id
+            award_completed_external_transfer_by_id(result)
+        except Exception as points_exc:
+            print(f"MinePoints award warning: {type(points_exc).__name__}: {points_exc}")
+        return result
     finally:
         release_db_connection(conn)
 
@@ -687,13 +693,7 @@ def reject_transfer(transaction_id, actor_user_id, reason=None, ip_address=None)
                                approved_at=CURRENT_TIMESTAMP,description=COALESCE(description,'') || %s
                                WHERE id=%s""", (actor_user_id, f" [Rejected: {reason or 'No reason supplied'}]",tx[0]))
                 audit_event(cur,actor_client_id=actor_user_id,action="TRANSFER_REJECTED",target_type="TRANSACTION",target_id=transaction_id,account_id=tx[1],transaction_id=transaction_id,ip_address=ip_address,context={"reason":reason or ""})
-                result = transaction_id
-        try:
-            from .minepoints import award_completed_external_transfer_by_id
-            award_completed_external_transfer_by_id(result)
-        except Exception as points_exc:
-            print(f"MinePoints award warning: {type(points_exc).__name__}: {points_exc}")
-        return result
+                return transaction_id
     finally:
         release_db_connection(conn)
 
