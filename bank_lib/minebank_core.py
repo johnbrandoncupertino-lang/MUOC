@@ -532,8 +532,8 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 result = {"transaction_id":txid,"ledger_id":ledger_id,"status":status,"amount":amount,"fee":fee}
         if result.get("status") == "COMPLETED":
             try:
-                from .minepoints import award_completed_external_transfer
-                award_completed_external_transfer(result.get("transaction_id"), actor_client_id)
+                from .minepoints import award_completed_external_transfer_by_id
+                award_completed_external_transfer_by_id(result.get("transaction_id"))
             except Exception as points_exc:
                 print(f"MinePoints award warning: {type(points_exc).__name__}: {points_exc}")
         return result
@@ -575,7 +575,14 @@ def approve_business_transfer(transaction_id, approver_client_id, ip_address=Non
                 cur.execute("UPDATE minebank_business_payment_approvals SET status='APPROVED',approved_by=%s,reviewed_at=CURRENT_TIMESTAMP WHERE id=%s",(approver_client_id,row[0]))
                 cur.execute("UPDATE ledger_transactions SET status=%s,approved_by=%s,approved_at=CURRENT_TIMESTAMP WHERE transaction_id=%s",(next_status,approver_client_id,transaction_id))
                 audit_event(cur,actor_client_id=approver_client_id,action="BUSINESS_TRANSFER_APPROVED",target_type="TRANSACTION",target_id=transaction_id,account_id=row[1],transaction_id=transaction_id,ip_address=ip_address,context={"next_status":next_status})
-                return next_status
+                result = next_status
+        if result == "COMPLETED":
+            try:
+                from .minepoints import award_completed_external_transfer_by_id
+                award_completed_external_transfer_by_id(transaction_id)
+            except Exception as points_exc:
+                print(f"MinePoints award warning: {type(points_exc).__name__}: {points_exc}")
+        return result
     finally:
         release_db_connection(conn)
 
@@ -680,7 +687,13 @@ def reject_transfer(transaction_id, actor_user_id, reason=None, ip_address=None)
                                approved_at=CURRENT_TIMESTAMP,description=COALESCE(description,'') || %s
                                WHERE id=%s""", (actor_user_id, f" [Rejected: {reason or 'No reason supplied'}]",tx[0]))
                 audit_event(cur,actor_client_id=actor_user_id,action="TRANSFER_REJECTED",target_type="TRANSACTION",target_id=transaction_id,account_id=tx[1],transaction_id=transaction_id,ip_address=ip_address,context={"reason":reason or ""})
-                return transaction_id
+                result = transaction_id
+        try:
+            from .minepoints import award_completed_external_transfer_by_id
+            award_completed_external_transfer_by_id(result)
+        except Exception as points_exc:
+            print(f"MinePoints award warning: {type(points_exc).__name__}: {points_exc}")
+        return result
     finally:
         release_db_connection(conn)
 
