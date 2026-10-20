@@ -43,9 +43,33 @@ def customer_summary(client_id):
         "SELECT tier_code,points_per_100_emeralds,enabled,rule_version FROM minepoints_tier_rates"
     )
     rate_by_tier = {str(row["tier_code"]): row for row in rates}
+    events = execute_query_dict(
+        """SELECT event_code,label,enabled FROM minepoints_eligible_events
+           ORDER BY event_group,event_code"""
+    )
+    events_by_code = {str(row["event_code"]): row for row in events}
+    # Only completed external outgoing transfers currently have a live award hook.
+    # Purchase and fee rules may be configured by admins, but are not live earning
+    # sources until their product integrations are implemented and tested.
+    transfer_event = events_by_code.get("EXTERNAL_TRANSFER_OUT")
+    transfer_enabled = bool(transfer_event and transfer_event["enabled"])
     for account in accounts:
-        account["earning_rule"] = rate_by_tier.get(str(account["tier_code"]))
-    return {"balance": balance, "history": history, "rewards": rewards, "accounts": accounts}
+        rate = rate_by_tier.get(str(account["tier_code"]))
+        account["earning_rule"] = rate
+        rate_enabled = bool(rate and rate["enabled"] and rate["points_per_100_emeralds"] is not None)
+        account["points_eligible"] = bool(rate_enabled and transfer_enabled)
+        if not rate_enabled:
+            account["eligibility_status"] = "Rate disabled"
+            account["eligibility_detail"] = "MineBank has not enabled a points rate for this account tier."
+        elif transfer_enabled:
+            account["eligibility_status"] = "Eligible"
+            account["eligibility_detail"] = "Completed external outgoing transfers paid from Balance may qualify. Purchases and fee-paying services are not yet connected."
+        else:
+            account["eligibility_status"] = "Not currently earning"
+            account["eligibility_detail"] = "The account rate is configured, but the live external-transfer earning rule is disabled."
+    program_status = "Eligible" if any(a["points_eligible"] for a in accounts) else "Not currently earning"
+    return {"balance": balance, "history": history, "rewards": rewards, "accounts": accounts,
+            "program_status": program_status}
 
 
 def owner_configuration():
