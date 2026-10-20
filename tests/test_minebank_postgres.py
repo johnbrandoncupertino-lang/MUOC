@@ -30,15 +30,18 @@ def database():
     assert ensure_minebank_schema() is True
     # Apply the additive Minecraft card migration only inside the disposable CI
     # database; production migrations remain an explicit operator action.
-    migration_sql = (ROOT / "extras" / "minebank_minecraft.sql").read_text(encoding="utf-8")
     migration_conn = get_db_connection()
     assert migration_conn is not None
     try:
         with migration_conn:
             with migration_conn.cursor() as migration_cur:
-                migration_cur.execute(migration_sql)
+                for migration_name in ("minebank_minecraft.sql", "minepoints.sql"):
+                    migration_sql = (ROOT / "extras" / migration_name).read_text(encoding="utf-8")
+                    migration_cur.execute(migration_sql)
     finally:
         release_db_connection(migration_conn)
+    execute_query("TRUNCATE TABLE minepoints_redemptions, minepoints_ledger RESTART IDENTITY CASCADE", fetch=False, commit=True)
+    execute_query("DELETE FROM minepoints_rewards", fetch=False, commit=True)
     execute_query(
         """
         TRUNCATE TABLE
@@ -105,6 +108,59 @@ def accounts():
         commit=True,
     )
     return alice, bob, alice_account_id, alice_number, bob_account_id, bob_number
+
+
+def test_minepoints_ledger_is_idempotent_and_separate_from_bank_balance(accounts):
+    from bank_lib.minebank_points import record_points_entry, get_points_balance
+
+    alice, _, alice_account_id, _, _, _ = accounts
+    before = execute_query_dict("SELECT balance FROM bank_accounts WHERE id=%s", (alice_account_id,))[0]["balance"]
+
+    award = record_points_entry(
+        alice, 100, "AWARD", "promo:welcome:alice", "Approved test promotion",
+        source_type="PROMOTION", source_id="welcome-test", related_account_id=alice_account_id,
+        rule_version="test-v1",
+    )
+    assert award == {"entry_id": award["entry_id"], "replayed": False, "points_balance": 100}
+    replay = record_points_entry(
+        alice, 100, "AWARD", "promo:welcome:alice", "Approved test promotion",
+        source_type="PROMOTION", source_id="welcome-test", related_account_id=alice_account_id,
+        rule_version="test-v1",
+    )
+    assert replay["entry_id"] == award["entry_id"]
+    assert replay["replayed"] is True
+    assert get_points_balance(alice) == 100
+
+    debit = record_points_entry(
+        alice, -40, "REDEMPTION", "redeem:test:alice", "Test redemption",
+        source_type="TEST_REWARD", source_id="test-reward",
+    )
+    assert debit["points_balance"] == 60
+    assert get_points_balance(alice) == 60
+    after = execute_query_dict("SELECT balance FROM bank_accounts WHERE id=%s", (alice_account_id,))[0]["balance"]
+    assert before == after
+
+    from bank_lib.minebank_points import InsufficientPointsError, IdempotencyConflictError
+    with pytest.raises(InsufficientPointsError):
+        record_points_entry(alice, -61, "REDEMPTION", "redeem:too-many", "Must not overdraw")
+    with pytest.raises(IdempotencyConflictError):
+        record_points_entry(
+            alice, 101, "AWARD", "promo:welcome:alice", "Different payload",
+            source_type="PROMOTION", source_id="welcome-test", related_account_id=alice_account_id,
+            rule_version="test-v1",
+        )
+    assert get_points_balance(alice) == 60
+
+
+def test_minepoints_reversal_requires_link_and_awards_have_correct_sign():
+    from bank_lib.minebank_points import _validate_entry
+
+    with pytest.raises(ValueError, match="reference"):
+        _validate_entry(10, "REVERSAL", "reverse:1", "Reverse award", None)
+    with pytest.raises(ValueError, match="add points"):
+        _validate_entry(-10, "AWARD", "award:1", "Award points", None)
+    with pytest.raises(ValueError, match="deduct points"):
+        _validate_entry(10, "REDEMPTION", "redeem:1", "Redeem points", None)
 
 
 def test_schema_and_canonical_tiers_exist():
