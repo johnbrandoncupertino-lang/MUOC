@@ -198,3 +198,8 @@ All tables should have appropriate foreign keys/indexes, uniqueness for idempote
 The first implementation stage provides an additive PostgreSQL migration for the append-only points ledger, a draft-only reward catalogue, and a redemption/fulfilment record model. The internal ledger primitive serializes changes per customer, derives balances from signed entries, rejects negative balances, and protects idempotency keys against payload changes. MinePoints never modifies Emerald balances or CashLine/loan records.
 
 No rewards are seeded or activated, and no customer-facing earning/redemption route is enabled in this stage. Before enabling those flows, explicitly approve: eligible earning events and rates, anti-farming/reversal rules, reward catalogue and per-reward points prices, eligibility conditions, and fulfilment/cancellation handling. No points expiry is introduced.
+
+
+## MineClubs physical admission
+
+`POST /api/v1/minecraft/clubs/admissions` authorizes admission at an active, server-registered venue using a trusted terminal credential, active MineBank card credential, Wallet PIN, and idempotency key. The server resolves the canonical account tier and applies the approved tariff: Personal/Business 50 Emeralds per visit; Personal Pro/Business Pro 25 Emeralds; Personal Private/Corporate 0 Emeralds with unlimited admissions. Fees are paid from Balance only, never CashLine. Admission, fee ledger transaction, idempotency envelope, and audit event commit atomically; retries return the prior result. Venue/terminal provisioning is an operator task. Only a SHA-256 hash of the terminal secret is stored. The API does not itself open doors; the venue must deploy a trusted entrance controller that grants entry only after a successful response.

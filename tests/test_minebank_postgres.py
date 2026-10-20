@@ -35,7 +35,7 @@ def database():
     try:
         with migration_conn:
             with migration_conn.cursor() as migration_cur:
-                for migration_name in ("minebank_minecraft.sql", "minepoints.sql"):
+                for migration_name in ("minebank_minecraft.sql", "minepoints.sql", "mineclubs.sql"):
                     migration_sql = (ROOT / "extras" / migration_name).read_text(encoding="utf-8")
                     migration_cur.execute(migration_sql)
     finally:
@@ -444,6 +444,24 @@ def _insert_test_minecraft_atm(client_id, card_id, token):
     )
 
 
+
+def _insert_test_mineclub(terminal_token, code="padua-central"):
+    rows = execute_query(
+        """INSERT INTO minebank_club_locations(code,display_name,status)
+           VALUES(%s,%s,'ACTIVE') RETURNING id""",
+        (code, "MineClubs Padua Central"),
+        fetch=True, commit=True,
+    )
+    club_id = rows[0][0]
+    execute_query(
+        """INSERT INTO minebank_club_terminals(club_id,label,token_hash,status)
+           VALUES(%s,%s,%s,'ACTIVE')""",
+        (club_id, "CI entrance", hash_card_token(terminal_token)),
+        fetch=False, commit=True,
+    )
+    return club_id
+
+
 def test_minecraft_merchant_payment_is_atomic_and_idempotent(accounts, monkeypatch):
     monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
     monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
@@ -652,6 +670,88 @@ def test_minecraft_atm_deposit_is_atomic_and_idempotent(accounts, monkeypatch):
     assert balance == 2032
     rows = execute_query_dict("SELECT COUNT(*) AS n FROM ledger_transactions WHERE transaction_type='DEPOSIT'")
     assert rows[0]["n"] == 1
+
+
+
+def test_mineclubs_admission_charges_personal_once_and_replays(accounts, monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    alice, _, account_id, _, _, _ = accounts
+    execute_query("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",
+                  (alice,), fetch=False, commit=True)
+    card_token = "mbmc_" + "p" * 48
+    club_token = "mbclub_" + "q" * 48
+    _insert_test_minecraft_card(alice, account_id, card_token)
+    _insert_test_mineclub(club_token)
+    from flask import Flask
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_api.minecraft_bp)
+    client = app.test_client()
+    headers = {"X-Forwarded-Proto":"https","X-MineBank-Club-Token":club_token,
+               "Authorization":f"Bearer {card_token}","Idempotency-Key":"ci-club-admission-personal"}
+    response = client.post("/api/v1/minecraft/clubs/admissions",
+                           json={"wallet_pin":"123456"}, headers=headers)
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["fee"] == 50
+    replay = client.post("/api/v1/minecraft/clubs/admissions",
+                         json={"wallet_pin":"123456"}, headers=headers)
+    assert replay.status_code == 200, replay.get_json()
+    assert replay.get_json()["idempotent_replay"] is True
+    assert execute_query_dict("SELECT balance FROM bank_accounts WHERE id=%s",(account_id,))[0]["balance"] == 1950
+    assert execute_query_dict("SELECT COUNT(*) AS n FROM minebank_club_admissions")[0]["n"] == 1
+    assert execute_query_dict("SELECT COUNT(*) AS n FROM ledger_transactions WHERE transfer_kind='MINECLUB_ADMISSION'")[0]["n"] == 1
+
+
+def test_mineclubs_private_admission_is_free_but_audited(accounts, monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    alice, _, account_id, _, _, _ = accounts
+    execute_query("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",
+                  (alice,), fetch=False, commit=True)
+    tier = execute_query_dict("SELECT id FROM account_tiers_v2 WHERE code='PERSONAL_PRIVATE' AND active=TRUE")[0]["id"]
+    execute_query("UPDATE bank_accounts SET tier_id=%s WHERE id=%s",(tier,account_id),fetch=False,commit=True)
+    card_token = "mbmc_" + "r" * 48
+    club_token = "mbclub_" + "s" * 48
+    _insert_test_minecraft_card(alice, account_id, card_token)
+    _insert_test_mineclub(club_token, code="private-free")
+    from flask import Flask
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_api.minecraft_bp)
+    client = app.test_client()
+    headers = {"X-Forwarded-Proto":"https","X-MineBank-Club-Token":club_token,
+               "Authorization":f"Bearer {card_token}","Idempotency-Key":"ci-club-admission-private"}
+    response = client.post("/api/v1/minecraft/clubs/admissions",json={"wallet_pin":"123456"},headers=headers)
+    assert response.status_code == 200, response.get_json()
+    assert response.get_json()["fee"] == 0 and response.get_json()["unlimited_admission"] is True
+    assert execute_query_dict("SELECT balance FROM bank_accounts WHERE id=%s",(account_id,))[0]["balance"] == 2000
+    assert execute_query_dict("SELECT COUNT(*) AS n FROM minebank_club_admissions WHERE fee_amount=0")[0]["n"] == 1
+    assert execute_query_dict("SELECT COUNT(*) AS n FROM ledger_transactions WHERE transfer_kind='MINECLUB_ADMISSION'")[0]["n"] == 0
+
+
+def test_mineclubs_insufficient_balance_does_not_admit(accounts, monkeypatch):
+    monkeypatch.setenv("MINEBANK_MINECRAFT_ENABLED", "true")
+    monkeypatch.setenv("MINEBANK_MINECRAFT_TRANSACTIONS_ENABLED", "true")
+    alice, _, account_id, _, _, _ = accounts
+    execute_query("UPDATE bank_clients SET wallet_pin_failed_attempts=0,wallet_pin_locked_until=NULL WHERE id=%s",
+                  (alice,), fetch=False, commit=True)
+    execute_query("UPDATE bank_accounts SET balance=10 WHERE id=%s",(account_id,),fetch=False,commit=True)
+    card_token = "mbmc_" + "u" * 48
+    club_token = "mbclub_" + "v" * 48
+    _insert_test_minecraft_card(alice, account_id, card_token)
+    _insert_test_mineclub(club_token, code="insufficient")
+    from flask import Flask
+    app = Flask(__name__)
+    app.config.update(TESTING=True, SECRET_KEY="ci-test-secret")
+    app.register_blueprint(minecraft_api.minecraft_bp)
+    client = app.test_client()
+    response = client.post("/api/v1/minecraft/clubs/admissions",json={"wallet_pin":"123456"},
+        headers={"X-Forwarded-Proto":"https","X-MineBank-Club-Token":club_token,
+                 "Authorization":f"Bearer {card_token}","Idempotency-Key":"ci-club-insufficient"})
+    assert response.status_code == 409, response.get_json()
+    assert execute_query_dict("SELECT balance FROM bank_accounts WHERE id=%s",(account_id,))[0]["balance"] == 10
+    assert execute_query_dict("SELECT COUNT(*) AS n FROM minebank_club_admissions")[0]["n"] == 0
 
 
 def test_minecraft_personal_transfer_is_atomic_and_idempotent(accounts, monkeypatch):
