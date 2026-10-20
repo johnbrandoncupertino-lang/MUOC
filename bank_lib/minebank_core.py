@@ -529,7 +529,14 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 score_points = 2 if risk_score >= 60 else (1 if risk_score >= 30 else (-1 if status == "COMPLETED" and risk_score == 0 and amount >= 300 else 0))
                 _record_credicheck_activity(cur, sender[1], "TRANSFER_ACTIVITY", score_points,
                     "; ".join(risk_reasons) if risk_reasons else "Transfer reviewed; no elevated risk indicators.", txid, credicheck_ready)
-                return {"transaction_id":txid,"ledger_id":ledger_id,"status":status,"amount":amount,"fee":fee}
+                result = {"transaction_id":txid,"ledger_id":ledger_id,"status":status,"amount":amount,"fee":fee}
+        if result.get("status") == "COMPLETED":
+            try:
+                from .minepoints import award_completed_external_transfer
+                award_completed_external_transfer(result.get("transaction_id"), actor_client_id)
+            except Exception as points_exc:
+                print(f"MinePoints award warning: {type(points_exc).__name__}: {points_exc}")
+        return result
     finally:
         release_db_connection(conn)
 
