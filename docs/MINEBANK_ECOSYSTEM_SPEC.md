@@ -43,7 +43,7 @@ Physical member lounges and private service spaces inside the Minecraft world. T
 
 A loyalty points programme. MinePoints are **not Emeralds, a deposit, an account balance, a transferable asset, or a credit facility**.
 
-- Customers earn points only from explicitly eligible events/rules (initially configurable promotional awards and approved qualifying activity).
+- Customers earn points only from explicitly eligible banking activity. Non-banking promotional grants are excluded from the initial release. Each of the six existing account tiers has a distinct configurable earning rate, applied using the tier of the account involved in the eligible event.
 - Points can be redeemed against a defined catalogue of rewards such as eligible service-fee discounts, MineClub experiences, and exclusive offers.
 - No cash-out, peer-to-peer transfer, interest, overdraft, CashLine repayment, or loan repayment using points in the initial release.
 - No implied Emerald conversion rate. Each reward defines its own points price and eligibility.
@@ -85,11 +85,11 @@ The words "Core", "Enhanced", "Private", and "Corporate" in this table are servi
 |---|---|---|---|
 | ClubCash | Standard machine access | Candidate fee/allowance benefits | Candidate enhanced fee/allowance benefits |
 | MineClubs | Eligible general club access, subject to configured policy | Additional club/event access | Private lounge access and priority experiences |
-| MinePoints | Base earning rules | Configured earning multiplier/bonus | Highest configured multiplier and selected exclusive rewards |
+| MinePoints | Configurable base earning rate | Distinct configurable Pro earning rate | Distinct configurable top-tier earning rate |
 | Portal insights | Existing banking dashboard | Enhanced reports and activity insights | More comprehensive reporting and service overview |
 | Offers | General catalogue | Pro-eligible offers | Private/corporate catalogue items |
 
-MineClubs admission pricing is approved and fixed: Personal and Business 50 Emeralds per admission; Personal Pro and Business Pro 25 Emeralds per admission; Personal Private and Corporate unlimited admissions at no per-visit fee. Unlimited admissions do not waive unrelated fees. The points programme remains a loyalty currency redeemable for approved discounts and exclusive benefits, but the catalogue, award rules, point prices, and earning multipliers remain unapproved and must not be invented in code. No other financial discounts or limit changes are approved.
+MineClubs admission pricing is approved and fixed: Personal and Business 50 Emeralds per admission; Personal Pro and Business Pro 25 Emeralds per admission; Personal Private and Corporate unlimited admissions at no per-visit fee. Unlimited admissions do not waive unrelated fees. MinePoints are approved as a loyalty programme earned through eligible banking activity and redeemable for both member experiences and approved service-fee discounts. Tier-specific earning rates are required, but their numerical values, qualifying event allowlist, reward prices, and fulfilment rules remain unapproved and must not be invented in code. No other financial discounts or limit changes are approved.
 
 Business benefits must be business-relevant. Corporate access does not imply Personal Private access unless the entitlement rule explicitly says so.
 
@@ -197,7 +197,7 @@ All tables should have appropriate foreign keys/indexes, uniqueness for idempote
 
 The first implementation stage provides an additive PostgreSQL migration for the append-only points ledger, a draft-only reward catalogue, and a redemption/fulfilment record model. The internal ledger primitive serializes changes per customer, derives balances from signed entries, rejects negative balances, and protects idempotency keys against payload changes. MinePoints never modifies Emerald balances or CashLine/loan records.
 
-No rewards are seeded or activated, and no customer-facing earning/redemption route is enabled in this stage. Before enabling those flows, explicitly approve: eligible earning events and rates, anti-farming/reversal rules, reward catalogue and per-reward points prices, eligibility conditions, and fulfilment/cancellation handling. No points expiry is introduced.
+No rewards are seeded or activated, and no customer-facing earning/redemption route is enabled in this stage. Before enabling those flows, explicitly approve: the eligible banking-event allowlist, numerical rate for each of the six existing tiers, anti-farming/reversal rules, reward catalogue and per-reward points prices, eligibility conditions, and fulfilment/cancellation handling. Non-banking promotional awards are out of scope for the initial release. See `docs/MINEPOINTS_PORTAL_PLAN.md` for the customer portal design and staged implementation plan. No points expiry is introduced.
 
 
 ## MineClubs physical admission
