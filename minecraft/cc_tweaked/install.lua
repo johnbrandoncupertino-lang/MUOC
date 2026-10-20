@@ -10,6 +10,8 @@ local files = {
   {name="branch_terminal.lua", url=BASE.."branch_terminal.lua", label="Bank Assistant"},
   {name="merchant_checkout.lua", url=BASE.."merchant_checkout.lua", label="Merchant Checkout"},
   {name="vending_machine.lua", url=BASE.."vending_machine.lua", label="Automated Vending"},
+  {name="mineclubs_entrance.lua", url=BASE.."mineclubs_entrance.lua", label="MineClubs lounge entrance"},
+  {name="minebank_club_entrance.example.json", url=BASE.."minebank_club_entrance.example.json", label="MineClubs config template"},
   {name="README.md", url=BASE.."README.md", label="Setup guide"},
 }
 
@@ -43,7 +45,7 @@ say("MINEBANK  /  THE NEW BANK", colors.lime)
 say("All-in-one installer", colors.white)
 say("")
 say("This installs the ATM, Bank Assistant, Merchant Checkout,")
-say("Vending Machine and shared utilities with native UI.")
+say("Vending Machine, MineClubs entrance and shared utilities.")
 say("No third-party UI framework is required.")
 say("No passwords, Wallet PINs or machine tokens are requested.")
 say("")
@@ -123,6 +125,8 @@ say("1. Run: cd " .. TARGET, colors.white)
 say("2. Run: atm.lua (then complete the protected operator setup).", colors.white)
 say("3. Run: branch_terminal.lua to issue a floppy card.", colors.white)
 say("4. Configure merchant credentials only on locked-down shop computers.", colors.white)
-say("5. Keep transaction features disabled on the server until staging tests pass.", colors.yellow)
+say("5. For MineClubs, copy minebank_club_entrance.example.json to minebank_club_entrance.json and configure it.", colors.white)
+say("6. Provision the venue/terminal and test the fail-locked relay before enabling server flags.", colors.yellow)
+say("7. Keep transaction features disabled until staging tests pass.", colors.yellow)
 say("")
 say("Native CC:Tweaked UI installed; Basalt is not required.", colors.gray)
