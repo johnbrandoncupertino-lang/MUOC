@@ -34,7 +34,7 @@ def customer_summary(client_id):
            ORDER BY points_cost,id LIMIT 100"""
     )
     accounts = execute_query_dict(
-        """SELECT a.id,a.account_number,a.account_type,a.status,t.code AS tier_code,t.name AS tier_name
+        """SELECT a.id,a.account_number,a.account_type,a.status,t.code AS tier_code,t.display_name AS tier_name
            FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
            WHERE a.client_id=%s AND a.status<>'CLOSED' ORDER BY a.id""",
         (client_id,),
