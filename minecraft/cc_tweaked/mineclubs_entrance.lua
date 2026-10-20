@@ -199,7 +199,9 @@ local function runAdmission()
   card = nil
 
   if data then
-    clearPending()
+    -- Keep the same key journaled until the physical pulse completes. If the
+    -- relay fails or the computer restarts, recovery replays this admission
+    -- without charging a second time.
     say("ADMISSION APPROVED")
     print(tostring(data.club_name or "MineClubs"))
     print("Fee: " .. tostring(data.fee or 0) .. " Emeralds")
@@ -207,6 +209,7 @@ local function runAdmission()
     print("Reference: " .. tostring(data.admission_id or "recorded"))
     say("Opening entrance...")
     openDoor()
+    clearPending()
     say("Entry authorized. Please proceed.")
     return
   end
