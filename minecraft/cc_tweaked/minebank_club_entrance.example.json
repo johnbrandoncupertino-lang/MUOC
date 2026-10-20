@@ -1,0 +1,7 @@
+{
+  "api_base": "https://YOUR-MINEBANK-DOMAIN/api/v1/minecraft",
+  "club_token": "mbclub_REPLACE_WITH_ONE_TIME_TOKEN",
+  "terminal_name": "MineClubs Main Entrance",
+  "redstone_side": "back",
+  "door_pulse_seconds": 2
+}
