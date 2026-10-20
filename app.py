@@ -2487,6 +2487,110 @@ def ensure_admin_account(client_id):
     create_account(client_id, "BUSINESS", "BUSINESS")
     return get_accounts(client_id)[0]
 
+
+@app.route("/admin/mineclubs", methods=["GET", "POST"])
+@require_role("ADMIN")
+def admin_mineclubs_management():
+    """Owner-only MineClubs console. Raw terminal credentials are shown only on creation."""
+    new_terminal_token = None
+    new_terminal_label = None
+    error = None
+    if request.method == "POST":
+        action = (request.form.get("action") or "").strip()
+        try:
+            if action == "create_club":
+                code = (request.form.get("code") or "").strip().lower()
+                name = (request.form.get("display_name") or "").strip()
+                description = (request.form.get("description") or "").strip()[:2000]
+                if not re.fullmatch(r"[a-z0-9][a-z0-9-]{1,47}", code):
+                    raise ValueError("Club code must be 2–48 lowercase letters, digits, or hyphens.")
+                if not name or len(name) > 120:
+                    raise ValueError("Enter a club name of 1–120 characters.")
+                execute_query(
+                    """INSERT INTO minebank_club_locations(code,display_name,status)
+                       VALUES(%s,%s,'ACTIVE')""", (code, name), commit=True
+                )
+                flash("MineClubs location created. You can now register its entrance terminal.", "success")
+                return redirect(url_for("admin_mineclubs_management"))
+            elif action == "set_club_status":
+                club_id = int(request.form.get("club_id") or 0)
+                status = (request.form.get("status") or "").upper()
+                if status not in {"ACTIVE", "PAUSED", "CLOSED"}:
+                    raise ValueError("Invalid club status.")
+                rows = execute_query(
+                    """UPDATE minebank_club_locations SET status=%s,updated_at=CURRENT_TIMESTAMP
+                       WHERE id=%s RETURNING id""", (status, club_id), commit=True
+                )
+                if not rows:
+                    raise ValueError("Club not found.")
+                flash("MineClubs status updated.", "success")
+                return redirect(url_for("admin_mineclubs_management"))
+            elif action == "create_terminal":
+                club_id = int(request.form.get("club_id") or 0)
+                label = (request.form.get("label") or "Main entrance").strip()
+                if not label or len(label) > 80:
+                    raise ValueError("Terminal label must be 1–80 characters.")
+                club = execute_query_dict(
+                    "SELECT id,display_name,status FROM minebank_club_locations WHERE id=%s",
+                    (club_id,)
+                )
+                if not club or club[0]["status"] != "ACTIVE":
+                    raise ValueError("Choose an existing active club before registering an entrance.")
+                new_terminal_token = "mbclub_" + secrets.token_urlsafe(48)
+                token_hash = hashlib.sha256(new_terminal_token.encode("utf-8")).hexdigest()
+                rows = execute_query(
+                    """INSERT INTO minebank_club_terminals(club_id,label,token_hash,status)
+                       VALUES(%s,%s,%s,'ACTIVE') RETURNING id""",
+                    (club_id, label, token_hash), commit=True
+                )
+                new_terminal_label = label
+                flash("Entrance registered. Copy the credential now; it will not be displayed again.", "success")
+            elif action == "revoke_terminal":
+                terminal_id = int(request.form.get("terminal_id") or 0)
+                rows = execute_query(
+                    """UPDATE minebank_club_terminals SET status='REVOKED',revoked_at=CURRENT_TIMESTAMP
+                       WHERE id=%s AND status='ACTIVE' RETURNING id""",
+                    (terminal_id,), commit=True
+                )
+                if not rows:
+                    raise ValueError("Active terminal not found; it may already have been revoked.")
+                flash("Entrance credential revoked.", "success")
+                return redirect(url_for("admin_mineclubs_management"))
+            else:
+                raise ValueError("Unknown MineClubs management action.")
+        except Exception as exc:
+            error = str(exc)
+    clubs = execute_query_dict(
+        """SELECT l.id,l.code,l.display_name,l.status,l.created_at,
+                  COUNT(DISTINCT t.id) FILTER (WHERE t.status='ACTIVE') AS active_terminals,
+                  COUNT(DISTINCT a.id) FILTER (WHERE a.created_at >= CURRENT_DATE) AS admissions_today,
+                  COALESCE(SUM(a.fee_amount) FILTER (WHERE a.created_at >= CURRENT_DATE),0) AS fees_today
+           FROM minebank_club_locations l
+           LEFT JOIN minebank_club_terminals t ON t.club_id=l.id
+           LEFT JOIN minebank_club_admissions a ON a.club_id=l.id
+           GROUP BY l.id ORDER BY l.created_at DESC"""
+    )
+    terminals = execute_query_dict(
+        """SELECT t.id,t.club_id,t.label,t.status,t.created_at,t.last_used_at,l.display_name
+           FROM minebank_club_terminals t
+           JOIN minebank_club_locations l ON l.id=t.club_id
+           ORDER BY t.created_at DESC LIMIT 100"""
+    )
+    admissions = execute_query_dict(
+        """SELECT a.id,a.created_at,a.tier_code,a.fee_amount,a.currency,a.status,
+                  l.display_name,t.label,c.email
+           FROM minebank_club_admissions a
+           JOIN minebank_club_locations l ON l.id=a.club_id
+           JOIN minebank_club_terminals t ON t.id=a.terminal_id
+           JOIN bank_clients c ON c.id=a.client_id
+           ORDER BY a.created_at DESC LIMIT 50"""
+    )
+    return render_template(
+        "mineclubs_management.html", clubs=clubs, terminals=terminals,
+        admissions=admissions, new_terminal_token=new_terminal_token,
+        new_terminal_label=new_terminal_label, error=error, portal_active="mineclubs"
+    )
+
 @app.route("/admin/minebank")
 @app.route("/admin/minebank/dashboard")
 @require_role("ADMIN")
