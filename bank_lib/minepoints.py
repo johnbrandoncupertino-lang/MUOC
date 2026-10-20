@@ -50,7 +50,7 @@ def customer_summary(client_id):
 
 def owner_configuration():
     tiers = execute_query_dict(
-        "SELECT code,name,account_type,active FROM account_tiers_v2 ORDER BY account_type,code"
+        "SELECT code,display_name,account_type,active FROM account_tiers_v2 ORDER BY account_type,code"
     )
     rates = execute_query_dict(
         "SELECT tier_code,points_per_100_emeralds,enabled,rule_version,updated_at FROM minepoints_tier_rates"
