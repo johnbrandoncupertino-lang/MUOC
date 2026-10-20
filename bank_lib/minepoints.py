@@ -57,8 +57,12 @@ def customer_summary(client_id):
         rate = rate_by_tier.get(str(account["tier_code"]))
         account["earning_rule"] = rate
         rate_enabled = bool(rate and rate["enabled"] and rate["points_per_100_emeralds"] is not None)
-        account["points_eligible"] = bool(rate_enabled and transfer_enabled)
-        if not rate_enabled:
+        account_enabled = str(account["status"]).upper() == "ENABLED"
+        account["points_eligible"] = bool(account_enabled and rate_enabled and transfer_enabled)
+        if not account_enabled:
+            account["eligibility_status"] = "Account unavailable"
+            account["eligibility_detail"] = "This account is not enabled for transactions, so it cannot currently earn points."
+        elif not rate_enabled:
             account["eligibility_status"] = "Rate disabled"
             account["eligibility_detail"] = "MineBank has not enabled a points rate for this account tier."
         elif transfer_enabled:
