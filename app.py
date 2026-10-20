@@ -46,7 +46,7 @@ from bank_lib.credicheck import (
 )
 from bank_lib.minebank_security import ensure_security_schema, validate_session, list_active_sessions, terminate_session, terminate_other_sessions, security_event
 from bank_lib.minebank_privileges import resolve_privileges
-from bank_lib.minepoints import customer_summary, owner_configuration
+from bank_lib.minepoints import customer_summary, owner_configuration, award_completed_external_transfer
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 # Vercel may run multiple serverless workers. Flask's signed session cookie
@@ -982,6 +982,12 @@ def minebank_transfer_page():
                         ip_address=request.remote_addr,
                     )
                     session.pop("transfer_preview", None)
+                    if result.get("status") == "COMPLETED":
+                        try:
+                            award_completed_external_transfer(result.get("transaction_id"), client_id)
+                        except Exception as points_exc:
+                            # Loyalty processing must never roll back or misreport a completed bank transfer.
+                            print(f"MinePoints transfer award warning: {type(points_exc).__name__}: {points_exc}")
                     flash((f"Transfer {result['transaction_id']} completed successfully." if result["status"] == "COMPLETED" else f"Transfer {result['transaction_id']} was submitted and is awaiting approval."), "success")
                     return redirect(url_for("minebank_transactions_page"))
                 except Exception as exc:
