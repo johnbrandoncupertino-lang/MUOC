@@ -446,11 +446,13 @@ def _insert_test_minecraft_atm(client_id, card_id, token):
 
 
 def _insert_test_mineclub(terminal_token, code="padua-central"):
-    club_id = execute_query_dict(
+    rows = execute_query(
         """INSERT INTO minebank_club_locations(code,display_name,status)
            VALUES(%s,%s,'ACTIVE') RETURNING id""",
         (code, "MineClubs Padua Central"),
-    )[0]["id"]
+        fetch=True, commit=True,
+    )
+    club_id = rows[0][0]
     execute_query(
         """INSERT INTO minebank_club_terminals(club_id,label,token_hash,status)
            VALUES(%s,%s,%s,'ACTIVE')""",
