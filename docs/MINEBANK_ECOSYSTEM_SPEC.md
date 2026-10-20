@@ -203,3 +203,15 @@ No rewards are seeded or activated, and no customer-facing earning/redemption ro
 ## MineClubs physical admission
 
 `POST /api/v1/minecraft/clubs/admissions` authorizes admission at an active, server-registered venue using a trusted terminal credential, active MineBank card credential, Wallet PIN, and idempotency key. The server resolves the canonical account tier and applies the approved tariff: Personal/Business 50 Emeralds per visit; Personal Pro/Business Pro 25 Emeralds; Personal Private/Corporate 0 Emeralds with unlimited admissions. Fees are paid from Balance only, never CashLine. Admission, fee ledger transaction, idempotency envelope, and audit event commit atomically; retries return the prior result. Venue/terminal provisioning is an operator task. Only a SHA-256 hash of the terminal secret is stored. The API does not itself open doors; the venue must deploy a trusted entrance controller that grants entry only after a successful response.
+
+## Physical MineClubs entrance implementation
+
+The physical admission path consists of three separately deployed pieces:
+
+- `extras/mineclubs.sql`: explicit PostgreSQL migration for venues, trusted terminals, admission journal, and operation idempotency support.
+- `scripts/provision_mineclub.py`: operator-run, dry-run-by-default provisioning tool. With explicit `--activate`, it creates an active venue if absent and an active terminal, stores only the SHA-256 token hash, and prints the plaintext terminal secret once after the database commit.
+- `minecraft/cc_tweaked/mineclubs_entrance.lua`: customer-facing CC:Tweaked controller. It requires the MineBank card credential and six-digit Wallet PIN, persists the idempotency key before sending the request, and only pulses the configured redstone output after a valid `ADMITTED` response. An uncertain result can be resumed with the same key.
+
+Tariffs are resolved from the canonical server-side account tier. Personal/Business pay 50 Emeralds per admission, Pro tiers pay 25, and Personal Private/Corporate pay zero with unlimited admission. Fees debit Balance only. The API response, admission record, fee ledger transaction, shared idempotency record, and audit event are committed as one database transaction.
+
+**Deployment gate:** the migration must be applied explicitly; no venue is provisioned by deployment. Stage and test the complete physical relay, network-failure recovery, insufficient Balance, inactive venue, and revoked terminal before enabling the Minecraft integration flags in production. Use relays that fail locked on loss of power. The repository code cannot safely choose the real venue names, production database, terminal token storage, or physical door wiring on behalf of an operator.
