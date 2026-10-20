@@ -442,8 +442,15 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                         cur.execute("SELECT transaction_id,status,amount,fee FROM ledger_transactions WHERE transaction_id=%s",
                                     (existing[0],))
                         row = cur.fetchone()
-                        return {"transaction_id": row[0], "status": row[1], "amount": row[2], "fee": row[3],
-                                "idempotent_replay": True}
+                        replay = {"transaction_id": row[0], "status": row[1], "amount": row[2], "fee": row[3],
+                                  "idempotent_replay": True}
+                        if row[1] == "COMPLETED":
+                            try:
+                                from .minepoints import award_completed_external_transfer_by_id
+                                award_completed_external_transfer_by_id(row[0])
+                            except Exception as points_exc:
+                                print(f"MinePoints replay award warning: {type(points_exc).__name__}: {points_exc}")
+                        return replay
 
                 if actor_client_id is not None:
                     _assert_banking_unlocked(cur, actor_client_id)
