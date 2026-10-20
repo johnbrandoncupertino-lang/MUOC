@@ -46,6 +46,7 @@ from bank_lib.credicheck import (
 )
 from bank_lib.minebank_security import ensure_security_schema, validate_session, list_active_sessions, terminate_session, terminate_other_sessions, security_event
 from bank_lib.minebank_privileges import resolve_privileges
+from bank_lib.minepoints import customer_summary, owner_configuration
 
 app = Flask(__name__, template_folder="templates", static_folder="static")
 # Vercel may run multiple serverless workers. Flask's signed session cookie
@@ -1298,6 +1299,90 @@ def minebank_statements_csv():
     for row in rows:
         writer.writerow([row["transaction_id"],row["transaction_type"],row["amount"],row["fee"],row["status"],row["description"],row["reference_id"],row["created_at"]])
     return Response(out.getvalue(),mimetype="text/csv",headers={"Content-Disposition":"attachment; filename=minebank-statement.csv"})
+
+
+@app.route("/portal/minepoints")
+@require_login
+def minebank_minepoints_page():
+    """Customer MinePoints dashboard. Optional points service fails independently."""
+    summary = {"balance": 0, "history": [], "rewards": [], "accounts": []}
+    points_available = True
+    try:
+        summary = customer_summary(session["minebank_client_id"])
+    except Exception as exc:
+        points_available = False
+        print(f"MinePoints customer page warning: {type(exc).__name__}: {exc}")
+    return render_template("minepoints_portal.html", summary=summary,
+                           points_available=points_available, portal_active="minepoints")
+
+
+@app.route("/admin/minepoints", methods=["GET", "POST"])
+@require_role("ADMIN")
+def admin_minepoints_management():
+    """Owner/admin controls for tier earning rates and eligible event allowlist."""
+    error = None
+    if request.method == "POST":
+        action = (request.form.get("action") or "").strip()
+        try:
+            if action == "save_rate":
+                tier_code = (request.form.get("tier_code") or "").strip()
+                enabled = request.form.get("enabled") == "on"
+                raw_rate = (request.form.get("points_per_100_emeralds") or "").strip()
+                tiers = execute_query_dict(
+                    "SELECT code FROM account_tiers_v2 WHERE code=%s AND active=TRUE",
+                    (tier_code,))
+                if not tiers:
+                    raise ValueError("Select an active, canonical account tier.")
+                rate = None
+                if raw_rate:
+                    rate = int(raw_rate)
+                    if rate < 0 or rate > 1000000000:
+                        raise ValueError("Rate must be a non-negative whole number.")
+                if enabled and rate is None:
+                    raise ValueError("Enter a rate before enabling earning for this tier.")
+                version = "v" + secrets.token_hex(6)
+                execute_query(
+                    """INSERT INTO minepoints_tier_rates
+                         (tier_code,points_per_100_emeralds,enabled,rule_version,updated_at,updated_by)
+                       VALUES(%s,%s,%s,%s,CURRENT_TIMESTAMP,%s)
+                       ON CONFLICT(tier_code) DO UPDATE SET
+                         points_per_100_emeralds=EXCLUDED.points_per_100_emeralds,
+                         enabled=EXCLUDED.enabled,rule_version=EXCLUDED.rule_version,
+                         updated_at=CURRENT_TIMESTAMP,updated_by=EXCLUDED.updated_by""",
+                    (tier_code, rate, enabled, version, session["minebank_client_id"]),
+                    fetch=False, commit=True)
+                flash("MinePoints tier earning rule saved. Existing awards are unchanged.", "success")
+                return redirect(url_for("admin_minepoints_management"))
+            if action == "set_event":
+                event_code = (request.form.get("event_code") or "").strip()
+                enabled = request.form.get("enabled") == "on"
+                rows = execute_query_dict(
+                    "SELECT event_code,requires_explicit_approval FROM minepoints_eligible_events WHERE event_code=%s",
+                    (event_code,))
+                if not rows:
+                    raise ValueError("Unknown eligible event type.")
+                if rows[0]["requires_explicit_approval"] and enabled and request.form.get("explicit_approval") != "yes":
+                    raise ValueError("Explicit approval is required to enable fee-paying service events.")
+                version = "v" + secrets.token_hex(6)
+                execute_query(
+                    """UPDATE minepoints_eligible_events SET enabled=%s,rule_version=%s,
+                         updated_at=CURRENT_TIMESTAMP,updated_by=%s WHERE event_code=%s""",
+                    (enabled, version, session["minebank_client_id"], event_code),
+                    fetch=False, commit=True)
+                flash("Eligible activity rule updated.", "success")
+                return redirect(url_for("admin_minepoints_management"))
+            raise ValueError("Unknown MinePoints management action.")
+        except Exception as exc:
+            error = str(exc)
+    try:
+        tiers, rates, events = owner_configuration()
+    except Exception as exc:
+        print(f"MinePoints admin configuration warning: {type(exc).__name__}: {exc}")
+        tiers, rates, events = [], {}, []
+        error = error or "MinePoints configuration tables are unavailable. Apply the documented SQL migrations first."
+    return render_template("minepoints_admin.html", tiers=tiers, rates=rates,
+                           events=events, error=error, portal_active="minepoints-admin")
+
 
 @app.route("/portal/privileges")
 @require_login
