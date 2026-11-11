@@ -7,6 +7,7 @@ from decimal import Decimal, ROUND_FLOOR
 import hashlib
 
 from .database import execute_query, execute_query_dict
+from .minebank_privileges import resolve_privileges
 
 
 def points_balance(client_id):
@@ -54,11 +55,13 @@ def customer_summary(client_id):
     transfer_event = events_by_code.get("EXTERNAL_TRANSFER_OUT")
     transfer_enabled = bool(transfer_event and transfer_event["enabled"])
     for account in accounts:
+        policy=resolve_privileges(account.get("tier_code"),account.get("account_type"),account.get("status"))
+        account["points_earning_class"]=policy["points_earning_class"]
         rate = rate_by_tier.get(str(account["tier_code"]))
         account["earning_rule"] = rate
         rate_enabled = bool(rate and rate["enabled"] and rate["points_per_100_emeralds"] is not None
                             and int(rate["points_per_100_emeralds"]) > 0)
-        account_enabled = str(account["status"]).upper() == "ENABLED"
+        account_enabled = str(account["status"]).upper() in {"ACTIVE", "ENABLED"}
         account["points_eligible"] = bool(account_enabled and rate_enabled and transfer_enabled)
         if not account_enabled:
             account["eligibility_status"] = "Account unavailable"

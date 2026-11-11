@@ -1,8 +1,8 @@
 {% extends 'minebank_layout.html' %}
-{% block title %}MineBank — Secure Messages{% endblock %}
+{% block title %}MineBank — HelpDesk{% endblock %}
 {% block content %}
 <div class="page-head">
-  <div><div class="eyebrow">PRIVATE BANKING</div><h1>Secure Messages</h1><p>Write to MineBank and keep every reply in one private conversation.</p></div>
+  <div><div class="eyebrow">MINEBANK HELPDESK</div><h1>HelpDesk</h1><p>Write to MineBank and keep every reply in one private conversation.</p></div>
   <a class="button" href="{{ url_for('minebank_notifications_page') }}">Bank notifications</a>
 </div>
 {% if error %}<div class="notice error">{{ error }}</div>{% endif %}

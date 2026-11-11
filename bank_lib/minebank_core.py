@@ -1216,7 +1216,7 @@ def accrue_daily_credit_interest(account_id=None):
                 where="" if account_id is None else " AND cf.account_id=%s"; params=() if account_id is None else (account_id,)
                 cur.execute(f"""SELECT a.id,a.account_type,cf.last_interest_at,cf.activated_at,cf.interest_annual_bps
                                 FROM bank_accounts a JOIN credit_facilities cf ON cf.account_id=a.id
-                                WHERE cf.status='ACTIVE'{where} FOR UPDATE OF a,cf""",params)
+                                WHERE cf.status IN ('ACTIVE','SUSPENDED'){where} FOR UPDATE OF a,cf""",params)
                 for aid,atype,last_interest,activated,annual_bps in cur.fetchall():
                     outstanding=cashline_outstanding(cur,aid)
                     if outstanding<=0:
@@ -1236,9 +1236,9 @@ def accrue_daily_credit_interest(account_id=None):
                 cur.execute(f"""SELECT a.id,a.account_type,dc.last_interest_at,dc.activated_at,dc.interest_annual_bps
                                 FROM bank_accounts a
                                 JOIN dynamic_cashlines dc ON dc.account_id=a.id
-                                WHERE dc.status='ACTIVE'
+                                WHERE dc.status IN ('ACTIVE','SUSPENDED')
                                   AND NOT EXISTS (SELECT 1 FROM credit_facilities cf
-                                                  WHERE cf.account_id=a.id AND cf.status='ACTIVE')
+                                                  WHERE cf.account_id=a.id AND cf.status IN ('ACTIVE','SUSPENDED'))
                                   {dynamic_where}
                                 FOR UPDATE OF a,dc""", dynamic_params)
                 for aid,atype,last_interest,activated,annual_bps in cur.fetchall():
@@ -1303,51 +1303,50 @@ def generate_cashline_statement(account_id, period_start=None, period_end=None):
     finally: release_db_connection(conn)
 
 
-def process_monthly_billing():
-    """Apply configured tier/credit fees and monthly credit interest once per account."""
+def process_monthly_billing(account_id=None):
+    """Apply every missed monthly tier and credit fee once per account period."""
     conn=get_db_connection()
     results=[]
     try:
         with conn:
             with conn.cursor() as cur:
-                cur.execute("""SELECT a.id,a.client_id,a.tier_id,a.balance,c.credit_limit,c.activation_fee_monthly,
-                                      c.status,c.last_interest_at,c.overdue_since
+                account_filter=" AND a.id=%s" if account_id is not None else ""
+                params=(account_id,) if account_id is not None else ()
+                cur.execute(f"""SELECT a.id,a.client_id,a.tier_id,c.activation_fee_monthly,c.status,a.created_at
                                FROM bank_accounts a
                                JOIN account_tiers_v2 t ON t.id=a.tier_id
                                LEFT JOIN credit_facilities c ON c.account_id=a.id
-                               WHERE a.status IN ('ACTIVE','LIMITED')""")
+                               WHERE a.status IN ('ACTIVE','LIMITED','FROZEN'){account_filter}
+                               ORDER BY a.id FOR UPDATE OF a""",params)
                 accounts=cur.fetchall()
-                period=_now().strftime("%Y-%m")
-                for a in accounts:
-                    account_id,client_id,tier_id,balance,credit_limit,credit_fee,credit_status,last_interest,overdue=a
+                today=_now().date()
+                for aid,client_id,tier_id,credit_fee,credit_status,created_at in accounts:
                     cur.execute("SELECT monthly_fee FROM account_tiers_v2 WHERE id=%s",(tier_id,))
                     tier_fee=int(cur.fetchone()[0] or 0)
                     fees=[]
-                    if tier_fee:
-                        cur.execute("""INSERT INTO account_billing(account_id,billing_type,amount,billing_period,status)
-                                       VALUES(%s,'TIER_FEE',%s,%s,'COMPLETED')
-                                       ON CONFLICT(account_id,billing_type,billing_period) DO NOTHING""",
-                                    (account_id,tier_fee,period))
-                        if cur.rowcount:
-                            cur.execute("UPDATE bank_accounts SET balance=balance-%s WHERE id=%s",(tier_fee,account_id))
-                            txid=next_transaction_id(cur)
-                            create_ledger_transaction(cur,transaction_id=txid,transaction_type="TIER_FEE",
-                                                      amount=tier_fee,recipient_account_id=account_id,
-                                                      description=f"Monthly {period} tier fee")
-                            fees.append(tier_fee)
-                    if credit_status=="ACTIVE" and credit_fee:
-                        cur.execute("""INSERT INTO account_billing(account_id,billing_type,amount,billing_period,status)
-                                       VALUES(%s,'CREDIT_FEE',%s,%s,'COMPLETED')
-                                       ON CONFLICT(account_id,billing_type,billing_period) DO NOTHING""",
-                                    (account_id,int(credit_fee),period))
-                        if cur.rowcount:
-                            txid=next_transaction_id(cur)
-                            create_ledger_transaction(cur,transaction_id=txid,transaction_type="CREDIT_FEE",
-                                                      amount=int(credit_fee),recipient_account_id=account_id,
-                                                      description=f"Monthly credit activation fee {period}")
-                            fees.append(int(credit_fee))
-                    # Daily process_credit_delinquency() handles arrears only after a statement due date.
-                    results.append({"account_id":account_id,"fees":fees})
+                    month=created_at.date().replace(day=1)
+                    while (month.year,month.month)<=(today.year,today.month):
+                        period=month.strftime('%Y-%m')
+                        for billing_type,amount in (
+                            ('TIER_FEE',tier_fee),
+                            ('CREDIT_FEE',int(credit_fee or 0) if credit_status=='ACTIVE' else 0),
+                        ):
+                            if amount<=0:
+                                continue
+                            cur.execute("""INSERT INTO account_billing(account_id,billing_type,amount,billing_period,status)
+                                           VALUES(%s,%s,%s,%s,'COMPLETED')
+                                           ON CONFLICT(account_id,billing_type,billing_period) DO NOTHING""",
+                                        (aid,billing_type,amount,period))
+                            if cur.rowcount:
+                                cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",
+                                            (amount,aid))
+                                txid=next_transaction_id(cur)
+                                create_ledger_transaction(cur,transaction_id=txid,transaction_type=billing_type,
+                                                          amount=amount,sender_account_id=aid,
+                                                          description=f"Monthly {period} {billing_type.lower().replace('_',' ')}")
+                                fees.append({"type":billing_type,"amount":amount,"period":period})
+                        month=(month.replace(day=28)+__import__('datetime').timedelta(days=4)).replace(day=1)
+                    results.append({"account_id":aid,"fees":fees})
         return results
     finally:
         release_db_connection(conn)

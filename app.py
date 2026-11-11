@@ -473,6 +473,19 @@ def minebank_login():
     if request.method == "POST":
         ok, message = login_client(request.form.get("email",""), request.form.get("password",""), request.form.get("captcha_answer"))
         if ok:
+            # Reconcile every account on sign-in so missed daily/monthly jobs
+            # cannot leave credit interest or account fees unposted.
+            try:
+                account_rows=execute_query_dict(
+                    "SELECT id FROM bank_accounts WHERE client_id=%s AND status<>'CLOSED' ORDER BY id",
+                    (session["minebank_client_id"],))
+                from bank_lib.minebank_core import process_monthly_billing
+                for account_row in account_rows:
+                    aid=int(account_row["id"])
+                    accrue_daily_credit_interest(aid)
+                    process_monthly_billing(aid)
+            except Exception as exc:
+                print(f"MineBank login billing catch-up warning: {type(exc).__name__}: {exc}")
             session["csrf"] = secrets.token_urlsafe(32)
             if session.pop("minebank_password_expired",False):
                 flash("Your password has expired. Please change it before continuing.","error")
