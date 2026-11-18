@@ -372,11 +372,14 @@ def review_tier_change(request_id, reviewer_id, approve):
                     tier=cur.fetchone()
                     if not tier:
                         raise ValueError("Requested tier is unavailable.")
-                    import datetime as _dt
-                    cur.execute("SELECT date_of_birth FROM bank_clients WHERE id=%s",(row[1],))
-                    dob=cur.fetchone()[0]
                     cfg=tier[1] or {}
                     minimum_age=int(cfg.get("minimum_age",0))
+                    if minimum_age and str(tier_code).upper()!="PERSONAL_PRIVATE":
+                        import datetime as _dt
+                        cur.execute("SELECT date_of_birth FROM bank_clients WHERE id=%s",(row[1],))
+                        dob=cur.fetchone()[0]
+                    else:
+                        dob=None
                     if minimum_age and dob:
                         today=_dt.date.today()
                         age=today.year-dob.year-((today.month,today.day)<(dob.month,dob.day))

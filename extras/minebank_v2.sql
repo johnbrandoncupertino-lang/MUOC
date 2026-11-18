@@ -305,7 +305,7 @@ INSERT INTO account_tiers_v2
 VALUES
 ('PERSONAL','PERSONAL','Personal',0,5000,5000,5000,5000,FALSE,0,FALSE,'{}'),
 ('PERSONAL_PRO','PERSONAL','Personal Pro',0,NULL,20000,10000,10000,TRUE,2000,FALSE,'{}'),
-('PERSONAL_PRIVATE','PERSONAL','Personal Private',0,NULL,NULL,NULL,NULL,TRUE,1500,TRUE,'{"minimum_age":18,"minimum_balance":0,"minimum_operations":0,"max_requested_credit":20000}'),
+('PERSONAL_PRIVATE','PERSONAL','Personal Private',0,NULL,NULL,NULL,NULL,TRUE,1500,TRUE,'{"minimum_balance":0,"minimum_operations":0,"max_requested_credit":20000}'),
 ('BUSINESS','BUSINESS','Business',0,NULL,NULL,NULL,NULL,TRUE,0,FALSE,'{}'),
 ('BUSINESS_PRO','BUSINESS','Business Pro',0,NULL,NULL,NULL,NULL,TRUE,0,FALSE,'{}'),
 ('CORPORATE','BUSINESS','Corporate',0,NULL,NULL,NULL,NULL,TRUE,0,TRUE,'{"minimum_age":18,"minimum_balance":0,"minimum_operations":0}')

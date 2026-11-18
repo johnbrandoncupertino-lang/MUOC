@@ -32,6 +32,8 @@
   position:relative;
   border-bottom:1px solid #043866;
 }
+.mb-account-switch{display:flex;align-items:center;gap:8px;min-width:0}.mb-account-switch label{font-size:11px;font-weight:700;white-space:nowrap;color:#e8f1f8}.mb-account-switch select{max-width:min(38vw,360px);min-width:190px;padding:7px 9px;border:1px solid #8da9bd;background:#f8fbfd;color:#1e3446;border-radius:2px;font:inherit;font-size:12px}
+@media(max-width:760px){.mb-account-switch{order:3;width:100%;justify-content:flex-start}.mb-account-switch select{max-width:100%;flex:1}.mb-top{height:auto;min-height:66px;flex-wrap:wrap;padding-top:8px;padding-bottom:8px}}
 .mb-top:after{
   content:"";
   position:absolute;

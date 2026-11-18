@@ -302,6 +302,16 @@ def _validate_transfer_request(cur, *, actor_client_id, sender, recipient, amoun
     elif recipient[6] not in ("ACTIVE", "LIMITED"):
         raise ValueError("The recipient account cannot receive transfers.")
 
+    # Moving funds between a customer's own Personal and Business accounts is
+    # an internal book transfer. It remains balance-funded, but is exempt from
+    # product transfer caps, outgoing fees and external-payment cooldowns.
+    internal_profile_transfer = (
+        actor_client_id is not None
+        and int(sender[1]) == int(actor_client_id)
+        and int(recipient[1]) == int(actor_client_id)
+        and {str(sender[3]).upper(), str(recipient[3]).upper()} == {"PERSONAL", "BUSINESS"}
+    )
+
     used, period = _reset_month_if_needed(cur, sender)
     cur.execute("SELECT monthly_outgoing_limit,daily_outgoing_limit,single_transfer_limit FROM account_tiers_v2 WHERE id=%s",
                 (sender[4],))
@@ -309,19 +319,19 @@ def _validate_transfer_request(cur, *, actor_client_id, sender, recipient, amoun
     if not limits:
         raise ValueError("The source account tier has no configured transfer limits.")
     monthly_limit, daily_limit, single_limit = limits
-    if single_limit is not None and amount > int(single_limit):
+    if not internal_profile_transfer and single_limit is not None and amount > int(single_limit):
         raise ValueError("The transfer exceeds the single-payment limit.")
-    if monthly_limit is not None and used + amount > int(monthly_limit):
+    if not internal_profile_transfer and monthly_limit is not None and used + amount > int(monthly_limit):
         raise ValueError("The transfer exceeds the remaining monthly outgoing limit.")
     cur.execute("""SELECT COALESCE(SUM(amount),0) FROM ledger_transactions
                    WHERE sender_account_id=%s
                      AND status IN ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL')
                      AND created_at>=CURRENT_TIMESTAMP-INTERVAL '1 day'""", (sender[0],))
     daily_used = int(cur.fetchone()[0] or 0)
-    if daily_limit is not None and daily_used + amount > int(daily_limit):
+    if not internal_profile_transfer and daily_limit is not None and daily_used + amount > int(daily_limit):
         raise ValueError("The transfer exceeds the remaining daily outgoing limit.")
     last_outgoing = sender[9]
-    if last_outgoing:
+    if not internal_profile_transfer and last_outgoing:
         # PostgreSQL columns may be TIMESTAMP WITHOUT TIME ZONE in older schemas.
         # Match the timestamp's timezone awareness to avoid a TypeError that can
         # abort every transfer after the first payment on those databases.
@@ -336,7 +346,9 @@ def _validate_transfer_request(cur, *, actor_client_id, sender, recipient, amoun
         extra_fee = max(0, int(extra_fee or 0))
     except (TypeError, ValueError, OverflowError):
         raise ValueError("Invalid transfer fee.")
-    fee = _fee_for_transfer(cur, sender, recipient[0], amount) + extra_fee
+    fee = 0 if internal_profile_transfer else _fee_for_transfer(cur, sender, recipient[0], amount) + extra_fee
+    if internal_profile_transfer and funding_source != "BALANCE":
+        raise ValueError("Transfers between your Personal and Business accounts must use MineBank Balance.")
     total = amount + fee
     if funding_source == "BALANCE":
         if int(sender[5]) < total:
@@ -364,7 +376,7 @@ def _validate_transfer_request(cur, *, actor_client_id, sender, recipient, amoun
     cur.execute("SELECT max_balance FROM account_tiers_v2 WHERE id=%s", (recipient[4],))
     max_balance_row = cur.fetchone()
     max_balance = max_balance_row[0] if max_balance_row else None
-    if max_balance is not None and int(recipient[5]) + amount > int(max_balance):
+    if not internal_profile_transfer and max_balance is not None and int(recipient[5]) + amount > int(max_balance):
         raise ValueError("The recipient account would exceed its maximum permitted balance.")
 
     return {
@@ -373,6 +385,7 @@ def _validate_transfer_request(cur, *, actor_client_id, sender, recipient, amoun
         "fee": fee, "total": total, "available_after": available_after,
         "recipient_account_number": recipient[2], "sender_balance": int(sender[5]),
         "recipient_balance": int(recipient[5]),
+        "internal_profile_transfer": internal_profile_transfer,
     }
 
 
@@ -470,6 +483,7 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                 period = validation["period"]
                 fee = validation["fee"]
                 total = validation["total"]
+                internal_profile_transfer = validation.get("internal_profile_transfer", False)
 
                 risk_score = 0
                 risk_reasons = []
@@ -499,8 +513,8 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                                      "; ".join(risk_reasons),__import__('json').dumps({"amount":amount})))
                 except Exception:
                     pass
-                requires_business_approval = sender[3]=="BUSINESS" and sender_tier_code in ("BUSINESS_PRO","CORPORATE") and business_role=="EMPLOYEE"
-                status = "PENDING_BUSINESS_APPROVAL" if requires_business_approval else ("PENDING_APPROVAL" if amount > PENDING_APPROVAL_THRESHOLD or risk_score >= 60 else "COMPLETED")
+                requires_business_approval = not internal_profile_transfer and sender[3]=="BUSINESS" and sender_tier_code in ("BUSINESS_PRO","CORPORATE") and business_role=="EMPLOYEE"
+                status = "COMPLETED" if internal_profile_transfer else ("PENDING_BUSINESS_APPROVAL" if requires_business_approval else ("PENDING_APPROVAL" if amount > PENDING_APPROVAL_THRESHOLD or risk_score >= 60 else "COMPLETED"))
                 if funding_source=="CASHLINE":
                     transfer_kind="CASHLINE"
                 elif funding_source=="DYNAMIC_CASHLINE":
@@ -509,9 +523,12 @@ def transfer(*, sender_account_id, recipient_account_number, amount,
                     transfer_kind = "OWN_TRANSFER" if sender[1] == recipient[1] else f"{sender[3]}_TO_{recipient[3]}"
                 txid = next_transaction_id(cur)
                 if funding_source=="BALANCE":
-                    cur.execute("""UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
-                               last_outgoing_at=CURRENT_TIMESTAMP,monthly_outgoing_period=%s,
-                               updated_at=CURRENT_TIMESTAMP WHERE id=%s""",(total,used+amount,period,sender[0]))
+                    if internal_profile_transfer:
+                        cur.execute("UPDATE bank_accounts SET balance=balance-%s,updated_at=CURRENT_TIMESTAMP WHERE id=%s",(total,sender[0]))
+                    else:
+                        cur.execute("""UPDATE bank_accounts SET balance=balance-%s,monthly_outgoing_used=%s,
+                                   last_outgoing_at=CURRENT_TIMESTAMP,monthly_outgoing_period=%s,
+                                   updated_at=CURRENT_TIMESTAMP WHERE id=%s""",(total,used+amount,period,sender[0]))
                 else:
                     cur.execute("""UPDATE bank_accounts SET monthly_outgoing_used=%s,
                                last_outgoing_at=CURRENT_TIMESTAMP,monthly_outgoing_period=%s,

@@ -2,7 +2,7 @@
 {% block title %}Minecraft Cards — MineBank{% endblock %}
 {% block content %}
 <style>
-.minecraft-cards-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:14px}
+.old-cards{margin-top:16px}.old-cards summary{cursor:pointer}.old-card-list{display:grid;gap:7px;margin-top:12px}.old-card-list>div{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;font-size:11px;opacity:.72;background:var(--panel-2,var(--card-bg,#f5f6f8))}.old-card-list span{color:var(--muted,#6b7b8a)}.minecraft-cards-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:14px}
 .minecraft-card-panel{min-width:0}
 .minecraft-card-visual{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;padding:18px;border-radius:8px;background:var(--panel-2,var(--card-bg,#f5f6f8));color:var(--text,#202833);border:1px solid var(--border-color,rgba(120,140,160,.22));margin-bottom:14px;min-height:116px;box-sizing:border-box}
 .minecraft-card-visual small{display:block;color:var(--muted,#6b7b8a);letter-spacing:.08em;text-transform:uppercase;font-size:10px}
@@ -30,6 +30,7 @@
 .minecraft-card-actions button{white-space:nowrap}
 .minecraft-status{display:inline-block;font-size:11px;font-weight:800;letter-spacing:.04em;padding:4px 8px;border-radius:4px;background:rgba(38,150,100,.12);color:#26825c}
 .minecraft-status.revoked{background:rgba(160,70,70,.12);color:#b34c4c}
+.old-cards{margin-top:16px}.old-cards summary{cursor:pointer}.old-card-list{display:grid;gap:7px;margin-top:12px}.old-card-list>div{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;font-size:11px;opacity:.72;background:var(--panel-2,var(--card-bg,#f5f6f8))}.old-card-list span{color:var(--muted,#6b7b8a)}
 @media(max-width:560px){.minecraft-card-actions form{grid-template-columns:1fr}.minecraft-card-actions button{width:100%}.minecraft-card-details{grid-template-columns:1fr 1fr}}
 </style>
 <div class="page-head">
@@ -47,7 +48,7 @@
 </section>
 {% if cards %}
 <div class="minecraft-cards-grid">
-{% for card in cards %}
+{% for card in cards if card.status=='ACTIVE' %}
   <section class="panel minecraft-card-panel">
     <div class="minecraft-card-visual">
       <div><small>MineBank · Minecraft</small><strong>{{ card.label }}</strong><div style="font-size:12px;margin-top:8px;color:var(--muted,#6b7b8a)">{{ card.account_number }}</div></div>
@@ -98,6 +99,7 @@
   </section>
 {% endfor %}
 </div>
+<details class="panel old-cards"><summary><b>Old cards</b> <span class="muted">{{ cards|selectattr('status','equalto','REVOKED')|list|length }} revoked</span></summary><div class="old-card-list">{% for card in cards if card.status=='REVOKED' %}<div><strong>{{ card.label }}</strong><span>{{ card.account_type }} · {{ card.account_number }} · revoked {{ card.revoked_at.strftime('%d %b %Y') if card.revoked_at else 'date unavailable' }}</span></div>{% else %}<p class="muted">No old cards.</p>{% endfor %}</div></details>
 {% else %}
 <section class="panel"><div class="panel-title">No Minecraft cards yet</div><p class="muted">Issue a card from a MineBank CC:Tweaked branch terminal. Once issued, it will appear here and can be permanently revoked if lost or no longer needed.</p></section>
 {% endif %}

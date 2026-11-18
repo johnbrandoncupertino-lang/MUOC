@@ -17,7 +17,7 @@
 <p class="mb-help">Business accounts support Owner, Employee and Read-Only users with granular permissions and optional spending limits.</p>
 <form method="post" action="{{ url_for('minebank_bonus_business_member') }}" class="mb-request-form">
 <input type="hidden" name="account_id" value="{{ request.args.get('account_id','') }}">
-<label class="mb-label">Business account ID</label><input class="form-control mb-input" name="account_id" required>
+<label class="mb-label">Business account ID</label><input class="form-control mb-input" name="account_id" value="{{ request.args.get('account_id','') }}" required>
 <label class="mb-label">Client ID</label><input class="form-control mb-input" name="client_id" required>
 <label class="mb-label">Role</label><select class="form-control mb-input" name="role"><option>EMPLOYEE</option><option>READ_ONLY</option><option>OWNER</option></select>
 <label class="mb-label">Permissions JSON</label><input class="form-control mb-input" name="permissions" value='{"VIEW":true,"TRANSFER":true,"PAYROLL":false}'>
@@ -27,7 +27,7 @@
 <section class="col-xl-6"><div class="mb-panel"><div class="mb-panel-title">Loans</div>
 <p class="mb-help">Personal loans: 5,000–500,000 Emerald. Business loans: up to 10,000,000. Every loan requires Bank approval.</p>
 <form method="post" action="{{ url_for('minebank_bonus_loan') }}" class="mb-request-form">
-<label class="mb-label">Account ID</label><input class="form-control mb-input" name="account_id" required>
+<label class="mb-label">Account ID</label><input class="form-control mb-input" name="account_id" value="{{ request.args.get('account_id','') }}" required>
 <label class="mb-label">Amount</label><input class="form-control mb-input" name="amount" type="number" min="5000" required>
 <label class="mb-label">Interest (monthly bps)</label><input class="form-control mb-input" name="interest_bps" type="number" value="700">
 <label class="mb-label">Term (months)</label><input class="form-control mb-input" name="term_months" type="number" min="1" max="120" value="12">
@@ -36,9 +36,9 @@
 <label class="mb-label">Collateral note</label><input class="form-control mb-input" name="collateral_note"><label class="mb-label">MineBank password</label><input class="form-control mb-input" name="account_password" type="password" required><label class="mb-label">Wallet PIN</label><input class="form-control mb-input" name="wallet_pin" type="password" inputmode="numeric" maxlength="6" required>
 <button class="btn btn-primary mb-submit" type="submit">Apply for Loan</button>
 </form></div></section>
-<section class="col-xl-6"><div class="mb-panel"><div class="mb-panel-title">Recurring Payments</div>
+<section class="col-xl-6" id="business-recurring"><div class="mb-panel"><div class="mb-panel-title">Recurring Payments</div>
 <form method="post" action="{{ url_for('minebank_bonus_direct_debit') }}" class="mb-request-form">
-<label class="mb-label">Account ID</label><input class="form-control mb-input" name="account_id" required>
+<label class="mb-label">Account ID</label><input class="form-control mb-input" name="account_id" value="{{ request.args.get('account_id','') }}" required>
 <label class="mb-label">Merchant account</label><input class="form-control mb-input" name="merchant_account_number" required>
 <label class="mb-label">Merchant name</label><input class="form-control mb-input" name="merchant_name" required>
 <label class="mb-label">Maximum amount</label><input class="form-control mb-input" name="maximum_amount" type="number" min="1" required>
@@ -48,7 +48,7 @@
 </form></div></section>
 <section class="col-xl-6"><div class="mb-panel"><div class="mb-panel-title">Subscriptions</div>
 <form method="post" action="{{ url_for('minebank_bonus_subscription') }}" class="mb-request-form">
-<label class="mb-label">Account ID</label><input class="form-control mb-input" name="account_id" required>
+<label class="mb-label">Account ID</label><input class="form-control mb-input" name="account_id" value="{{ request.args.get('account_id','') }}" required>
 <label class="mb-label">Merchant account</label><input class="form-control mb-input" name="merchant_account_number" required>
 <label class="mb-label">Merchant name</label><input class="form-control mb-input" name="merchant_name" required>
 <label class="mb-label">Amount</label><input class="form-control mb-input" name="amount" type="number" min="1" required>
@@ -67,10 +67,10 @@
 <div><span>Loan Principal</span><strong>{{ stats.loan_principal }} Emerald</strong></div><div><span>Open High Risk</span><strong>{{ stats.open_high_risk }}</strong></div>
 </div></div></section>
 {% endif %}
-<section class="col-xl-6"><div class="mb-panel"><div class="mb-panel-title">Business Payroll</div>
+<section class="col-xl-6" id="business-payroll"><div class="mb-panel"><div class="mb-panel-title">Business Payroll</div>
 <p class="mb-help">Payroll uses granular Business permissions and enters the same approval/ledger path as normal transfers.</p>
 <form method="post" action="{{ url_for('minebank_bonus_payroll') }}" class="mb-request-form">
-<label class="mb-label">Business account ID</label><input class="form-control mb-input" name="account_id" required>
+<label class="mb-label">Business account ID</label><input class="form-control mb-input" name="account_id" value="{{ request.args.get('account_id','') }}" required>
 <label class="mb-label">Period</label><input class="form-control mb-input" name="period_label" value="Current period">
 <label class="mb-label">MineBank password</label><input class="form-control mb-input" name="account_password" type="password" required><label class="mb-label">Wallet PIN</label><input class="form-control mb-input" name="wallet_pin" type="password" inputmode="numeric" maxlength="6" required><label class="mb-label">Payments JSON</label><textarea class="form-control mb-input" name="items" rows="4" required>[{"recipient_account_number":"MB-000000","amount":100,"description":"Payroll"}]</textarea>
 <button class="btn btn-primary mb-submit" type="submit">Create Payroll Batch</button>

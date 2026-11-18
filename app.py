@@ -157,6 +157,7 @@ def inject_bank_context():
         "csrf_token": csrf_token,
         "minebank_client": client,
         "minebank_accounts": accounts,
+        "minebank_active_account": next((a for a in accounts if int(a["id"]) == int(session.get("minebank_account_id") or 0)), accounts[0] if accounts else None),
         "minebank_pending_requests": pending,
         "minebank_request_updates": updates,
         "minebank_unread_messages": unread,
@@ -715,6 +716,21 @@ def selected_account(account_id=None):
     session["minebank_account_id"] = int(accounts[0]["id"])
     return accounts[0]
 
+@app.route("/portal/account/select")
+@require_login
+def minebank_select_account():
+    """Change the active account while preserving the current portal page."""
+    account_id = request.args.get("account_id", type=int)
+    owned = {int(a["id"]) for a in get_accounts(session["minebank_client_id"])}
+    if account_id not in owned:
+        flash("Choose one of your available accounts.", "error")
+        return redirect(url_for("minebank_accounts_page"))
+    session["minebank_account_id"] = account_id
+    next_url = request.args.get("next", "")
+    if not next_url.startswith("/") or next_url.startswith("//"):
+        next_url = url_for("minebank_dashboard")
+    return redirect(next_url)
+
 def recent_transactions(account, limit=10):
     if not account:
         return []
@@ -776,20 +792,9 @@ def evaluate_tier_eligibility(client, account, tier):
             return True, "You qualify. Corporate accounts require Admin approval."
         return (False, "Not eligible: " + " ".join(reasons)) if reasons else (True, "You qualify for this plan.")
 
-    minimum_age = int(config.get("minimum_age") or 0)
-    if minimum_age:
-        dob = client.get("date_of_birth")
-        if not dob:
-            reasons.append(f"Minimum age: {minimum_age}; date of birth is not set.")
-        else:
-            try:
-                today = datetime.now(timezone.utc).date()
-                birth = dob.date() if hasattr(dob, "date") else dob
-                age = today.year - birth.year - ((today.month, today.day) < (birth.month, birth.day))
-                if age < minimum_age:
-                    reasons.append(f"Minimum age: {minimum_age} (you are {age}).")
-            except Exception:
-                reasons.append(f"Minimum age: {minimum_age}; date of birth could not be verified.")
+    # Personal Private eligibility is based on the configured financial/activity
+    # criteria. The portal no longer collects age, so do not reject customers on
+    # a hidden minimum-age field.
     minimum_balance = int(config.get("minimum_balance") or 0)
     if int(account.get("balance") or 0) < minimum_balance:
         reasons.append(f"Minimum balance: {minimum_balance} Emerald.")
@@ -868,23 +873,33 @@ def minebank_accounts_page():
 @app.route("/portal/business/<int:account_id>/members",methods=["GET","POST"])
 @require_login
 def minebank_business_members(account_id):
-    owner=execute_query_dict("SELECT id,account_number,account_type FROM bank_accounts WHERE id=%s AND client_id=%s AND account_type='BUSINESS'",
+    owner=execute_query_dict("""SELECT a.id,a.account_number,a.account_type,t.code AS tier_code,t.display_name
+                             FROM bank_accounts a JOIN account_tiers_v2 t ON t.id=a.tier_id
+                             WHERE a.id=%s AND a.client_id=%s AND a.account_type='BUSINESS'""",
                              (account_id,session["minebank_client_id"]))
     if not owner:
         return "Business account not found",404
     error=None
     if request.method=="POST":
         try:
+            if request.form.get("action")=="remove_member":
+                member_id=int(request.form.get("client_id","0") or 0)
+                execute_query("DELETE FROM minebank_business_members WHERE account_id=%s AND client_id=%s AND client_id<>%s",
+                              (account_id,member_id,session["minebank_client_id"]),fetch=False,commit=True)
+                flash("Business access removed.","success")
+                return redirect(url_for("minebank_business_members",account_id=account_id))
             email=request.form.get("email","").strip().lower()
-            role=request.form.get("role","EMPLOYEE")
-            if role not in {"ADMIN","FINANCE_MANAGER","EMPLOYEE","READ_ONLY","PAYROLL_MANAGER"}:
+            role=request.form.get("role","EMPLOYEE").upper()
+            if role not in {"EMPLOYEE","READ_ONLY"}:
                 raise ValueError("Invalid Business role.")
             user=execute_query_dict("SELECT id FROM bank_clients WHERE LOWER(email)=LOWER(%s) AND status<>'CLOSED'",(email,))
             if not user: raise ValueError("The employee must already have a MUOC customer account.")
-            execute_query("""INSERT INTO minebank_business_members(account_id,client_id,role)
-                             VALUES(%s,%s,%s)
-                             ON CONFLICT(account_id,client_id) DO UPDATE SET role=EXCLUDED.role""",
-                          (account_id,user[0]["id"],role),commit=True)
+            from bank_lib.minebank_bonus import add_business_member
+            permissions={"VIEW":True,"STATEMENTS":True,
+                         "TRANSFER":request.form.get("allow_transfer")=="on",
+                         "PAYROLL":request.form.get("allow_payroll")=="on"}
+            spending_limit=request.form.get("spending_limit") or None
+            add_business_member(account_id,session["minebank_client_id"],user[0]["id"],role,permissions,spending_limit)
             flash("Business member access updated.","success")
         except Exception as exc:
             error=str(exc)
@@ -894,8 +909,15 @@ def minebank_business_members(account_id):
     pending_payments=execute_query_dict("""SELECT b.transaction_id,b.risk_score,l.amount,l.description,c.email requested_by_email
                                              FROM minebank_business_payment_approvals b JOIN ledger_transactions l ON l.transaction_id=b.transaction_id
                                              JOIN bank_clients c ON c.id=b.requested_by WHERE b.account_id=%s AND b.status='PENDING' ORDER BY b.created_at""",(account_id,))
+    business_stats=execute_query_dict("""SELECT a.balance,
+        (SELECT COUNT(*) FROM minebank_business_members m WHERE m.account_id=a.id) AS team_size,
+        (SELECT COUNT(*) FROM ledger_transactions l WHERE l.sender_account_id=a.id AND l.status='COMPLETED'
+          AND l.created_at>=CURRENT_DATE) AS payments_today,
+        (SELECT COALESCE(SUM(l.amount),0) FROM ledger_transactions l WHERE l.sender_account_id=a.id
+          AND l.status='COMPLETED' AND l.created_at>=date_trunc('month',CURRENT_DATE)) AS monthly_volume
+        FROM bank_accounts a WHERE a.id=%s""",(account_id,))
     return render_template("minebank_portal.html",mode="business_members",business_account=owner[0],
-                           members=members,pending_payments=pending_payments,error=error,portal_active="account")
+                           members=members,pending_payments=pending_payments,business_stats=business_stats[0] if business_stats else {},error=error,portal_active="account")
 
 @app.route("/portal/business/<int:account_id>/payments/<transaction_id>/reject",methods=["POST"])
 @require_login
@@ -1002,7 +1024,35 @@ def minebank_transfer_page():
                     error = str(exc).strip() or "The transfer could not be completed. Check the details and try again."
         else:
             error = "Unknown transfer step. Please restart the transfer."
-    return render_template("minebank_portal.html", mode="transfer", account=account, accounts=get_accounts(client_id),
+    transfer_accounts=get_accounts(client_id)
+    try:
+        daily_rows=execute_query_dict("""SELECT sender_account_id,COALESCE(SUM(amount),0) AS used
+            FROM ledger_transactions WHERE sender_account_id=ANY(%s)
+              AND status IN ('COMPLETED','PENDING_APPROVAL','PENDING_BUSINESS_APPROVAL')
+              AND created_at>=CURRENT_TIMESTAMP-INTERVAL '1 day' GROUP BY sender_account_id""",
+            ([int(a["id"]) for a in transfer_accounts],)) if transfer_accounts else []
+        daily_used={int(r["sender_account_id"]):int(r["used"] or 0) for r in daily_rows}
+    except Exception:
+        daily_used={}
+    for a in transfer_accounts:
+        balance_available=int(a.get("balance") or 0)
+        # The standard outgoing tariff is 5 Emerald above 500 for regular
+        # tiers; keep the selector below the balance actually required to fund
+        # both amount and fee. Private/Corporate tiers have fee-free transfers.
+        if a.get("tier_code") not in ("PERSONAL_PRIVATE","CORPORATE") and balance_available>500:
+            balance_available=max(500,balance_available-5)
+        caps=[balance_available]
+        if a.get("single_transfer_limit") is not None: caps.append(int(a["single_transfer_limit"]))
+        monthly_used=int(a.get("monthly_outgoing_used") or 0)
+        if str(a.get("monthly_outgoing_period") or "") != datetime.now(timezone.utc).strftime("%Y-%m"):
+            monthly_used=0
+        if a.get("monthly_outgoing_limit") is not None: caps.append(max(0,int(a["monthly_outgoing_limit"])-monthly_used))
+        if a.get("daily_outgoing_limit") is not None: caps.append(max(0,int(a["daily_outgoing_limit"])-daily_used.get(int(a["id"]),0)))
+        a["transfer_selector_max"]=max(0,min(caps))
+    own_internal_accounts=execute_query_dict("""SELECT account_number,account_type FROM bank_accounts
+        WHERE client_id=%s AND account_type IN ('PERSONAL','BUSINESS') AND status IN ('ACTIVE','LIMITED')""",(client_id,))
+    return render_template("minebank_portal.html", mode="transfer", account=account, accounts=transfer_accounts,
+                           own_internal_accounts=own_internal_accounts,
                            preview=preview, error=error, portal_active="transfer")
 
 @app.route("/portal/transactions")
@@ -2148,6 +2198,14 @@ def minebank_support_messages_page():
             thread_id = create_support_thread(client_id, account_id, subject, body)
             if not thread_id:
                 raise RuntimeError("Your message could not be sent. Please try again.")
+            try:
+                execute_query("""INSERT INTO bank_notifications(client_id,account_id,notification_type,title,message)
+                    SELECT id,%s,'HELP_REQUEST_OPENED','New HelpDesk request',%s
+                    FROM bank_clients WHERE role IN ('ADMIN','OPERATOR') AND status='ACTIVE'""",
+                    (account_id, f"{current_client().get('email','A customer')} opened HelpDesk request #{thread_id}: {subject}"),
+                    fetch=False,commit=True)
+            except Exception as exc:
+                app.logger.error("HelpDesk administrator notification failed: %s",type(exc).__name__)
             flash("Your secure message was sent to MineBank.", "success")
             return redirect(url_for("minebank_support_thread_page", thread_id=thread_id))
         except Exception as exc:
