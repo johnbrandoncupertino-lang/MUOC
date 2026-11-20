@@ -9,6 +9,9 @@ local nativeTerm = (term.native and term.native()) or term.current()
 local target = "terminal"
 local title = "MINEBANK"
 local subtitle = "THE NEW BANK"
+local brand = "MINEBANK"
+local brandSubtitle = "THE NEW BANK"
+local phaseFooter = "MINEBANK SECURE CHECKOUT"
 local messages = {}
 local autoPauseCursor = 0
 local phaseOverlay, phaseOverlayState = nil, nil
@@ -122,12 +125,12 @@ local function drawHeader(d, pageTitle, pageSubtitle)
     d.setTextColor(colors.white)
     d.clear()
   end)
-  writeCentered(d, 1, "MINEBANK / THE NEW BANK", colors.lime, colors.black)
+  writeCentered(d, 1, brand .. " / " .. brandSubtitle, colors.lime, colors.black)
   writeAt(d, 1, 2, string.rep("=", math.max(1, w)), colors.green, colors.black, w)
   writeCentered(d, 3, string.upper(safeText(pageTitle or title)), colors.white, colors.black)
   writeCentered(d, 4, safeText(pageSubtitle or subtitle), colors.lightGray, colors.black)
   writeAt(d, 1, 5, string.rep("-", math.max(1, w)), colors.green, colors.black, w)
-  writeCentered(d, h, "MINEBANK SECURE TERMINAL", colors.gray, colors.black)
+  writeCentered(d, h, brand .. " SECURE TERMINAL", colors.gray, colors.black)
 end
 local function renderLog()
   withDisplay(function(d)
@@ -161,7 +164,7 @@ local function renderLog()
       y = y + 1
     end
     if #rows == 0 then writeAt(d, 2, 7, "Ready. Choose an operation to continue.", colors.lightGray, colors.black, w - 3) end
-    writeAt(d, 2, h, "MINEBANK SECURE TERMINAL", colors.gray, colors.black, w - 3)
+    writeAt(d, 2, h, brand .. " SECURE TERMINAL", colors.gray, colors.black, w - 3)
   end)
 end
 
@@ -250,6 +253,13 @@ function M.useTarget(name)
   return target
 end
 
+function M.setBrand(name, detail)
+  brand = safeText(name or "MINEBANK"):upper()
+  brandSubtitle = safeText(detail or "THE NEW BANK"):upper()
+  phaseFooter = brand .. " SECURE ATM"
+  renderLog()
+end
+
 function M.hasMonitor()
   return getMonitor() ~= nil
 end
@@ -302,8 +312,8 @@ function M.phase(label, state, frame)
   withDisplay(function(display)
     pcall(function() display.setBackgroundColor(bg); display.setTextColor(fg); display.clear() end)
     if w >= 32 and h >= 14 then
-      local brand = "M I N E B A N K"
-      writeAt(display, math.max(1, math.floor((w - #brand) / 2) + 1), 2, brand, colors.lime, bg, #brand)
+      local brandText = brand
+      writeAt(display, math.max(1, math.floor((w - #brandText) / 2) + 1), 2, brandText, colors.lime, bg, #brandText)
       writeAt(display, 2, 3, string.rep("=", math.max(1, w - 3)), colors.green, bg, w - 3)
       local main = state == "approved" and ("[ " .. label:upper() .. " ]")
         or (state == "declined" and ("[ " .. label:upper() .. " ]") or label:upper())
@@ -328,7 +338,7 @@ function M.phase(label, state, frame)
         local stamp = "PAYMENT DECLINED"
         writeAt(display, math.max(1, math.floor((w - #stamp) / 2) + 1), math.min(h - 2, y + 2), stamp, colors.red, bg, #stamp)
       end
-      local footer = "MINEBANK SECURE CHECKOUT"
+      local footer = phaseFooter
       writeAt(display, math.max(1, math.floor((w - #footer) / 2) + 1), h, footer, colors.gray, bg, #footer)
     else
       local short = label:upper()
@@ -444,7 +454,7 @@ function M.autoPause(seconds)
       local y = math.max(1, math.floor((dh + 1) / 2))
       writeAt(display, x, y, line, item.good and colors.lime or colors.red, colors.black, #line)
       if dw >= 14 and dh >= 6 then
-        writeCentered(display, 1, item.good and "MINEBANK" or "ATTENTION", item.good and colors.lime or colors.red, colors.black)
+        writeCentered(display, 1, item.good and brand or "ATTENTION", item.good and colors.lime or colors.red, colors.black)
       end
     end, "monitor")
     local timer = os.startTimer(dwell)
@@ -534,6 +544,10 @@ function M.choose(menuTitle, options, menuSubtitle)
         local lower = label:lower()
         if lower:find("cancel",1,true) or lower:find("back",1,true) or lower == "no" then return width >= 4 and "BACK" or "NO" end
         if lower:find("more services",1,true) then return "MORE" end
+        if lower:find("cashline",1,true) and lower:find("advance",1,true) then
+          if width <= 1 then return "A" elseif width <= 2 then return "CA" elseif width <= 3 then return "ADV" else return "CASH" end
+        end
+        if lower:find("exit",1,true) then return width <= 2 and "X" or "EXIT" end
         if lower:find("balance",1,true) then return "BAL" end
         if lower:find("withdraw",1,true) then return "OUT" end
         if lower:find("deposit",1,true) then return "IN" end
@@ -956,12 +970,12 @@ function M.kioskIdle()
       local x = math.max(1, math.floor((w - #label) / 2) + 1)
       writeAt(display, x, math.max(1, math.floor((h + 1) / 2)), label, colors.lime, colors.black, #label)
     else
-      local brand = "M I N E B A N K"
-      writeAt(display, math.max(1, math.floor((w - #brand) / 2) + 1), 2, brand, colors.lime, colors.black, #brand)
+      local brandText = brand
+      writeAt(display, math.max(1, math.floor((w - #brandText) / 2) + 1), 2, brandText, colors.lime, colors.black, #brandText)
       writeAt(display, 2, 3, string.rep("=", math.max(1,w-3)), colors.green, colors.black, w-3)
       local label = "LINE OPEN"
       drawButton(display, math.max(2, math.floor((w-26)/2)), math.floor(h/2)-1, math.min(26,w-4), 3, label, colors.green, colors.black)
-      local detail = "Ready for the next MineBank checkout"
+      local detail = "Ready for the next " .. brand .. " customer"
       writeAt(display, math.max(1, math.floor((w-#detail)/2)+1), math.floor(h/2)+3, detail, colors.lightGray, colors.black, #detail)
       local footer = "SECURE TOUCH TERMINAL"
       writeAt(display, math.max(1, math.floor((w-#footer)/2)+1), h, footer, colors.gray, colors.black, #footer)

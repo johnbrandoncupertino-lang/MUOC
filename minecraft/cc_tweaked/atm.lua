@@ -7,6 +7,7 @@ local programDir = fs.getDir(runningProgram)
 local uiPath = fs.combine(programDir, "minebank_ui.lua")
 local ui = dofile(uiPath)
 ui.useTarget("terminal")
+ui.setBrand("CLUBCASH", "MINEBANK ATM")
 local function print(...)
   local values = {}
   for i = 1, select("#", ...) do
@@ -170,41 +171,28 @@ local function draw(cfg)
   local function unfinished(value)
     return value and value.state~="COMPLETE" and value.state~="CANCELLED"
   end
-  local pending=unfinished(journal) or unfinished(transferJournal)
-  if ui.hasMonitor() then
-    -- Put recovery first whenever a journal is unfinished, including on tiny monitors.
-    if pending then
-      options = {"Resume pending operation","Check balance","More services"}
-    else
-      options = {"Check balance","Withdraw Emeralds","Deposit Emeralds","More services"}
-    end
+  local physicalPending=unfinished(journal)
+  local transferPending=unfinished(transferJournal)
+  if physicalPending then
+    -- Unresolved physical item movement blocks new withdrawals and deposits.
+    options = {"Resume pending operation","Check balance","More services","Exit ATM"}
   else
-    options = {
-      "Check balance",
-      "Withdraw Emeralds",
-      "Deposit Emeralds",
-      "Transfer to another account (max 1,000)",
-      "Recent transactions",
-      "Revoke floppy card",
-      "Diagnostics",
-      "Resume pending operation",
-      "Exit",
-    }
+    -- Keep the four common tasks on one screen on both touch monitors and
+    -- terminal menus. CashLine Advance must never be hidden under More.
+    options = {"Withdraw Emeralds","CashLine Advance","Deposit Emeralds","More Services"}
   end
-  local choice=ui.choose("MINEBANK ATM", options,
-    (cfg.atm_label or "THE NEW BANK").." • "..(pending and "Recovery required" or "Secure Emerald services"))
-  return choice,pending
+  local choice=ui.choose("CLUBCASH", options,
+    (cfg.atm_label or "CLUBCASH ATM").." • "..(physicalPending and "Recovery required" or (transferPending and "Transfer recovery available" or "Emerald services")))
+  return choice,physicalPending,transferPending
 end
-local function drawMore()
-  return ui.choose("MORE SERVICES", {
-    "Transfer to another account (max 1,000)",
-    "CashLine Advance",
-    "Recent transactions",
-    "Revoke floppy card",
-    "Diagnostics",
-    "Resume pending operation",
-    "Back",
-  }, "THE NEW BANK • Account and recovery services.")
+local function drawMore(physicalPending,transferPending)
+  local options
+  if physicalPending or transferPending then
+    options={"Check balance","Recent transactions","Revoke floppy card","Diagnostics","Resume pending operation","Back","Exit ATM"}
+  else
+    options={"Check balance","Transfer (max 1,000)","Recent transactions","Revoke floppy card","Diagnostics","Back","Exit ATM"}
+  end
+  return ui.choose("CLUBCASH SERVICES",options,"MINEBANK • Account and recovery tools.")
 end
 
 local function getCard()
@@ -375,7 +363,7 @@ end
 
 local function runWithdrawal(providedCard,providedPin,requestedFundingSource)
   local fundingSource=requestedFundingSource or "BALANCE"
-  local operationTitle=fundingSource=="CASHLINE" and "CASHLINE ADVANCE" or "WITHDRAW EMERALDS"
+  local operationTitle=fundingSource=="CASHLINE" and "CLUBCASH ADVANCE" or "CLUBCASH WITHDRAWAL"
   if not providedCard then
     ui.clear(); ui.header(operationTitle,"Step 1 of 3 • Card and PIN")
     ui.message("Insert your MineBank floppy card, then enter your six-digit Wallet PIN when prompted.",true)
@@ -426,20 +414,57 @@ local function runWithdrawal(providedCard,providedPin,requestedFundingSource)
     end
   else
     ui.clear(); ui.header(operationTitle,"Step 3 of 4 • Choose amount")
-    local amountChoices={"10 Emeralds","32 Emeralds","64 Emeralds","128 Emeralds","Enter another amount","Cancel"}
-    local selected=ui.choose(operationTitle,amountChoices,"Maximum per operation: "..MAX_WITHDRAWAL.." Emeralds. "..(fundingSource=="CASHLINE" and "This will create Standard CashLine debt." or "This will debit your available Balance."))
+    local accountData,accountErr=ui.api("/account","GET",card.credential)
+    if not accountData or type(accountData.account)~="table" then
+      ui.message("MineBank could not verify the linked account, so no withdrawal was requested. "..tostring(accountErr or "Account data is unavailable."),false)
+      ui.autoPause(2.4); return
+    end
+    local available=math.max(0,tonumber(accountData.account.balance) or 0)
+    if fundingSource=="CASHLINE" then
+      local options,optionsErr=ui.api("/payment-options?amount=0","GET",card.credential)
+      if not options then
+        ui.message("ClubCash could not verify CashLine availability. No Balance fallback was used and no withdrawal was requested. "..tostring(optionsErr or "Credit options are unavailable."),false)
+        ui.autoPause(3); return
+      end
+      local cashline
+      for _,source in ipairs(options.funding_sources or {}) do
+        if source.code=="CASHLINE" then cashline=source; break end
+      end
+      if not cashline then
+        local reason=(options.unavailable_reasons or {})[1] or options.message or "Standard CashLine is not available for this account."
+        ui.message("CashLine Advance is unavailable: "..tostring(reason).." No Balance was used.",false)
+        ui.autoPause(3); return
+      end
+      available=math.max(0,tonumber(cashline.available) or 0)
+    end
+    local maxAmount=math.min(MAX_WITHDRAWAL,available)
+    if maxAmount<1 then
+      ui.message(fundingSource=="CASHLINE" and "No Standard CashLine availability is available for an advance." or "The linked account has no available Balance to withdraw.",false)
+      ui.autoPause(2.4); return
+    end
+    local amountChoices,amountValues={},{}
+    for _,preset in ipairs({10,32,64,128}) do
+      if preset<=maxAmount then
+        amountChoices[#amountChoices+1]=tostring(preset).." Emeralds"
+        amountValues[#amountValues+1]=preset
+      end
+    end
+    amountChoices[#amountChoices+1]="Enter another amount"
+    amountValues[#amountValues+1]="CUSTOM"
+    local customChoice=#amountChoices
+    amountChoices[#amountChoices+1]="Cancel"
+    local selected=ui.choose(operationTitle,amountChoices,"Available: "..maxAmount.." Emeralds • Limit: "..MAX_WITHDRAWAL)
+    if not selected then return end
     local amount
-    if selected==1 then amount=10
-    elseif selected==2 then amount=32
-    elseif selected==3 then amount=64
-    elseif selected==4 then amount=128
-    elseif selected==5 then
-      local raw=ui.prompt("Whole Emerald amount (1-"..MAX_WITHDRAWAL..")")
+    local selectedAmount=amountValues[selected]
+    if type(selectedAmount)=="number" then amount=selectedAmount
+    elseif selected==customChoice then
+      local raw=ui.prompt("Whole Emerald amount (1-"..maxAmount..")")
       amount=raw and tonumber(raw) or nil
     else
       ui.message("Withdrawal cancelled. No debit requested.",true); ui.autoPause(1.5); return
     end
-    if not amount or amount%1~=0 or amount<1 or amount>MAX_WITHDRAWAL then ui.message("Invalid amount. Enter a whole number from 1 to "..MAX_WITHDRAWAL..". No debit was requested.",false); ui.autoPause(2.4); return end
+    if not amount or amount%1~=0 or amount<1 or amount>maxAmount then ui.message("Enter a whole number from 1 to "..maxAmount.." Emeralds. No debit was requested.",false); ui.autoPause(2.4); return end
     if countEmeralds(stockInv)<amount then ui.message("Secure stock does not contain enough emeralds.",false); ui.autoPause(2.4); return end
     if not canFit(outputInv,"minecraft:emerald",amount) then ui.message("Output inventory lacks space. No debit requested.",false); ui.autoPause(2.4); return end
     local confirm=ui.choose("CONFIRM "..operationTitle,{(fundingSource=="CASHLINE" and "Advance " or "Withdraw ")..amount.." Emeralds","Cancel"},fundingSource=="CASHLINE" and "This uses Standard CashLine credit and adds to your debt. Balance will not be used." or "Your MineBank Balance will be debited before dispensing.")
@@ -448,7 +473,7 @@ local function runWithdrawal(providedCard,providedPin,requestedFundingSource)
     if not save(JOURNAL,order) then ui.message("Could not persist journal. No request sent.",false); ui.autoPause(2.4); return end
   end
   fundingSource=order.funding_source or fundingSource or "BALANCE"
-  operationTitle=fundingSource=="CASHLINE" and "CASHLINE ADVANCE" or "WITHDRAW EMERALDS"
+  operationTitle=fundingSource=="CASHLINE" and "CLUBCASH ADVANCE" or "CLUBCASH WITHDRAWAL"
   if countEmeralds(stockInv)<order.amount then ui.message("Secure stock is short. The saved operation has not been re-requested.",false); ui.autoPause(2.4); return end
   if not canFit(outputInv,"minecraft:emerald",order.amount) then ui.message("Output inventory lacks space. No new debit requested.",false); ui.autoPause(2.4); return end
   local result
@@ -664,7 +689,7 @@ local function runBalance()
     ui.autoPause(2.4); return
   end
   local account=result.account or {}
-  ui.clear(); ui.header("ACCOUNT OVERVIEW","Live data returned by MineBank")
+  ui.clear(); ui.header("CLUBCASH ACCOUNT","Live data returned by MineBank")
   print("Account: "..tostring(account.account_number or "—"))
   print("Type: "..tostring(account.account_type or "—"))
   print("Tier: "..tostring(account.tier or "—"))
@@ -680,7 +705,7 @@ local function runHistory()
   local result,err=ui.api("/history","GET",card.credential)
   if not result then ui.message("History unavailable: "..tostring(err),false)
   else
-    ui.clear(); ui.header("RECENT TRANSACTIONS")
+    ui.clear(); ui.header("CLUBCASH HISTORY")
     for _,tx in ipairs(result.history or {}) do
       print(tostring(tx.type).." | "..tostring(tx.amount).." | "..tostring(tx.status))
       print("  "..tostring(tx.transaction_id).." "..tostring(tx.description):sub(1,30))
@@ -757,7 +782,7 @@ local function runRecovery()
 
   local summary=tostring(order.kind or "UNKNOWN").." • "..tostring(order.amount or "?")..
     " Emeralds • "..tostring(order.state or "UNKNOWN")
-  local action=ui.choose("OPERATION RECOVERY",{
+  local action=ui.choose("CLUBCASH RECOVERY",{
     "Check MineBank status",
     "Resume the saved operation",
     "Cancel safe unstarted deposit",
@@ -944,7 +969,7 @@ if not migrateLegacyTransferJournal() then
 end
 
 while true do
-  local ok,choice,pending=pcall(draw,cfg)
+  local ok,choice,pending,transferPending=pcall(draw,cfg)
   if not ok then
     ui.clear(); ui.header("ATM INTERFACE ERROR","The ATM recovered without submitting a transaction")
     ui.message(tostring(choice),false); ui.message("Choose Exit/restart only after checking the operation journal.",false)
@@ -953,45 +978,39 @@ while true do
     break
   else
     local actionOk,actionResult=pcall(function()
-      if ui.hasMonitor() then
-        if pending then
-          if choice==1 then runRecovery()
-          elseif choice==2 then runBalance()
-          elseif choice==3 then
-            local more=drawMore()
-            if more==1 then runTransfer()
-            elseif more==2 then ui.message("Resolve the pending physical operation in the Recovery Center before starting another withdrawal or CashLine advance.",false); ui.autoPause(2.8)
+      if pending then
+        if choice==1 then runRecovery()
+        elseif choice==2 then runBalance()
+        elseif choice==3 then
+          local more=drawMore(true,transferPending)
+          if more==1 then runBalance()
+          elseif more==2 then runHistory()
+          elseif more==3 then runRevoke()
+          elseif more==4 then runDiagnostics()
+          elseif more==5 then runRecovery()
+          elseif more==7 then return "EXIT" end
+        else return "EXIT" end
+      else
+        if choice==1 then runWithdrawal()
+        elseif choice==2 then runWithdrawal(nil,nil,"CASHLINE")
+        elseif choice==3 then runDeposit()
+        elseif choice==4 then
+          local more=drawMore(false,transferPending)
+          if more==1 then runBalance()
+          elseif transferPending then
+            if more==2 then runHistory()
+            elseif more==3 then runRevoke()
+            elseif more==4 then runDiagnostics()
+            elseif more==5 then runRecovery()
+            elseif more==7 then return "EXIT" end
+          else
+            if more==2 then runTransfer()
             elseif more==3 then runHistory()
             elseif more==4 then runRevoke()
             elseif more==5 then runDiagnostics()
-            elseif more==6 then runRecovery()
-            end
-          end
-        else
-          if choice==1 then runBalance()
-          elseif choice==2 then runWithdrawal()
-          elseif choice==3 then runDeposit()
-          elseif choice==4 then
-            local more=drawMore()
-            if more==1 then runTransfer()
-            elseif more==2 then runWithdrawal(nil,nil,"CASHLINE")
-            elseif more==3 then runHistory()
-            elseif more==4 then runRevoke()
-            elseif more==5 then runDiagnostics()
-            elseif more==6 then runRecovery()
-            end
+            elseif more==7 then return "EXIT" end
           end
         end
-      else
-        if choice==1 then runBalance()
-        elseif choice==2 then runWithdrawal()
-        elseif choice==3 then runDeposit()
-        elseif choice==4 then runTransfer()
-        elseif choice==5 then runHistory()
-        elseif choice==6 then runRevoke()
-        elseif choice==7 then runDiagnostics()
-        elseif choice==8 then runRecovery()
-        else return "EXIT" end
       end
     end)
     if actionOk and actionResult=="EXIT" then break end
@@ -1003,4 +1022,4 @@ while true do
     end
   end
 end
-ui.clear(); ui.header("MINEBANK ATM","Thank you for banking with MineBank.")
+ui.clear(); ui.header("CLUBCASH ATM","Thank you for banking with MineBank.")
