@@ -175,7 +175,7 @@ local function draw(cfg)
   local transferPending=unfinished(transferJournal)
   if physicalPending then
     -- Unresolved physical item movement blocks new withdrawals and deposits.
-    options = {"Resume pending operation","Check balance","More services","Exit ATM"}
+    options = {"Resume pending operation","Check balance","More services"}
   else
     -- Keep the four common tasks on one screen on both touch monitors and
     -- terminal menus. CashLine Advance must never be hidden under More.
@@ -188,9 +188,9 @@ end
 local function drawMore(physicalPending,transferPending)
   local options
   if physicalPending or transferPending then
-    options={"Check balance","Recent transactions","Revoke floppy card","Diagnostics","Resume pending operation","Back","Exit ATM"}
+    options={"Check balance","Recent transactions","Revoke floppy card","Diagnostics","Resume pending operation","Back"}
   else
-    options={"Check balance","Transfer (max 1,000)","Recent transactions","Revoke floppy card","Diagnostics","Back","Exit ATM"}
+    options={"Check balance","Transfer (max 1,000)","Recent transactions","Revoke floppy card","Diagnostics","Back"}
   end
   return ui.choose("CLUBCASH SERVICES",options,"MINEBANK • Account and recovery tools.")
 end
@@ -972,7 +972,7 @@ while true do
   local ok,choice,pending,transferPending=pcall(draw,cfg)
   if not ok then
     ui.clear(); ui.header("ATM INTERFACE ERROR","The ATM recovered without submitting a transaction")
-    ui.message(tostring(choice),false); ui.message("Choose Exit/restart only after checking the operation journal.",false)
+    ui.message(tostring(choice),false); ui.message("Review the operation journal before selecting another action.",false)
     ui.autoPause(3)
   elseif not choice then
     break
@@ -987,9 +987,7 @@ while true do
           elseif more==2 then runHistory()
           elseif more==3 then runRevoke()
           elseif more==4 then runDiagnostics()
-          elseif more==5 then runRecovery()
-          elseif more==7 then return "EXIT" end
-        else return "EXIT" end
+          elseif more==5 then runRecovery() end
       else
         if choice==1 then runWithdrawal()
         elseif choice==2 then runWithdrawal(nil,nil,"CASHLINE")
@@ -1001,19 +999,16 @@ while true do
             if more==2 then runHistory()
             elseif more==3 then runRevoke()
             elseif more==4 then runDiagnostics()
-            elseif more==5 then runRecovery()
-            elseif more==7 then return "EXIT" end
+            elseif more==5 then runRecovery() end
           else
             if more==2 then runTransfer()
             elseif more==3 then runHistory()
             elseif more==4 then runRevoke()
-            elseif more==5 then runDiagnostics()
-            elseif more==7 then return "EXIT" end
+            elseif more==5 then runDiagnostics() end
           end
         end
       end
     end)
-    if actionOk and actionResult=="EXIT" then break end
     if not actionOk then
       ui.clear(); ui.header("ATM OPERATION INTERRUPTED","No silent failure")
       ui.message("The ATM caught an interface/runtime error: "..tostring(actionResult),false)
